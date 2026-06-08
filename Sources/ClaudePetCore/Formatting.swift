@@ -27,6 +27,14 @@ public enum Format {
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
     }
 
+    /// Days-aware for multi-day countdowns: 0 -> "0m", 90_000 -> "1d 1h", 6720 -> "1h 52m"
+    public static func durationLong(_ seconds: TimeInterval) -> String {
+        let s = max(0, Int(seconds))
+        let d = s / 86_400, h = (s % 86_400) / 3600, m = (s % 3600) / 60
+        if d > 0 { return "\(d)d \(h)h" }
+        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    }
+
     /// Drops a trailing ".0": 41.0 -> "41", 41.2 -> "41.2"
     private static func trim(_ v: Double) -> String {
         let r = (v * 10).rounded() / 10

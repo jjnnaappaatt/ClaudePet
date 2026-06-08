@@ -22,14 +22,19 @@ final class WindowController {
     func show() { panel.orderFrontRegardless() }
 
     /// Resize the panel to the content's fitting size, keeping the top-left corner anchored.
-    func fitToContent() {
+    /// Resize to the content's fitting size, keeping the anchor point fixed.
+    /// anchorFracX: 0 = left edge, 1 = right edge.  anchorFracY: 0 = bottom, 1 = top.
+    /// Default (0, 1) = top-left anchored (used for settings/slider changes). Resize
+    /// handles pass the side OPPOSITE the grip so the window grows toward the drag.
+    func fitToContent(anchorFracX: CGFloat = 0, anchorFracY: CGFloat = 1) {
         let size = content.fittingSize
         guard size.width > 1, size.height > 1 else { return }
-        var frame = panel.frame
-        let topY = frame.maxY
-        frame.size = size
-        frame.origin.y = topY - size.height
-        panel.setFrame(frame, display: true)
+        let old = panel.frame
+        let anchorX = old.minX + anchorFracX * old.width
+        let anchorY = old.minY + anchorFracY * old.height
+        let newX = anchorX - anchorFracX * size.width
+        let newY = anchorY - anchorFracY * size.height
+        panel.setFrame(NSRect(x: newX, y: newY, width: size.width, height: size.height), display: true)
     }
 
     // MARK: - Position persistence (size comes from content)

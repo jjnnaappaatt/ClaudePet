@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var occlusionObserver: NSObjectProtocol?
     let metrics = MetricsStore()
     let panelVisibility = PanelVisibility()
+    let resizeController = ResizeController()
+    private lazy var settingsWC = SettingsWindowController(metrics: metrics)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Debug-only: render the 1024px app-icon master (transparent margins).
@@ -59,16 +61,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = ContentView()
             .environment(metrics)
             .environment(panelVisibility)
+            .environment(resizeController)
         let hosting = NSHostingView(rootView: root)
         hosting.sizingOptions = .intrinsicContentSize   // report SwiftUI's fitting size
 
         let wc = WindowController(content: hosting)
+        wc.panel.setOnTop(metrics.keepOnTop)
+        wc.panel.setShowOnAllSpaces(metrics.showOnAllSpaces)
         wc.show()
         windowController = wc
+        resizeController.window = wc
+        resizeController.store = metrics
 
-        // Resize the panel to fit when the widget scale (or content) changes.
-        metrics.onConfigChange = { [weak wc] in
-            DispatchQueue.main.async { wc?.fitToContent() }
+        // Resize the panel to fit + apply window settings when config changes.
+        metrics.onConfigChange = { [weak wc, weak metrics] in
+            DispatchQueue.main.async {
+                wc?.fitToContent()
+                if let m = metrics {
+                    wc?.panel.setOnTop(m.keepOnTop)
+                    wc?.panel.setShowOnAllSpaces(m.showOnAllSpaces)
+                }
+            }
+        }
+
+        // Open Settings in a real key-capable window when the gear is tapped.
+        NotificationCenter.default.addObserver(forName: .openClaudePetSettings,
+                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.settingsWC.show() }
         }
 
         // Pause the mascot when the panel is fully occluded (bitfield: use .contains).
@@ -98,6 +117,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         metrics.start()
+
+        // Debug: simulate the REAL flow — app already running as accessory, then open
+        // Settings (as if the gear was clicked) and report activation/key/responder state.
+        if ProcessInfo.processInfo.environment["CLAUDEPET_OPENSETTINGS"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                NotificationCenter.default.post(name: .openClaudePetSettings, object: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    let key = NSApp.keyWindow
+                    let frName = key?.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+                    let msg = "diag: active=\(NSApp.isActive) policy=\(NSApp.activationPolicy().rawValue) " +
+                              "keyWindow=\(key?.title ?? "nil") isKey=\(key?.isKeyWindow ?? false) " +
+                              "firstResponder=\(frName)\n"
+                    FileHandle.standardError.write(Data(msg.utf8))
+                }
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

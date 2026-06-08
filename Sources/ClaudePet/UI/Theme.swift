@@ -6,20 +6,25 @@ enum Theme {
     static let highlight   = Color(red: 0.949, green: 0.643, blue: 0.522)   // #F2A485
     static let darkOutline = Color(red: 0.475, green: 0.224, blue: 0.137)   // #793923
 
-    static let cardBackground = Color.black.opacity(0.62)
-    static let cardStroke     = Color.white.opacity(0.08)
+    // Opaque background (native-widget look — not see-through).
+    static let cardTop    = Color(red: 0.17, green: 0.17, blue: 0.19)
+    static let cardBottom = Color(red: 0.10, green: 0.10, blue: 0.11)
+    static let cardStroke = Color.white.opacity(0.08)
     static let textPrimary    = Color.white
     static let textSecondary  = Color.white.opacity(0.62)
 
-    static let corner: CGFloat = 16
+    static let corner: CGFloat = 18
     static let padding: CGFloat = 12
 }
 
 extension View {
-    /// The translucent rounded card the whole widget sits on.
+    /// The opaque rounded card the whole widget sits on (iOS-widget style).
     func widgetCard() -> some View {
         self
-            .background(Theme.cardBackground)
+            .background(
+                LinearGradient(colors: [Theme.cardTop, Theme.cardBottom],
+                               startPoint: .top, endPoint: .bottom)
+            )
             .clipShape(RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)

@@ -24,7 +24,7 @@ struct BudgetGauge: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("5h block").scaledFont(10, weight: .semibold)
+                Text("5h current session").scaledFont(10, weight: .semibold)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Text("\(Int((fraction * 100).rounded()))%")
@@ -39,18 +39,25 @@ struct BudgetGauge: View {
             }
             .frame(height: 7 * scaleHeight)
 
-            HStack(spacing: 4) {
-                Text("\(amount(metrics.blockValue(unit: unit))) / \(amount(metrics.blockBudget(unit: unit)))")
-                Spacer()
-                if let block = metrics.activeBlock {
-                    Text("burn \(amount(metrics.blockBurnPerHour(unit: unit)))/h")
-                    Text("·").foregroundStyle(Theme.textSecondary.opacity(0.5))
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text("resets in \(Format.duration(block.endsAt.timeIntervalSince(context.date)))")
-                    }
-                } else {
-                    Text("idle")
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text("\(amount(metrics.blockValue(unit: unit))) / \(amount(metrics.blockBudget(unit: unit)))")
+                    Spacer()
+                    Text("\(amount(metrics.blockRemaining(unit: unit))) left")
+                        .foregroundStyle(Theme.claudeCoral.opacity(0.9))
                 }
+                HStack(spacing: 4) {
+                    if let block = metrics.activeBlock {
+                        Text("burn \(amount(metrics.blockBurnPerHour(unit: unit)))/h")
+                        Spacer()
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text("resets in \(Format.duration(block.endsAt.timeIntervalSince(context.date)))")
+                        }
+                    } else {
+                        Text("idle"); Spacer()
+                    }
+                }
+                .foregroundStyle(Theme.textSecondary.opacity(0.85))
             }
             .scaledFont(9.5)
             .foregroundStyle(Theme.textSecondary)

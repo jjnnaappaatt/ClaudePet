@@ -16,17 +16,30 @@ final class FloatingPanel: NSPanel {
             backing: .buffered,
             defer: false
         )
-        isFloatingPanel = true
-        level = .floating                       // REQUIRED for always-on-top
-        isOpaque = false
-        backgroundColor = .clear                // transparent
+        isFloatingPanel = false
+        // Normal level by default: clickable & draggable, and NOT always-on-top
+        // (other windows can cover it). "Keep on top" raises it to .floating.
+        level = .normal
+        isOpaque = false                        // panel itself clear so the card's rounded corners show
+        backgroundColor = .clear
         hasShadow = true
-        isMovableByWindowBackground = true       // REQUIRED for drag-anywhere
+        isMovableByWindowBackground = true       // drag-anywhere
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
-        // Visible on every Space and unaffected by Mission Control / over fullscreen apps.
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        // Stay on this Space and DON'T cover fullscreen apps (no .canJoinAllSpaces /
+        // .fullScreenAuxiliary). "Show on all Spaces" can opt back in.
+        collectionBehavior = [.stationary]
         // Do NOT rely on setFrameAutosaveName for a borderless/non-resizable panel.
+    }
+
+    /// Toggle always-on-top.
+    func setOnTop(_ on: Bool) {
+        level = on ? .floating : .normal
+    }
+
+    /// Show on every Space (incl. fullscreen) vs only this Space.
+    func setShowOnAllSpaces(_ on: Bool) {
+        collectionBehavior = on ? [.canJoinAllSpaces, .stationary] : [.stationary]
     }
 
     // Allow the panel to become key so Settings text fields accept input.
