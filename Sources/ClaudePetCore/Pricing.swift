@@ -54,6 +54,18 @@ public struct PricingTable: Codable, Sendable, Equatable {
         prices[family.rawValue] == nil
     }
 
+    /// How much a work token on `family` should count toward the gauge, relative to
+    /// Sonnet (= 1.0). Derived from each family's blended (input+output) rate so an
+    /// Opus token weighs ~1.67× a Sonnet token and a Haiku token ~0.33×. This makes
+    /// the token gauge track limit consumption better than a flat token sum, since
+    /// pricier models burn the subscription faster. Unknown/unpriced families → 1.0.
+    public func weight(for family: ModelFamily) -> Double {
+        guard let p = price(for: family), let ref = price(for: .sonnet) else { return 1 }
+        let blended = p.inputPerM + p.outputPerM
+        let refBlended = ref.inputPerM + ref.outputPerM
+        return refBlended > 0 ? blended / refBlended : 1
+    }
+
     /// Notional USD cost of one usage entry (0 if the family is unpriced).
     public func cost(for e: UsageEntry) -> Double {
         guard let p = price(for: e.family) else { return 0 }

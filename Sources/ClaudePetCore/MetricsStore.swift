@@ -25,6 +25,7 @@ public final class MetricsStore {
     public var weeklyTokenBudget: Int = 20_000_000
     public var weeklyCostBudget: Double = 2000
     public var includeSubagents = true
+    public var weightTokensByModel = true        // gauge counts Opus tokens heavier than Haiku (cost-weighted)
     public var widgetScale: Double = 1.0         // uniform zoom (all resize handles + slider)
     public var account: AccountInfo = .unknown   // plan + subscription start
     public var plan: AccountPlan { account.plan }
@@ -137,6 +138,7 @@ public final class MetricsStore {
         static let tokenBudget = "tokenBudget"
         static let costBudget = "costBudget"
         static let includeSubagents = "includeSubagents"
+        static let weightTokensByModel = "weightTokensByModel"
         static let pricing = "pricingTable"
         static let widgetScale = "widgetScale"
         static let autoBudgetFromPlan = "autoBudgetFromPlan"
@@ -164,6 +166,9 @@ public final class MetricsStore {
         }
         if defaults.object(forKey: Key.includeSubagents) != nil {
             includeSubagents = defaults.bool(forKey: Key.includeSubagents)
+        }
+        if defaults.object(forKey: Key.weightTokensByModel) != nil {
+            weightTokensByModel = defaults.bool(forKey: Key.weightTokensByModel)
         }
         if let data = defaults.data(forKey: Key.pricing),
            let table = try? JSONDecoder().decode(PricingTable.self, from: data) {
@@ -201,6 +206,7 @@ public final class MetricsStore {
         defaults.set(tokenBudget, forKey: Key.tokenBudget)
         defaults.set(costBudget, forKey: Key.costBudget)
         defaults.set(includeSubagents, forKey: Key.includeSubagents)
+        defaults.set(weightTokensByModel, forKey: Key.weightTokensByModel)
         if let data = try? JSONEncoder().encode(pricing) {
             defaults.set(data, forKey: Key.pricing)
         }
@@ -224,8 +230,10 @@ public final class MetricsStore {
 
     public func blockValue(unit: BudgetUnit) -> Double {
         guard let b = activeBlock else { return 0 }
-        // Token gauge tracks WORK tokens (human-scale, matches the headline); $ tracks notional cost.
-        return unit == .tokens ? Double(b.workTokens) : b.costUSD
+        // $ tracks notional cost; tokens track WORK tokens — cost-weighted by model
+        // (Sonnet-equivalent) when enabled, else the flat human-scale sum.
+        if unit == .usd { return b.costUSD }
+        return weightTokensByModel ? b.weightedTokens : Double(b.workTokens)
     }
 
     public func blockBudget(unit: BudgetUnit) -> Double {
@@ -251,7 +259,8 @@ public final class MetricsStore {
     // MARK: - Weekly (7-day) gauge helpers
 
     public func weeklyValue(unit: BudgetUnit) -> Double {
-        unit == .tokens ? Double(week.workTokens) : week.costUSD
+        if unit == .usd { return week.costUSD }
+        return weightTokensByModel ? week.weightedTokens : Double(week.workTokens)
     }
 
     public func weeklyBudget(unit: BudgetUnit) -> Double {
@@ -280,7 +289,7 @@ public final class MetricsStore {
     public func loadSampleForPreview() {
         let now = Date()
         today = Totals(workTokens: 142_000, totalTokens: 41_200_000, costUSD: 4.21)
-        week = Totals(workTokens: 1_200_000, totalTokens: 300_000_000, costUSD: 38)
+        week = Totals(workTokens: 1_200_000, totalTokens: 300_000_000, costUSD: 38, weightedTokens: 1_650_000)
         allTime = Totals(workTokens: 14_000_000, totalTokens: 3_400_000_000, costUSD: 402)
         cycle = Totals(workTokens: 5_400_000, totalTokens: 1_300_000_000, costUSD: 180)
         monthlyPrice = 100; creditSpent = 13.47; creditLimit = 60; creditBalance = 5.60
@@ -292,7 +301,8 @@ public final class MetricsStore {
         activeBlock = UsageBlock(start: now.addingTimeInterval(-2 * 3600),
                                  actualStart: now.addingTimeInterval(-2 * 3600),
                                  lastActivity: now,
-                                 workTokens: 1_240_000, totalTokens: 44_000_000, costUSD: 150)
+                                 workTokens: 1_240_000, totalTokens: 44_000_000, costUSD: 150,
+                                 weightedTokens: 1_700_000)
         weekReset = now.addingTimeInterval(3 * 86_400 + 4 * 3600)   // ~3d 4h until weekly reset
         let work = [600_000, 900_000, 400_000, 1_100_000, 700_000, 1_300_000, 1_500_000]
         weekDaily = (0..<7).map { i in

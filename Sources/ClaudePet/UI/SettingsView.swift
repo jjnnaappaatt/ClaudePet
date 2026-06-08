@@ -35,6 +35,12 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: metrics.budgetUnit) { persist() }
 
+                if metrics.budgetUnit == .tokens {
+                    Toggle("Weight tokens by model cost", isOn: $metrics.weightTokensByModel)
+                        .onChange(of: metrics.weightTokensByModel) { persist() }
+                    caption("Counts an Opus token heavier than a Haiku one (relative to Sonnet), so the gauge tracks limit consumption like Claude does instead of summing tokens flat.")
+                }
+
                 Toggle("Use my plan's budget", isOn: $metrics.autoBudgetFromPlan)
                     .onChange(of: metrics.autoBudgetFromPlan) { persist() }
 

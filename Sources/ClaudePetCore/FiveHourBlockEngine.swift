@@ -8,6 +8,7 @@ public struct UsageBlock: Sendable, Equatable {
     public var workTokens: Int
     public var totalTokens: Int
     public var costUSD: Double
+    public var weightedTokens: Double = 0   // work tokens scaled by model weight
 
     public var endsAt: Date { start.addingTimeInterval(FiveHourBlockEngine.blockDuration) }
     public func isActive(now: Date) -> Bool { now >= start && now < endsAt }
@@ -49,7 +50,7 @@ public enum FiveHourBlockEngine {
         let end = start.addingTimeInterval(blockDuration)
 
         var work = 0, total = 0
-        var cost = 0.0
+        var cost = 0.0, weighted = 0.0
         var first: Date?
         var last = start
         for e in sorted where e.timestamp >= start && e.timestamp < end {
@@ -57,9 +58,10 @@ public enum FiveHourBlockEngine {
             work += e.workTokens
             total += e.totalTokens
             cost += pricing.cost(for: e)
+            weighted += Double(e.workTokens) * pricing.weight(for: e.family)
             last = e.timestamp
         }
         return UsageBlock(start: start, actualStart: first ?? start, lastActivity: last,
-                          workTokens: work, totalTokens: total, costUSD: cost)
+                          workTokens: work, totalTokens: total, costUSD: cost, weightedTokens: weighted)
     }
 }

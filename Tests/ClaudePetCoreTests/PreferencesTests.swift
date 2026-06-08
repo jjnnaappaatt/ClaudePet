@@ -20,6 +20,7 @@ import Foundation
         a.tokenBudget = 7_777_777
         a.costBudget = 12.5
         a.includeSubagents = false
+        a.weightTokensByModel = false   // default is true — verify a saved `false` survives
         a.pricing.prices["opus"]?.inputPerM = 9.99
         a.saveConfigAndRecompute()
 
@@ -30,6 +31,7 @@ import Foundation
         #expect(b.tokenBudget == 7_777_777)
         #expect(b.costBudget == 12.5)
         #expect(b.includeSubagents == false)
+        #expect(b.weightTokensByModel == false)
         #expect(b.pricing.prices["opus"]?.inputPerM == 9.99)
     }
 

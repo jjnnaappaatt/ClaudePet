@@ -4,14 +4,18 @@ public struct Totals: Sendable, Equatable {
     public var workTokens: Int = 0
     public var totalTokens: Int = 0
     public var costUSD: Double = 0
+    /// Work tokens scaled by each entry's model weight (Sonnet-equivalent). Used by
+    /// the gauge when "weight tokens by model cost" is on; flat `workTokens` otherwise.
+    public var weightedTokens: Double = 0
 
     /// Cache read + write tokens (the bulk of `totalTokens`).
     public var cacheTokens: Int { max(0, totalTokens - workTokens) }
 
-    public mutating func add(_ e: UsageEntry, cost: Double) {
+    public mutating func add(_ e: UsageEntry, cost: Double, weight: Double = 1) {
         workTokens += e.workTokens
         totalTokens += e.totalTokens
         costUSD += cost
+        weightedTokens += Double(e.workTokens) * weight
     }
 }
 
@@ -71,16 +75,17 @@ public enum Aggregator {
 
         for e in entries {
             let cost = pricing.cost(for: e)
-            agg.allTime.add(e, cost: cost)
+            let weight = pricing.weight(for: e.family)
+            agg.allTime.add(e, cost: cost, weight: weight)
 
-            if let cs = cycleStart, e.timestamp >= cs { agg.cycle.add(e, cost: cost) }
+            if let cs = cycleStart, e.timestamp >= cs { agg.cycle.add(e, cost: cost, weight: weight) }
 
             // Weekly LIMIT total: the fixed 7-day reset window if provided (matches the
             // Claude app's resetting weekly limit), else the rolling-7-day fallback.
             if let ww = weekWindow {
-                if e.timestamp >= ww.start && e.timestamp < ww.end { agg.week.add(e, cost: cost) }
+                if e.timestamp >= ww.start && e.timestamp < ww.end { agg.week.add(e, cost: cost, weight: weight) }
             } else if e.timestamp >= weekStart {
-                agg.week.add(e, cost: cost)
+                agg.week.add(e, cost: cost, weight: weight)
             }
 
             // Day-by-day history chart is always the rolling last-7-calendar-days.
@@ -94,7 +99,7 @@ public enum Aggregator {
             }
 
             if calendar.isDate(e.timestamp, inSameDayAs: now) {
-                agg.today.add(e, cost: cost)
+                agg.today.add(e, cost: cost, weight: weight)
                 var mt = modelMap[e.family] ?? ModelTotal(family: e.family)
                 mt.workTokens += e.workTokens
                 mt.totalTokens += e.totalTokens
