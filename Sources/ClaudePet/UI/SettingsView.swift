@@ -11,13 +11,15 @@ struct SettingsView: View {
     @State private var sessionPct = ""
     @State private var weeklyPct = ""
     @State private var resetMin = ""
-    @State private var weeklyResetDays = ""
+    @State private var weeklyResetDay = ""
+    @State private var weeklyResetHour = ""
+    @State private var weeklyResetMin = ""
     @State private var calibrateMsg: String?
     @State private var resetMsg: String?
     @State private var weeklyResetMsg: String?
     @FocusState private var focus: Field?
 
-    private enum Field { case session, weekly, resetMin, weeklyResetDays, sessionBudget, weeklyBudget, price, creditSpent, creditLimit, creditBalance }
+    private enum Field { case session, weekly, resetMin, weeklyResetDay, weeklyResetHour, weeklyResetMin, sessionBudget, weeklyBudget, price, creditSpent, creditLimit, creditBalance }
 
     var body: some View {
         @Bindable var metrics = metricsEnv
@@ -75,12 +77,12 @@ struct SettingsView: View {
                 }
 
                 Divider()
-                HStack {
-                    Text("Weekly resets in (days)")
+                HStack(spacing: 4) {
+                    Text("Weekly resets in")
                     Spacer()
-                    TextField("3", text: $weeklyResetDays)
-                        .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
-                        .frame(width: 64).focused($focus, equals: .weeklyResetDays)
+                    unitField($weeklyResetDay, "3", focus: .weeklyResetDay); unit("d")
+                    unitField($weeklyResetHour, "0", focus: .weeklyResetHour); unit("h")
+                    unitField($weeklyResetMin, "0", focus: .weeklyResetMin); unit("m")
                 }
                 HStack {
                     Button("Calibrate weekly reset") { calibrateWeeklyReset() }
@@ -150,6 +152,19 @@ struct SettingsView: View {
     private func caption(_ text: String) -> some View {
         Text(text).font(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A small trailing-aligned number field for the d/h/m reset inputs.
+    private func unitField(_ text: Binding<String>, _ placeholder: String, focus field: Field) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 40)
+            .focused($focus, equals: field)
+    }
+
+    private func unit(_ s: String) -> some View {
+        Text(s).foregroundStyle(.secondary)
     }
 
     private func pctRow(_ label: String, text: Binding<String>, focus field: Field) -> some View {
@@ -233,14 +248,18 @@ struct SettingsView: View {
         resetMsg = "Reset calibrated ✓"
     }
 
-    /// Shift the weekly window so its "resets in" matches the Claude app.
+    /// Shift the weekly window so its "resets in" (days + hours + minutes) matches the Claude app.
     private func calibrateWeeklyReset() {
-        guard let days = Double(weeklyResetDays), days > 0, days <= 7 else {
-            weeklyResetMsg = "Enter 0–7 days"
+        let d = Double(weeklyResetDay) ?? 0
+        let h = Double(weeklyResetHour) ?? 0
+        let m = Double(weeklyResetMin) ?? 0
+        let total = d * 86_400 + h * 3_600 + m * 60
+        guard total > 0, total <= WeeklyWindowEngine.weekDuration else {
+            weeklyResetMsg = "Enter up to 7d"
             return
         }
         let now = Date()
-        let target = now.addingTimeInterval(days * 86_400)
+        let target = now.addingTimeInterval(total)
         let current = WeeklyWindowEngine.window(anchor: metricsEnv.weeklyAnchor, now: now)
         metricsEnv.weeklyResetOffset += target.timeIntervalSince(current.end)
         persist()
