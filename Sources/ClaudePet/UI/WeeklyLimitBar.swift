@@ -21,13 +21,21 @@ struct WeeklyLimitBar: View {
         unit == .tokens ? Format.tokens(Int(v)) : Format.currency(v)
     }
 
+    /// Fixed 7-day window; the cap is approximate. Say what the % is measured against.
+    private var limitHelp: String {
+        "Fixed 7-day window that resets to zero on a schedule (like the Claude app). "
+            + "The % is measured against \(metrics.budgetBasisDescription)."
+            + (metrics.lastCalibratedAt != nil && metrics.calibrationIsStale
+               ? " A limit reset since you calibrated; re-calibrate in Settings to re-align." : "")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Weekly (all models)").scaledFont(10, weight: .semibold)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text("\(Int((fraction * 100).rounded()))%")
+                Text("~\(Int((fraction * 100).rounded()))%")
                     .scaledFont(10, weight: .semibold, design: .rounded)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -57,7 +65,7 @@ struct WeeklyLimitBar: View {
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1).minimumScaleFactor(0.8)
         }
-        .help("Fixed 7-day limit window that resets to zero on a schedule (like the Claude app). Both the reset time and the cap are estimates — calibrate them in Settings → Match the Claude app.")
+        .help(limitHelp)
     }
 
     @Environment(\.widgetScale) private var scale: CGFloat

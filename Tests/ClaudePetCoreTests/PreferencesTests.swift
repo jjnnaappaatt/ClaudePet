@@ -21,6 +21,10 @@ import Foundation
         a.costBudget = 12.5
         a.includeSubagents = false
         a.weightTokensByModel = false   // default is true — verify a saved `false` survives
+        a.weeklyResetWeekday = 5        // Thursday
+        a.weeklyResetHour = 9
+        a.weeklyResetMinute = 30
+        a.lastCalibratedAt = Date(timeIntervalSince1970: 1_700_000_000)
         a.pricing.prices["opus"]?.inputPerM = 9.99
         a.saveConfigAndRecompute()
 
@@ -32,6 +36,10 @@ import Foundation
         #expect(b.costBudget == 12.5)
         #expect(b.includeSubagents == false)
         #expect(b.weightTokensByModel == false)
+        #expect(b.weeklyResetWeekday == 5)
+        #expect(b.weeklyResetHour == 9)
+        #expect(b.weeklyResetMinute == 30)
+        #expect(b.lastCalibratedAt?.timeIntervalSince1970 == 1_700_000_000)
         #expect(b.pricing.prices["opus"]?.inputPerM == 9.99)
     }
 

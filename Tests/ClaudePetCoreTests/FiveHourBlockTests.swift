@@ -64,6 +64,19 @@ import Foundation
         #expect(w2.workTokens == 110)                 // only +5h — the prior window reset off
     }
 
+    /// The bug the user hit: the 5h window rolls over while idle (but < 5h since the last
+    /// use, so the session hasn't fully expired). The new window must read ZERO — the old
+    /// tokens drop off on the clock, without needing a new message to trigger it.
+    @Test func windowRollsToZeroWhenIdleAcrossBoundary() {
+        let es = entries([0, 2])                       // last activity at +2h
+        let s = FiveHourBlockEngine.activeSession(from: es, pricing: pricing,
+                                                  now: base.addingTimeInterval(5.5 * hour))
+        let b = try! #require(s)                        // not nil: only 3.5h idle (< 5h)
+        #expect(b.start == base.addingTimeInterval(5 * hour))   // advanced to window #2
+        #expect(b.workTokens == 0)                              // reset — no entries in the new window
+        #expect(b.endsAt == base.addingTimeInterval(10 * hour))
+    }
+
     @Test func concurrentSessionsShareWindow() {
         let a = TestSupport.entry(id: "a", at: base.addingTimeInterval(60), input: 10, output: 0)
         let b = TestSupport.entry(id: "b", at: base.addingTimeInterval(120), input: 20, output: 0, sidechain: true)

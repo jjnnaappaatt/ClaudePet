@@ -7,6 +7,7 @@ struct ModelBreakdownView: View {
     @Environment(\.widgetScale) private var scale
 
     private let dotColor: [ModelFamily: Color] = [
+        .fable: Color(red: 0.72, green: 0.55, blue: 0.95),   // top tier — violet
         .opus: Theme.claudeCoral,
         .sonnet: Theme.highlight,
         .haiku: Color(red: 0.55, green: 0.78, blue: 0.95),
@@ -32,6 +33,9 @@ struct ModelBreakdownView: View {
                             .scaledFont(10, weight: .semibold, design: .rounded)
                             .foregroundStyle(row.unpriced ? Theme.textSecondary.opacity(0.6) : Theme.textPrimary)
                             .frame(width: 44 * scale, alignment: .trailing)
+                            .help(row.unpriced
+                                ? "No price set for \(row.family.displayName) — tokens are exact, cost can't be estimated."
+                                : "Notional API-equivalent cost estimate; tokens are exact.")
                     }
                 }
             }

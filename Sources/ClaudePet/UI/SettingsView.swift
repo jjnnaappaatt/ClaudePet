@@ -11,15 +11,11 @@ struct SettingsView: View {
     @State private var sessionPct = ""
     @State private var weeklyPct = ""
     @State private var resetMin = ""
-    @State private var weeklyResetDay = ""
-    @State private var weeklyResetHour = ""
-    @State private var weeklyResetMin = ""
     @State private var calibrateMsg: String?
     @State private var resetMsg: String?
-    @State private var weeklyResetMsg: String?
     @FocusState private var focus: Field?
 
-    private enum Field { case session, weekly, resetMin, weeklyResetDay, weeklyResetHour, weeklyResetMin, sessionBudget, weeklyBudget, price, creditSpent, creditLimit, creditBalance }
+    private enum Field { case session, weekly, resetMin, sessionBudget, weeklyBudget, price, creditSpent, creditLimit, creditBalance }
 
     var body: some View {
         @Bindable var metrics = metricsEnv
@@ -41,19 +37,30 @@ struct SettingsView: View {
                     caption("Counts an Opus token heavier than a Haiku one (relative to Sonnet), so the gauge tracks limit consumption like Claude does instead of summing tokens flat.")
                 }
 
-                Toggle("Use my plan's budget", isOn: $metrics.autoBudgetFromPlan)
-                    .onChange(of: metrics.autoBudgetFromPlan) { persist() }
+                Picker("Budget source", selection: budgetSourceBinding) {
+                    Text("Auto").tag(MetricsStore.BudgetSource.auto)
+                    Text("Plan").tag(MetricsStore.BudgetSource.plan)
+                    Text("Custom").tag(MetricsStore.BudgetSource.custom)
+                }
+                .pickerStyle(.segmented)
 
-                if metrics.autoBudgetFromPlan {
+                switch metrics.budgetSource {
+                case .auto:
+                    LabeledContent("Session budget", value: amount(metrics.blockBudget(unit: metrics.budgetUnit)))
+                    LabeledContent("Weekly budget", value: amount(metrics.weeklyBudget(unit: metrics.budgetUnit)))
+                    caption("Auto-sized from your heaviest completed 5-hour and weekly usage so far, +\(Int((metrics.peakHeadroom * 100).rounded()))% headroom — the gauges fill as you approach your own record and rise when you set a new one. This tracks YOUR usage, not Anthropic's cap. To anchor it to Claude's exact %, use Calibrate below (that override lasts until the next reset).")
+                case .plan:
                     LabeledContent("Session budget", value: budgetText(metrics.plan.tokenBudget, metrics.plan.costBudget))
                     LabeledContent("Weekly budget", value: budgetText(metrics.plan.weeklyTokenBudget, metrics.plan.weeklyCostBudget))
-                    caption("Anthropic doesn't publish exact caps — these are tier-scaled estimates. Turn off to set your own, or use Calibrate below.")
-                } else if metrics.budgetUnit == .tokens {
-                    numberRow("Session budget", value: $metrics.tokenBudget, focus: .sessionBudget)
-                    numberRow("Weekly budget", value: $metrics.weeklyTokenBudget, focus: .weeklyBudget)
-                } else {
-                    decimalRow("Session budget ($)", value: $metrics.costBudget, focus: .sessionBudget)
-                    decimalRow("Weekly budget ($)", value: $metrics.weeklyCostBudget, focus: .weeklyBudget)
+                    caption("Anthropic doesn't publish exact caps — these are tier-scaled estimates.")
+                case .custom:
+                    if metrics.budgetUnit == .tokens {
+                        numberRow("Session budget", value: $metrics.tokenBudget, focus: .sessionBudget)
+                        numberRow("Weekly budget", value: $metrics.weeklyTokenBudget, focus: .weeklyBudget)
+                    } else {
+                        decimalRow("Session budget ($)", value: $metrics.costBudget, focus: .sessionBudget)
+                        decimalRow("Weekly budget ($)", value: $metrics.weeklyCostBudget, focus: .weeklyBudget)
+                    }
                 }
             } header: { Text("5-hour & weekly budget") }
 
@@ -66,6 +73,12 @@ struct SettingsView: View {
                     Button("Calibrate budgets") { calibrate() }
                     Spacer()
                     if let calibrateMsg { Text(calibrateMsg).font(.caption).foregroundStyle(.secondary) }
+                }
+                if let age = metrics.calibrationAgeDescription {
+                    caption("Last calibrated \(age)." + (metrics.calibrationIsStale
+                        ? " A limit reset since — re-calibrate to re-align the gauges." : ""))
+                } else {
+                    caption("Not calibrated yet — the gauges are tier-scaled estimates until you do.")
                 }
 
                 Divider()
@@ -83,19 +96,18 @@ struct SettingsView: View {
                 }
 
                 Divider()
-                HStack(spacing: 4) {
-                    Text("Weekly resets in")
-                    Spacer()
-                    unitField($weeklyResetDay, "3", focus: .weeklyResetDay); unit("d")
-                    unitField($weeklyResetHour, "0", focus: .weeklyResetHour); unit("h")
-                    unitField($weeklyResetMin, "0", focus: .weeklyResetMin); unit("m")
+                Picker("Weekly reset day", selection: $metrics.weeklyResetWeekday) {
+                    Text("Sunday").tag(1)
+                    Text("Monday").tag(2)
+                    Text("Tuesday").tag(3)
+                    Text("Wednesday").tag(4)
+                    Text("Thursday").tag(5)
+                    Text("Friday").tag(6)
+                    Text("Saturday").tag(7)
                 }
-                HStack {
-                    Button("Calibrate weekly reset") { calibrateWeeklyReset() }
-                    Spacer()
-                    if let weeklyResetMsg { Text(weeklyResetMsg).font(.caption).foregroundStyle(.secondary) }
-                }
-                caption("The weekly limit is a fixed 7-day window that resets to zero — enter the \"resets in\" Claude shows so the countdown and weekly bar line up.")
+                .onChange(of: metrics.weeklyResetWeekday) { persist() }
+                DatePicker("Weekly reset time", selection: weeklyResetTime, displayedComponents: .hourAndMinute)
+                caption("The weekly limit is a fixed 7-day window that resets to zero on this day & time (default Monday 3:00 PM) — set it to match the Claude app so the countdown and weekly bar line up.")
             } header: { Text("Match the Claude app") }
 
             // MARK: Billing
@@ -110,6 +122,7 @@ struct SettingsView: View {
                     LabeledContent("Value ratio",
                                    value: "\(Int((metrics.cycle.costUSD / totalPaid).rounded()))× what you paid")
                 }
+                caption("Every '$' figure is a notional API-equivalent estimate from the pricing table — on a subscription you don't pay per token; it shows the value you're getting, not a bill. Token counts, by contrast, are exact (read from Claude's transcripts).")
                 caption("Usage-credit figures (spent / limit / balance) are server-side — copy them from Claude → Settings → Usage credits. They show minimally on the widget once entered.")
             } header: { Text("Billing this cycle") }
 
@@ -160,17 +173,22 @@ struct SettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// A small trailing-aligned number field for the d/h/m reset inputs.
-    private func unitField(_ text: Binding<String>, _ placeholder: String, focus field: Field) -> some View {
-        TextField(placeholder, text: text)
-            .textFieldStyle(.roundedBorder)
-            .multilineTextAlignment(.trailing)
-            .frame(width: 40)
-            .focused($focus, equals: field)
-    }
-
-    private func unit(_ s: String) -> some View {
-        Text(s).foregroundStyle(.secondary)
+    /// Reads/writes the weekly reset time-of-day (hour + minute) as a `Date` for `DatePicker`.
+    private var weeklyResetTime: Binding<Date> {
+        Binding(
+            get: {
+                var c = DateComponents()
+                c.hour = metricsEnv.weeklyResetHour
+                c.minute = metricsEnv.weeklyResetMinute
+                return Calendar.current.date(from: c) ?? Date()
+            },
+            set: { newDate in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: newDate)
+                metricsEnv.weeklyResetHour = c.hour ?? 15
+                metricsEnv.weeklyResetMinute = c.minute ?? 0
+                persist()
+            }
+        )
     }
 
     private func pctRow(_ label: String, text: Binding<String>, focus field: Field) -> some View {
@@ -216,30 +234,28 @@ struct SettingsView: View {
         metricsEnv.budgetUnit == .tokens ? Format.tokens(tokens) : Format.currency(cost)
     }
 
+    /// Formats a live budget value in the current gauge unit.
+    private func amount(_ v: Double) -> String {
+        metricsEnv.budgetUnit == .tokens ? Format.tokens(Int(v)) : Format.currency(v)
+    }
+
+    /// Picker binding that persists on change (avoids onChange on a computed property).
+    private var budgetSourceBinding: Binding<MetricsStore.BudgetSource> {
+        Binding(get: { metricsEnv.budgetSource },
+                set: { metricsEnv.budgetSource = $0; persist() })
+    }
+
     // MARK: - Actions
 
     private func persist() { metricsEnv.saveConfigAndRecompute() }
 
     private func calibrate() {
-        let unit = metricsEnv.budgetUnit
-        var did = false
-        if let sp = Double(sessionPct), sp > 0 {
-            let budget = metricsEnv.blockValue(unit: unit) / (sp / 100)
-            if unit == .tokens { metricsEnv.tokenBudget = Int(budget) } else { metricsEnv.costBudget = budget }
-            did = true
-        }
-        if let wp = Double(weeklyPct), wp > 0 {
-            let budget = metricsEnv.weeklyValue(unit: unit) / (wp / 100)
-            if unit == .tokens { metricsEnv.weeklyTokenBudget = Int(budget) } else { metricsEnv.weeklyCostBudget = budget }
-            did = true
-        }
-        if did {
-            metricsEnv.autoBudgetFromPlan = false
-            persist()
-            calibrateMsg = "Calibrated ✓"
-        } else {
-            calibrateMsg = "Enter a % first"
-        }
+        // Back-solve lives in MetricsStore (single source) so the gauges and tests agree.
+        let did = metricsEnv.calibrateLimits(
+            sessionPct: Double(sessionPct) ?? 0,
+            weeklyPct: Double(weeklyPct) ?? 0,
+            unit: metricsEnv.budgetUnit)
+        calibrateMsg = did ? "Calibrated ✓" : "Enter a % (with usage logged) first"
     }
 
     /// Shift the session window so its "resets in" matches the Claude app.
@@ -252,23 +268,5 @@ struct SettingsView: View {
         metricsEnv.sessionResetOffset += target.timeIntervalSince(block.endsAt)
         persist()
         resetMsg = "Reset calibrated ✓"
-    }
-
-    /// Shift the weekly window so its "resets in" (days + hours + minutes) matches the Claude app.
-    private func calibrateWeeklyReset() {
-        let d = Double(weeklyResetDay) ?? 0
-        let h = Double(weeklyResetHour) ?? 0
-        let m = Double(weeklyResetMin) ?? 0
-        let total = d * 86_400 + h * 3_600 + m * 60
-        guard total > 0, total <= WeeklyWindowEngine.weekDuration else {
-            weeklyResetMsg = "Enter up to 7d"
-            return
-        }
-        let now = Date()
-        let target = now.addingTimeInterval(total)
-        let current = WeeklyWindowEngine.window(anchor: metricsEnv.weeklyAnchor, now: now)
-        metricsEnv.weeklyResetOffset += target.timeIntervalSince(current.end)
-        persist()
-        weeklyResetMsg = "Weekly reset calibrated ✓"
     }
 }

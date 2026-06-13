@@ -35,6 +35,17 @@ public enum Format {
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
     }
 
+    /// Compact "time since": "just now", "5m ago", "2h ago", "3d ago".
+    public static func relativeAge(from date: Date, now: Date = Date()) -> String {
+        let s = Int(max(0, now.timeIntervalSince(date)))
+        switch s {
+        case ..<60:     return "just now"
+        case ..<3600:   return "\(s / 60)m ago"
+        case ..<86_400: return "\(s / 3600)h ago"
+        default:        return "\(s / 86_400)d ago"
+        }
+    }
+
     /// Drops a trailing ".0": 41.0 -> "41", 41.2 -> "41.2"
     private static func trim(_ v: Double) -> String {
         let r = (v * 10).rounded() / 10

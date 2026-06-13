@@ -18,6 +18,22 @@ public struct WeeklyWindow: Sendable, Equatable {
 public enum WeeklyWindowEngine {
     public static let weekDuration: TimeInterval = 7 * 86_400
 
+    /// An anchor instant on `weekday` at `hour:minute` (local), suitable for the 7-day grid.
+    /// `weekday` follows `Calendar` numbering (1 = Sunday … 2 = Monday … 7 = Saturday).
+    /// Deterministic and independent of "now" — found relative to a fixed Monday reference —
+    /// so every grid boundary lands on that weekday/time. Exact in zones without DST; may
+    /// drift ±1h across a DST change (the grid steps by a fixed 7×24h).
+    public static func anchor(weekday: Int, hour: Int, minute: Int,
+                              calendar: Calendar = .current) -> Date {
+        let mondayRef = Date(timeIntervalSince1970: 1_704_067_200)  // 2024-01-01 00:00 UTC (a Monday)
+        var comps = DateComponents()
+        comps.weekday = weekday
+        comps.hour = hour
+        comps.minute = minute
+        comps.second = 0
+        return calendar.nextDate(after: mondayRef, matching: comps, matchingPolicy: .nextTime) ?? mondayRef
+    }
+
     /// The grid cell `[start, end)` containing `now`, for a reset `anchor`.
     /// Works whether `now` is before or after the anchor (no clamping), so the window
     /// always contains `now`.
@@ -40,5 +56,31 @@ public enum WeeklyWindowEngine {
             cost += pricing.cost(for: e)
         }
         return WeeklyWindow(start: start, end: end, workTokens: work, totalTokens: total, costUSD: cost)
+    }
+
+    /// Per-metric peak over all **completed** weekly windows in history — your heaviest week
+    /// ever, used to auto-size the weekly gauge budget from your own usage. The current
+    /// (still-growing) window is excluded so the denominator is stable.
+    public static func peakCompleted(from entries: [UsageEntry], pricing: PricingTable,
+                                     anchor: Date, now: Date = Date())
+        -> (work: Int, weighted: Double, cost: Double) {
+        guard !entries.isEmpty else { return (0, 0, 0) }
+        struct Cell { var work = 0; var weighted = 0.0; var cost = 0.0; var end = Date.distantPast }
+        var cells: [Date: Cell] = [:]
+        for e in entries {
+            let steps = (e.timestamp.timeIntervalSince(anchor) / weekDuration).rounded(.down)
+            let start = anchor.addingTimeInterval(steps * weekDuration)
+            var c = cells[start] ?? Cell()
+            c.work += e.workTokens
+            c.weighted += Double(e.workTokens) * pricing.weight(for: e.family)
+            c.cost += pricing.cost(for: e)
+            c.end = start.addingTimeInterval(weekDuration)
+            cells[start] = c
+        }
+        var pw = 0; var cw = 0.0; var cc = 0.0
+        for (_, c) in cells where c.end <= now {        // completed windows only
+            pw = max(pw, c.work); cw = max(cw, c.weighted); cc = max(cc, c.cost)
+        }
+        return (pw, cw, cc)
     }
 }

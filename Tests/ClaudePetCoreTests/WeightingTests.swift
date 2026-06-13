@@ -15,6 +15,12 @@ import Foundation
         #expect(abs(pricing.weight(for: .haiku) - 6.0 / 18.0) < 1e-9)
     }
 
+    @Test func fableWeighsMostOfAllTiers() {
+        // Blended (in+out) per M: fable 60, opus 30 → Fable is the heaviest token.
+        #expect(abs(pricing.weight(for: .fable) - 60.0 / 18.0) < 1e-9)
+        #expect(pricing.weight(for: .fable) > pricing.weight(for: .opus))
+    }
+
     @Test func unknownFamilyWeightsAsOne() {
         #expect(pricing.weight(for: .other) == 1.0)
     }

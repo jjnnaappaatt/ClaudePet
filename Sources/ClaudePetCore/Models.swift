@@ -44,11 +44,12 @@ public enum BudgetUnit: String, Codable, Sendable, CaseIterable {
 // MARK: - Model family
 
 public enum ModelFamily: String, Sendable, CaseIterable {
-    case opus, sonnet, haiku, other
+    case fable, opus, sonnet, haiku, other
 
     public init(modelID: String) {
         let m = modelID.lowercased()
-        if m.contains("opus") { self = .opus }
+        if m.contains("fable") { self = .fable }
+        else if m.contains("opus") { self = .opus }
         else if m.contains("sonnet") { self = .sonnet }
         else if m.contains("haiku") { self = .haiku }
         else { self = .other }
@@ -56,6 +57,7 @@ public enum ModelFamily: String, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
+        case .fable: return "Fable"
         case .opus: return "Opus"
         case .sonnet: return "Sonnet"
         case .haiku: return "Haiku"

@@ -30,6 +30,29 @@ public final class MetricsStore {
     public var account: AccountInfo = .unknown   // plan + subscription start
     public var plan: AccountPlan { account.plan }
     public var autoBudgetFromPlan = true         // budget follows the plan unless overridden
+    public var autoPeakBudget = true             // size the budget from your own peak usage (overrides plan)
+    public var peakHeadroom = 0.15               // budget = peak × (1 + this); 100% sits just above your record
+
+    // Peak usage over completed windows (recomputed each pass; the auto-budget denominator).
+    public private(set) var peakBlockWork = 0
+    public private(set) var peakBlockWeighted = 0.0
+    public private(set) var peakBlockCost = 0.0
+    public private(set) var peakWeekWork = 0
+    public private(set) var peakWeekWeighted = 0.0
+    public private(set) var peakWeekCost = 0.0
+
+    /// Where the gauge budget comes from. A UI convenience over the two flags below.
+    public enum BudgetSource: String, CaseIterable, Sendable { case auto, plan, custom }
+    public var budgetSource: BudgetSource {
+        get { autoPeakBudget ? .auto : (autoBudgetFromPlan ? .plan : .custom) }
+        set {
+            switch newValue {
+            case .auto:   autoPeakBudget = true
+            case .plan:   autoPeakBudget = false; autoBudgetFromPlan = true
+            case .custom: autoPeakBudget = false; autoBudgetFromPlan = false
+            }
+        }
+    }
     public var keepOnTop = false                 // always-on-top vs normal (clickable, coverable)
     public var monthlyPrice: Double = 0          // actual subscription $ paid per cycle (editable)
     public var creditSpent: Double = 0           // usage-credit $ spent this cycle (server-side; editable)
@@ -37,11 +60,17 @@ public final class MetricsStore {
     public var creditBalance: Double = 0         // current usage-credit balance
     public var showOnAllSpaces = false           // join all Spaces (can cover fullscreen) vs this Space only
     public var sessionResetOffset: Double = 0    // seconds added to the 5h session window (reset calibration)
-    public var weeklyResetOffset: Double = 0     // seconds added to the weekly window anchor (reset calibration)
+    public var weeklyResetWeekday = 2            // weekly reset day (Calendar: 1=Sun … 2=Mon … 7=Sat); default Monday
+    public var weeklyResetHour = 15              // hour of the weekly reset, local 24h (default 3 PM)
+    public var weeklyResetMinute = 0             // minute of the weekly reset, local
+    public var lastCalibratedAt: Date?           // when budgets were last fitted to Claude's /usage
     public var extraUsageEnabled: Bool { account.extraUsageEnabled }
 
-    /// Anchor for the fixed weekly-limit grid: plan default + user calibration offset.
-    public var weeklyAnchor: Date { account.weeklyAnchorBase().addingTimeInterval(weeklyResetOffset) }
+    /// Anchor for the fixed weekly-limit grid: the configured reset weekday + time of day,
+    /// so the window resets on e.g. Monday 3:00 PM local (the default).
+    public var weeklyAnchor: Date {
+        WeeklyWindowEngine.anchor(weekday: weeklyResetWeekday, hour: weeklyResetHour, minute: weeklyResetMinute)
+    }
 
     public var lastUpdated: Date?
     public var isLoading = false
@@ -54,6 +83,7 @@ public final class MetricsStore {
 
     private let scanner = UsageScanner()
     private var watcher: FileWatcher?
+    private var tick: Timer?                       // time-based recompute (rolls windows while idle)
     private var lastEntries: [UsageEntry] = []
     private let defaults: UserDefaults
 
@@ -88,11 +118,23 @@ public final class MetricsStore {
         }
         w.start()
         watcher = w
+
+        // The 5h session (and the day/week/cycle windows) reset on the clock, not on a file
+        // write. Without this, an elapsed window keeps showing its old usage until the next
+        // token is logged. Re-aggregate the cached entries periodically so it rolls to empty
+        // on time. Cheap — no disk rescan; just re-sums lastEntries against a fresh `now`.
+        let t = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.recompute() }
+        }
+        t.tolerance = 5
+        tick = t
     }
 
     public func stop() {
         watcher?.stop()
         watcher = nil
+        tick?.invalidate()
+        tick = nil
     }
 
     public func refresh() async {
@@ -127,6 +169,12 @@ public final class MetricsStore {
         unknownModels = agg.unknownModels
         activeBlock = FiveHourBlockEngine.activeSession(from: entries, pricing: pricing, now: now,
                                                         resetOffset: sessionResetOffset)
+        let pb = FiveHourBlockEngine.peakCompleted(from: entries, pricing: pricing, now: now,
+                                                   resetOffset: sessionResetOffset)
+        peakBlockWork = pb.work; peakBlockWeighted = pb.weighted; peakBlockCost = pb.cost
+        let pw = WeeklyWindowEngine.peakCompleted(from: entries, pricing: pricing,
+                                                  anchor: weeklyAnchor, now: now)
+        peakWeekWork = pw.work; peakWeekWeighted = pw.weighted; peakWeekCost = pw.cost
         lastUpdated = now
         onRecompute?()
     }
@@ -142,6 +190,8 @@ public final class MetricsStore {
         static let pricing = "pricingTable"
         static let widgetScale = "widgetScale"
         static let autoBudgetFromPlan = "autoBudgetFromPlan"
+        static let autoPeakBudget = "autoPeakBudget"
+        static let peakHeadroom = "peakHeadroom"
         static let keepOnTop = "keepOnTop"
         static let weeklyTokenBudget = "weeklyTokenBudget"
         static let weeklyCostBudget = "weeklyCostBudget"
@@ -151,7 +201,10 @@ public final class MetricsStore {
         static let creditBalance = "creditBalance"
         static let showOnAllSpaces = "showOnAllSpaces"
         static let sessionResetOffset = "sessionResetOffset"
-        static let weeklyResetOffset = "weeklyResetOffset"
+        static let weeklyResetWeekday = "weeklyResetWeekday"
+        static let weeklyResetHour = "weeklyResetHour"
+        static let weeklyResetMinute = "weeklyResetMinute"
+        static let lastCalibratedAt = "lastCalibratedAt"
     }
 
     public func loadConfig() {
@@ -172,13 +225,21 @@ public final class MetricsStore {
         }
         if let data = defaults.data(forKey: Key.pricing),
            let table = try? JSONDecoder().decode(PricingTable.self, from: data) {
-            pricing = table
+            // Fill in families added since this table was saved (e.g. Fable) so new models
+            // are priced/weighted instead of silently counting as free/unweighted.
+            pricing = table.mergingMissingDefaults()
         }
         if defaults.object(forKey: Key.widgetScale) != nil {
             widgetScale = defaults.double(forKey: Key.widgetScale)
         }
         if defaults.object(forKey: Key.autoBudgetFromPlan) != nil {
             autoBudgetFromPlan = defaults.bool(forKey: Key.autoBudgetFromPlan)
+        }
+        if defaults.object(forKey: Key.autoPeakBudget) != nil {
+            autoPeakBudget = defaults.bool(forKey: Key.autoPeakBudget)
+        }
+        if defaults.object(forKey: Key.peakHeadroom) != nil {
+            peakHeadroom = defaults.double(forKey: Key.peakHeadroom)
         }
         if defaults.object(forKey: Key.keepOnTop) != nil {
             keepOnTop = defaults.bool(forKey: Key.keepOnTop)
@@ -197,7 +258,12 @@ public final class MetricsStore {
         if defaults.object(forKey: Key.creditBalance) != nil { creditBalance = defaults.double(forKey: Key.creditBalance) }
         if defaults.object(forKey: Key.showOnAllSpaces) != nil { showOnAllSpaces = defaults.bool(forKey: Key.showOnAllSpaces) }
         if defaults.object(forKey: Key.sessionResetOffset) != nil { sessionResetOffset = defaults.double(forKey: Key.sessionResetOffset) }
-        if defaults.object(forKey: Key.weeklyResetOffset) != nil { weeklyResetOffset = defaults.double(forKey: Key.weeklyResetOffset) }
+        if defaults.object(forKey: Key.weeklyResetWeekday) != nil { weeklyResetWeekday = defaults.integer(forKey: Key.weeklyResetWeekday) }
+        if defaults.object(forKey: Key.weeklyResetHour) != nil { weeklyResetHour = defaults.integer(forKey: Key.weeklyResetHour) }
+        if defaults.object(forKey: Key.weeklyResetMinute) != nil { weeklyResetMinute = defaults.integer(forKey: Key.weeklyResetMinute) }
+        if defaults.object(forKey: Key.lastCalibratedAt) != nil {
+            lastCalibratedAt = Date(timeIntervalSince1970: defaults.double(forKey: Key.lastCalibratedAt))
+        }
     }
 
     /// Persist config and re-aggregate so changes show immediately.
@@ -212,6 +278,8 @@ public final class MetricsStore {
         }
         defaults.set(widgetScale, forKey: Key.widgetScale)
         defaults.set(autoBudgetFromPlan, forKey: Key.autoBudgetFromPlan)
+        defaults.set(autoPeakBudget, forKey: Key.autoPeakBudget)
+        defaults.set(peakHeadroom, forKey: Key.peakHeadroom)
         defaults.set(keepOnTop, forKey: Key.keepOnTop)
         defaults.set(weeklyTokenBudget, forKey: Key.weeklyTokenBudget)
         defaults.set(weeklyCostBudget, forKey: Key.weeklyCostBudget)
@@ -221,7 +289,14 @@ public final class MetricsStore {
         defaults.set(creditBalance, forKey: Key.creditBalance)
         defaults.set(showOnAllSpaces, forKey: Key.showOnAllSpaces)
         defaults.set(sessionResetOffset, forKey: Key.sessionResetOffset)
-        defaults.set(weeklyResetOffset, forKey: Key.weeklyResetOffset)
+        defaults.set(weeklyResetWeekday, forKey: Key.weeklyResetWeekday)
+        defaults.set(weeklyResetHour, forKey: Key.weeklyResetHour)
+        defaults.set(weeklyResetMinute, forKey: Key.weeklyResetMinute)
+        if let t = lastCalibratedAt {
+            defaults.set(t.timeIntervalSince1970, forKey: Key.lastCalibratedAt)
+        } else {
+            defaults.removeObject(forKey: Key.lastCalibratedAt)
+        }
         recompute()
         onConfigChange?()
     }
@@ -237,10 +312,27 @@ public final class MetricsStore {
     }
 
     public func blockBudget(unit: BudgetUnit) -> Double {
+        if autoPeakBudget {
+            // A fresh manual calibration is the most accurate anchor — it wins until a reset.
+            if lastCalibratedAt != nil && !calibrationIsStale {
+                return unit == .tokens ? Double(tokenBudget) : costBudget
+            }
+            let peak = peakBlockBudget(unit: unit)
+            if peak > 0 { return peak }
+            // No completed history yet — fall back to the plan estimate.
+            return unit == .tokens ? Double(plan.tokenBudget) : plan.costBudget
+        }
         if autoBudgetFromPlan {
             return unit == .tokens ? Double(plan.tokenBudget) : plan.costBudget
         }
         return unit == .tokens ? Double(tokenBudget) : costBudget
+    }
+
+    /// Auto budget = your heaviest completed 5h block + headroom, in the gauge's unit.
+    private func peakBlockBudget(unit: BudgetUnit) -> Double {
+        let base = unit == .usd ? peakBlockCost
+            : (weightTokensByModel ? peakBlockWeighted : Double(peakBlockWork))
+        return base * (1 + peakHeadroom)
     }
 
     /// Clamped [0,1] fill for the bar.
@@ -264,10 +356,25 @@ public final class MetricsStore {
     }
 
     public func weeklyBudget(unit: BudgetUnit) -> Double {
+        if autoPeakBudget {
+            if lastCalibratedAt != nil && !calibrationIsStale {
+                return unit == .tokens ? Double(weeklyTokenBudget) : weeklyCostBudget
+            }
+            let peak = peakWeeklyBudget(unit: unit)
+            if peak > 0 { return peak }
+            return unit == .tokens ? Double(plan.weeklyTokenBudget) : plan.weeklyCostBudget
+        }
         if autoBudgetFromPlan {
             return unit == .tokens ? Double(plan.weeklyTokenBudget) : plan.weeklyCostBudget
         }
         return unit == .tokens ? Double(weeklyTokenBudget) : weeklyCostBudget
+    }
+
+    /// Auto budget = your heaviest completed weekly window + headroom, in the gauge's unit.
+    private func peakWeeklyBudget(unit: BudgetUnit) -> Double {
+        let base = unit == .usd ? peakWeekCost
+            : (weightTokensByModel ? peakWeekWeighted : Double(peakWeekWork))
+        return base * (1 + peakHeadroom)
     }
 
     public func weeklyFraction(unit: BudgetUnit) -> Double {
@@ -284,6 +391,81 @@ public final class MetricsStore {
         max(0, weeklyBudget(unit: unit) - weeklyValue(unit: unit))
     }
 
+    // MARK: - Calibration to Claude's /usage
+
+    /// Fit the 5h and/or weekly budgets so the gauges read the percentages Claude's
+    /// `/usage` shows right now. A non-positive pct (or a gauge with no measured usage
+    /// to back-solve from) leaves that gauge untouched. Returns true if anything was set.
+    ///
+    /// Subscription usage isn't exposed by any API, so this manual sync is the only bridge
+    /// to Anthropic's real numbers. We back-solve `budget = currentValue / (pct/100)` against
+    /// the live gauge value (which already accounts for cost-weighting), persist, and stamp
+    /// the moment so staleness can be surfaced.
+    @discardableResult
+    public func calibrateLimits(sessionPct: Double, weeklyPct: Double,
+                                unit: BudgetUnit, now: Date = Date()) -> Bool {
+        var did = false
+        if sessionPct > 0 {
+            let v = blockValue(unit: unit)
+            if v > 0 {
+                let budget = v / (sessionPct / 100)
+                if unit == .tokens { tokenBudget = Int(budget) } else { costBudget = budget }
+                did = true
+            }
+        }
+        if weeklyPct > 0 {
+            let v = weeklyValue(unit: unit)
+            if v > 0 {
+                let budget = v / (weeklyPct / 100)
+                if unit == .tokens { weeklyTokenBudget = Int(budget) } else { weeklyCostBudget = budget }
+                did = true
+            }
+        }
+        if did {
+            autoBudgetFromPlan = false        // calibrated budgets override the plan estimate
+            lastCalibratedAt = now
+            saveConfigAndRecompute()
+        }
+        return did
+    }
+
+    /// True when the calibration anchor predates the current 5h or weekly window — i.e. a
+    /// reset has occurred since the user last synced, so the % basis has moved and a
+    /// re-calibration would re-align it. Also true when never calibrated.
+    public func calibrationIsStale(now: Date = Date()) -> Bool {
+        guard let cal = lastCalibratedAt else { return true }
+        let weekStart = WeeklyWindowEngine.window(anchor: weeklyAnchor, now: now).start
+        if cal < weekStart { return true }
+        if let blockStart = activeBlock?.start, cal < blockStart { return true }
+        return false
+    }
+
+    /// `calibrationIsStale(now:)` with the current clock — convenient for SwiftUI reads.
+    public var calibrationIsStale: Bool { calibrationIsStale() }
+
+    /// Short relative age of the last calibration ("just now", "2h ago", "3d ago"),
+    /// or nil if never calibrated.
+    public var calibrationAgeDescription: String? {
+        guard let cal = lastCalibratedAt else { return nil }
+        return Format.relativeAge(from: cal)
+    }
+
+    /// Plain-language description of what the gauge percentages are measured against right
+    /// now — so the UI can be honest about the denominator (peak vs calibrated vs estimate).
+    public var budgetBasisDescription: String {
+        if autoPeakBudget, lastCalibratedAt != nil, !calibrationIsStale,
+           let age = calibrationAgeDescription {
+            return "Claude's /usage (calibrated \(age))"
+        }
+        if autoPeakBudget, peakBlockWork > 0 || peakWeekWork > 0 {
+            return "your peak usage +\(Int((peakHeadroom * 100).rounded()))% — your own record, not Anthropic's cap"
+        }
+        if lastCalibratedAt != nil, !calibrationIsStale, let age = calibrationAgeDescription {
+            return "Claude's /usage (calibrated \(age))"
+        }
+        return autoBudgetFromPlan ? "a tier-scaled plan estimate" : "your custom budget"
+    }
+
     // MARK: - Previews / snapshots
 
     public func loadSampleForPreview() {
@@ -294,6 +476,7 @@ public final class MetricsStore {
         cycle = Totals(workTokens: 5_400_000, totalTokens: 1_300_000_000, costUSD: 180)
         monthlyPrice = 100; creditSpent = 13.47; creditLimit = 60; creditBalance = 5.60
         todayByModel = [
+            ModelTotal(family: .fable,  workTokens: 22_000, totalTokens: 9_000_000,  costUSD: 2.80),
             ModelTotal(family: .opus,   workTokens: 41_000, totalTokens: 20_000_000, costUSD: 3.10),
             ModelTotal(family: .sonnet, workTokens: 77_000, totalTokens: 18_000_000, costUSD: 1.05),
             ModelTotal(family: .haiku,  workTokens: 10_000, totalTokens: 3_200_000,  costUSD: 0.06),

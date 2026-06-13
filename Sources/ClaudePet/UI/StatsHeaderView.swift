@@ -19,9 +19,10 @@ struct StatsHeaderView: View {
                     .background(Theme.claudeCoral.opacity(0.20), in: Capsule())
                     .foregroundStyle(Theme.claudeCoral)
                 Spacer()
-                Text(Format.currency(metrics.today.costUSD))
+                Text("~" + Format.currency(metrics.today.costUSD))
                     .scaledFont(15, weight: .bold, design: .rounded)
                     .foregroundStyle(Theme.claudeCoral)
+                    .help("Notional API-equivalent cost (estimate) — on a subscription you don't pay per token. The token counts below are exact (read from Claude's transcripts).")
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(Format.tokens(metrics.today.workTokens))

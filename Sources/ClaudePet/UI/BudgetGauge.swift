@@ -21,13 +21,21 @@ struct BudgetGauge: View {
         unit == .tokens ? Format.tokens(Int(value)) : Format.currency(value)
     }
 
+    /// The limit % is an approximation — say what it's measured against, and nudge a
+    /// re-calibration only if a previously-set calibration has lapsed past a reset.
+    private var limitHelp: String {
+        "Approximate — the % is measured against \(metrics.budgetBasisDescription)."
+            + (metrics.lastCalibratedAt != nil && metrics.calibrationIsStale
+               ? " A limit reset since you calibrated; re-calibrate in Settings to re-align." : "")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("5h current session").scaledFont(10, weight: .semibold)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text("\(Int((fraction * 100).rounded()))%")
+                Text("~\(Int((fraction * 100).rounded()))%")
                     .scaledFont(10, weight: .semibold, design: .rounded)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -64,6 +72,7 @@ struct BudgetGauge: View {
             .lineLimit(1)
             .minimumScaleFactor(0.8)
         }
+        .help(limitHelp)
     }
 
     @Environment(\.widgetScale) private var scaleHeight: CGFloat

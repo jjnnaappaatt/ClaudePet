@@ -64,4 +64,39 @@ public enum FiveHourBlockEngine {
         return UsageBlock(start: start, actualStart: first ?? start, lastActivity: last,
                           workTokens: work, totalTokens: total, costUSD: cost, weightedTokens: weighted)
     }
+
+    /// Per-metric peak over all **completed** 5h blocks in history — your heaviest session
+    /// ever, used to auto-size the gauge budget from your own usage. The active (still-growing)
+    /// block is excluded so the denominator is stable. Buckets entries onto the same
+    /// gap-anchored, grid-aligned cells `activeSession` uses, so peak and live value share a basis.
+    public static func peakCompleted(from entries: [UsageEntry], pricing: PricingTable,
+                                     now: Date = Date(), resetOffset: TimeInterval = 0)
+        -> (work: Int, weighted: Double, cost: Double) {
+        guard !entries.isEmpty else { return (0, 0, 0) }
+        let sorted = entries.sorted { $0.timestamp < $1.timestamp }
+
+        struct Cell { var work = 0; var weighted = 0.0; var cost = 0.0; var end = Date.distantPast }
+        var cells: [Date: Cell] = [:]
+        var anchor = sorted[0].timestamp.addingTimeInterval(resetOffset)
+        var prev = sorted[0].timestamp
+        for e in sorted {
+            if e.timestamp.timeIntervalSince(prev) >= blockDuration {
+                anchor = e.timestamp.addingTimeInterval(resetOffset)   // new streak after a >=5h gap
+            }
+            prev = e.timestamp
+            let steps = floor(e.timestamp.timeIntervalSince(anchor) / blockDuration)
+            let start = anchor.addingTimeInterval(max(0, steps) * blockDuration)
+            var c = cells[start] ?? Cell()
+            c.work += e.workTokens
+            c.weighted += Double(e.workTokens) * pricing.weight(for: e.family)
+            c.cost += pricing.cost(for: e)
+            c.end = start.addingTimeInterval(blockDuration)
+            cells[start] = c
+        }
+        var pw = 0; var cw = 0.0; var cc = 0.0
+        for (_, c) in cells where c.end <= now {        // completed blocks only
+            pw = max(pw, c.work); cw = max(cw, c.weighted); cc = max(cc, c.cost)
+        }
+        return (pw, cw, cc)
+    }
 }

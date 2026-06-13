@@ -51,4 +51,35 @@ import Foundation
         let w = WeeklyWindowEngine.current(from: [], pricing: pricing, anchor: anchor, now: now)
         #expect(w.resetsIn(now: now) == 3600)
     }
+
+    // No-DST zone so a fixed 7-day grid keeps every boundary on the same wall-clock time.
+    private var bangkok: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Bangkok")!
+        return c
+    }
+
+    @Test func anchorLandsOnConfiguredWeekdayAndTime() {
+        let a = WeeklyWindowEngine.anchor(weekday: 2, hour: 15, minute: 0, calendar: bangkok)  // Monday 3 PM
+        let c = bangkok.dateComponents([.weekday, .hour, .minute], from: a)
+        #expect(c.weekday == 2)   // Monday
+        #expect(c.hour == 15)     // 3 PM
+        #expect(c.minute == 0)
+    }
+
+    @Test func weeklyGridResetsOnTheConfiguredWeekdayAndTime() {
+        let cal = bangkok
+        let a = WeeklyWindowEngine.anchor(weekday: 2, hour: 15, minute: 0, calendar: cal)
+        let now = a.addingTimeInterval(100 * day + 12_345)   // arbitrary, weeks later
+        let w = WeeklyWindowEngine.window(anchor: a, now: now)
+        let end = cal.dateComponents([.weekday, .hour, .minute], from: w.end)
+        #expect(end.weekday == 2 && end.hour == 15 && end.minute == 0)   // still Monday 3 PM
+        #expect(now >= w.start && now < w.end)
+    }
+
+    @Test func countdownShowsHoursAndMinutesUnderOneDay() {
+        #expect(Format.durationLong(25 * 3600) == "1d 1h")              // ≥ 1 day → days + hours
+        #expect(Format.durationLong(23 * 3600 + 12 * 60) == "23h 12m")  // < 1 day → hours + minutes
+        #expect(Format.durationLong(45 * 60) == "45m")                  // < 1 hour → minutes
+    }
 }

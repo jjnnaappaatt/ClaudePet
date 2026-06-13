@@ -34,9 +34,10 @@ public struct PricingTable: Codable, Sendable, Equatable {
         self.confidence = confidence
     }
 
-    /// June-2026, web-verified defaults.
+    /// June-2026, web-verified defaults. Fable is the top tier (above Opus).
     public static let `default` = PricingTable(
         prices: [
+            ModelFamily.fable.rawValue:  ModelPrice(inputPerM: 10, outputPerM: 50),
             ModelFamily.opus.rawValue:   ModelPrice(inputPerM: 5,  outputPerM: 25),
             ModelFamily.sonnet.rawValue: ModelPrice(inputPerM: 3,  outputPerM: 15),
             ModelFamily.haiku.rawValue:  ModelPrice(inputPerM: 1,  outputPerM: 5),
@@ -44,6 +45,18 @@ public struct PricingTable: Codable, Sendable, Equatable {
         effectiveDate: "2026-06-01",
         confidence: "high"
     )
+
+    /// A copy with any family that exists in `default` but is missing here filled in from
+    /// the defaults. Lets a table persisted before a new model existed (e.g. a saved table
+    /// with no Fable entry) pick up the new family without discarding the user's own edits
+    /// to the families it already has.
+    public func mergingMissingDefaults() -> PricingTable {
+        var merged = self
+        for (family, price) in PricingTable.default.prices where merged.prices[family] == nil {
+            merged.prices[family] = price
+        }
+        return merged
+    }
 
     public func price(for family: ModelFamily) -> ModelPrice? {
         prices[family.rawValue]
