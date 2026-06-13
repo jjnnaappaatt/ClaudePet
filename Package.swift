@@ -15,6 +15,7 @@ let package = Package(
             name: "ClaudePet",
             dependencies: ["ClaudePetCore"],
             exclude: ["Supporting/Info.plist", "Supporting/ClaudePet.entitlements"],
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

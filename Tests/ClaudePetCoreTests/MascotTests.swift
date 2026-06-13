@@ -17,6 +17,19 @@ import Foundation
         #expect(MascotArt.sit != MascotArt.hop)        // body shifts
     }
 
+    @Test func emotionFacesAreSizedAndDistinct() {
+        let faces = [MascotArt.happy, MascotArt.worried, MascotArt.alarmed,
+                     MascotArt.sleeping, MascotArt.celebrating]
+        for f in faces {
+            #expect(f.count == 16)
+            #expect(f.allSatisfy { $0.count == 16 })
+        }
+        #expect(MascotArt.happy != MascotArt.worried)
+        #expect(MascotArt.worried != MascotArt.alarmed)
+        #expect(MascotArt.sleeping != MascotArt.sit)
+        #expect(MascotArt.face(.neutral) == MascotArt.sit)   // neutral == the original idle face
+    }
+
     @Test func machineIsDeterministicForSeed() {
         var a = MascotMachine(seed: 42)
         var b = MascotMachine(seed: 42)

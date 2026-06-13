@@ -15,7 +15,7 @@ final class WindowController {
     private let legacyKey = "ClaudePetFrame"       // pre-multi-display single position (migrated)
     private var observers: [NSObjectProtocol] = []
     private var isRestoring = false                // suppress saves while we reposition
-    static let baseWidth: CGFloat = 268
+    static let baseWidth: CGFloat = 520
 
     init(content: NSView) {
         self.content = content

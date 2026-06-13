@@ -21,10 +21,15 @@ struct BudgetGauge: View {
         unit == .tokens ? Format.tokens(Int(value)) : Format.currency(value)
     }
 
-    /// The limit % is an approximation — say what it's measured against, and nudge a
-    /// re-calibration only if a previously-set calibration has lapsed past a reset.
+    /// When server-driven, the % is Claude's real number; otherwise it's an approximation
+    /// and we say what it's measured against (and nudge re-calibration if one has lapsed).
     private var limitHelp: String {
-        "Approximate — the % is measured against \(metrics.budgetBasisDescription)."
+        if metrics.serverDriven5h {
+            return "Claude's real 5-hour usage, via the statusline cache"
+                + (metrics.serverDataAge.map { " (as of \($0))" } ?? "")
+                + ". ClaudePet reads only the local file — no token, no network."
+        }
+        return "Approximate — the % is measured against \(metrics.budgetBasisDescription)."
             + (metrics.lastCalibratedAt != nil && metrics.calibrationIsStale
                ? " A limit reset since you calibrated; re-calibrate in Settings to re-align." : "")
     }
@@ -34,8 +39,14 @@ struct BudgetGauge: View {
             HStack {
                 Text("5h current session").scaledFont(10, weight: .semibold)
                     .foregroundStyle(Theme.textSecondary)
+                if metrics.serverDriven5h {
+                    Text("live").scaledFont(7.5, weight: .bold)
+                        .padding(.horizontal, 3).padding(.vertical, 0.5)
+                        .background(Theme.claudeCoral.opacity(0.22), in: Capsule())
+                        .foregroundStyle(Theme.claudeCoral)
+                }
                 Spacer()
-                Text("~\(Int((fraction * 100).rounded()))%")
+                Text("\(metrics.serverDriven5h ? "" : "~")\(Int((fraction * 100).rounded()))%")
                     .scaledFont(10, weight: .semibold, design: .rounded)
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -49,20 +60,27 @@ struct BudgetGauge: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text("\(amount(metrics.blockValue(unit: unit))) / \(amount(metrics.blockBudget(unit: unit)))")
-                    Spacer()
-                    Text("\(amount(metrics.blockRemaining(unit: unit))) left")
-                        .foregroundStyle(Theme.claudeCoral.opacity(0.9))
+                    if metrics.serverDriven5h {
+                        // Server gives a %, not a token cap — show local tokens as context only.
+                        Text("\(amount(metrics.blockValue(unit: unit))) used this window")
+                    } else {
+                        Text("\(amount(metrics.blockValue(unit: unit))) / \(amount(metrics.blockBudget(unit: unit)))")
+                        Spacer()
+                        Text("\(amount(metrics.blockRemaining(unit: unit))) left")
+                            .foregroundStyle(Theme.claudeCoral.opacity(0.9))
+                    }
                 }
                 HStack(spacing: 4) {
-                    if let block = metrics.activeBlock {
+                    if metrics.activeBlock != nil {
                         Text("burn \(amount(metrics.blockBurnPerHour(unit: unit)))/h")
-                        Spacer()
+                    } else if !metrics.serverDriven5h {
+                        Text("idle")
+                    }
+                    Spacer()
+                    if let reset = metrics.blockResetDate {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text("resets in \(Format.duration(block.endsAt.timeIntervalSince(context.date)))")
+                            Text("resets in \(Format.duration(reset.timeIntervalSince(context.date)))")
                         }
-                    } else {
-                        Text("idle"); Spacer()
                     }
                 }
                 .foregroundStyle(Theme.textSecondary.opacity(0.85))

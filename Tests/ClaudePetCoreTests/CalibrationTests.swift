@@ -19,6 +19,7 @@ import Foundation
     /// value equals the window's work tokens, so the math is exact and checkable.
     @Test func calibrateLimitsBackSolvesBothBudgets() {
         let store = MetricsStore(defaults: freshDefaults())
+        store.useStatuslineData = false        // isolate calibration math from any real statusline cache
         store.weightTokensByModel = false      // gauge value == flat work tokens
         let now = Date()
         // 1000 work tokens, landing in both the active 5h block and the weekly window.

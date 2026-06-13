@@ -66,7 +66,17 @@ struct SettingsView: View {
 
             // MARK: Calibration
             Section {
-                caption("Open Claude → Settings → Usage and enter the % shown, then Calibrate. The widget can't read Claude's exact numbers (server-side), so this fits the budgets to match.")
+                Toggle("Use Claude's live usage (from statusline)", isOn: $metrics.useStatuslineData)
+                    .onChange(of: metrics.useStatuslineData) { persist() }
+                if metrics.useStatuslineData {
+                    if metrics.serverDriven5h || metrics.serverDriven7d {
+                        caption("Live data found\(metrics.serverDataAge.map { " (as of \($0))" } ?? "") — the 5h & weekly gauges show Claude's real numbers. ClaudePet reads only the statusline's local cache file; it never touches your token or the network.")
+                    } else {
+                        caption("No live data yet. Install & run claude-statusline (it writes a local cache); the gauges then switch to Claude's real numbers. Until then they use the estimate below. ClaudePet never reads your token or makes network calls.")
+                    }
+                }
+                Divider()
+                caption("Manual fallback: open Claude → Settings → Usage and enter the % shown, then Calibrate — used when live data isn't available.")
                 pctRow("Current session", text: $sessionPct, focus: .session)
                 pctRow("Weekly (all models)", text: $weeklyPct, focus: .weekly)
                 HStack {
@@ -128,6 +138,13 @@ struct SettingsView: View {
 
             // MARK: Appearance
             Section {
+                Picker("Widget layout", selection: $metrics.widgetLayout) {
+                    Text("Wide").tag(WidgetLayout.landscape)
+                    Text("Tall").tag(WidgetLayout.vertical)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: metrics.widgetLayout) { persist() }
+                caption("Wide = the two-column landscape card; Tall = the original single column.")
                 HStack {
                     Text("Widget size")
                     Slider(value: $metrics.widgetScale, in: 0.8...1.8, step: 0.05)

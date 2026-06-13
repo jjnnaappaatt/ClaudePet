@@ -1,6 +1,9 @@
 import Foundation
 import Observation
 
+/// Widget shape: the wide two-column card (default) or the original tall single column.
+public enum WidgetLayout: String, CaseIterable, Sendable { case landscape, vertical }
+
 /// The view model the UI and mascot read from. Scans `~/.claude` off the main
 /// actor, recomputes aggregates, and publishes them on the main actor.
 @MainActor
@@ -16,6 +19,7 @@ public final class MetricsStore {
     public var unknownModels: Set<String> = []
     public var activeBlock: UsageBlock?
     public var weekReset: Date?                   // end of the current fixed weekly window
+    public private(set) var serverUsage: StatuslineUsage?   // real 5h/7d from the statusline cache (local file read; no token/network)
 
     // Config (user-editable; persisted to UserDefaults)
     public var pricing = PricingTable.default
@@ -27,6 +31,7 @@ public final class MetricsStore {
     public var includeSubagents = true
     public var weightTokensByModel = true        // gauge counts Opus tokens heavier than Haiku (cost-weighted)
     public var widgetScale: Double = 1.0         // uniform zoom (all resize handles + slider)
+    public var widgetLayout: WidgetLayout = .landscape   // wide two-column (default) vs tall single column
     public var account: AccountInfo = .unknown   // plan + subscription start
     public var plan: AccountPlan { account.plan }
     public var autoBudgetFromPlan = true         // budget follows the plan unless overridden
@@ -64,6 +69,8 @@ public final class MetricsStore {
     public var weeklyResetHour = 15              // hour of the weekly reset, local 24h (default 3 PM)
     public var weeklyResetMinute = 0             // minute of the weekly reset, local
     public var lastCalibratedAt: Date?           // when budgets were last fitted to Claude's /usage
+    public var useStatuslineData = true          // drive gauges from the statusline's local usage cache when present
+    public var statuslineCachePath = StatuslineUsageReader.defaultPath   // injectable for tests
     public var extraUsageEnabled: Bool { account.extraUsageEnabled }
 
     /// Anchor for the fixed weekly-limit grid: the configured reset weekday + time of day,
@@ -175,6 +182,9 @@ public final class MetricsStore {
         let pw = WeeklyWindowEngine.peakCompleted(from: entries, pricing: pricing,
                                                   anchor: weeklyAnchor, now: now)
         peakWeekWork = pw.work; peakWeekWeighted = pw.weighted; peakWeekCost = pw.cost
+        // Real server-side 5h/7d numbers, read from the statusline's local cache (no token,
+        // no network — ClaudePet only reads the file the user's statusline already wrote).
+        serverUsage = useStatuslineData ? StatuslineUsageReader.read(path: statuslineCachePath) : nil
         lastUpdated = now
         onRecompute?()
     }
@@ -189,6 +199,7 @@ public final class MetricsStore {
         static let weightTokensByModel = "weightTokensByModel"
         static let pricing = "pricingTable"
         static let widgetScale = "widgetScale"
+        static let widgetLayout = "widgetLayout"
         static let autoBudgetFromPlan = "autoBudgetFromPlan"
         static let autoPeakBudget = "autoPeakBudget"
         static let peakHeadroom = "peakHeadroom"
@@ -205,6 +216,7 @@ public final class MetricsStore {
         static let weeklyResetHour = "weeklyResetHour"
         static let weeklyResetMinute = "weeklyResetMinute"
         static let lastCalibratedAt = "lastCalibratedAt"
+        static let useStatuslineData = "useStatuslineData"
     }
 
     public func loadConfig() {
@@ -231,6 +243,9 @@ public final class MetricsStore {
         }
         if defaults.object(forKey: Key.widgetScale) != nil {
             widgetScale = defaults.double(forKey: Key.widgetScale)
+        }
+        if let raw = defaults.string(forKey: Key.widgetLayout), let l = WidgetLayout(rawValue: raw) {
+            widgetLayout = l
         }
         if defaults.object(forKey: Key.autoBudgetFromPlan) != nil {
             autoBudgetFromPlan = defaults.bool(forKey: Key.autoBudgetFromPlan)
@@ -264,6 +279,9 @@ public final class MetricsStore {
         if defaults.object(forKey: Key.lastCalibratedAt) != nil {
             lastCalibratedAt = Date(timeIntervalSince1970: defaults.double(forKey: Key.lastCalibratedAt))
         }
+        if defaults.object(forKey: Key.useStatuslineData) != nil {
+            useStatuslineData = defaults.bool(forKey: Key.useStatuslineData)
+        }
     }
 
     /// Persist config and re-aggregate so changes show immediately.
@@ -277,6 +295,7 @@ public final class MetricsStore {
             defaults.set(data, forKey: Key.pricing)
         }
         defaults.set(widgetScale, forKey: Key.widgetScale)
+        defaults.set(widgetLayout.rawValue, forKey: Key.widgetLayout)
         defaults.set(autoBudgetFromPlan, forKey: Key.autoBudgetFromPlan)
         defaults.set(autoPeakBudget, forKey: Key.autoPeakBudget)
         defaults.set(peakHeadroom, forKey: Key.peakHeadroom)
@@ -297,6 +316,7 @@ public final class MetricsStore {
         } else {
             defaults.removeObject(forKey: Key.lastCalibratedAt)
         }
+        defaults.set(useStatuslineData, forKey: Key.useStatuslineData)
         recompute()
         onConfigChange?()
     }
@@ -335,8 +355,10 @@ public final class MetricsStore {
         return base * (1 + peakHeadroom)
     }
 
-    /// Clamped [0,1] fill for the bar.
+    /// Clamped [0,1] fill for the bar. Prefers Claude's real utilization (from the
+    /// statusline cache) when available; otherwise the local budget estimate.
     public func blockFraction(unit: BudgetUnit) -> Double {
+        if let s = serverUsage?.fiveHour, s.isUsable() { return s.fraction }
         let budget = blockBudget(unit: unit)
         guard budget > 0 else { return 0 }
         return min(1, max(0, blockValue(unit: unit) / budget))
@@ -378,6 +400,7 @@ public final class MetricsStore {
     }
 
     public func weeklyFraction(unit: BudgetUnit) -> Double {
+        if let s = serverUsage?.sevenDay, s.isUsable() { return s.fraction }
         let budget = weeklyBudget(unit: unit)
         guard budget > 0 else { return 0 }
         return min(1, max(0, weeklyValue(unit: unit) / budget))
@@ -464,6 +487,44 @@ public final class MetricsStore {
             return "Claude's /usage (calibrated \(age))"
         }
         return autoBudgetFromPlan ? "a tier-scaled plan estimate" : "your custom budget"
+    }
+
+    // MARK: - Live server usage (from the statusline cache)
+
+    /// True when Claude's real 5h utilization is available and its window hasn't reset.
+    public var serverDriven5h: Bool { serverUsage?.fiveHour?.isUsable() == true }
+    /// True when Claude's real 7-day utilization is available and its window hasn't reset.
+    public var serverDriven7d: Bool { serverUsage?.sevenDay?.isUsable() == true }
+
+    /// Relative age of the statusline cache ("2m ago"), or nil if no cache was read.
+    public var serverDataAge: String? { serverUsage.map { Format.relativeAge(from: $0.asOf) } }
+
+    /// 5h reset moment — Claude's real reset when server-driven, else the local block end.
+    public var blockResetDate: Date? {
+        if serverDriven5h, let r = serverUsage?.fiveHour?.resetsAt { return r }
+        return activeBlock?.endsAt
+    }
+    /// Weekly reset moment — Claude's real reset when server-driven, else the local window end.
+    public var weeklyResetDate: Date? {
+        if serverDriven7d, let r = serverUsage?.sevenDay?.resetsAt { return r }
+        return weekReset
+    }
+
+    // MARK: - Mascot mood
+
+    /// The pet's mood, from how close you are to a limit (whichever of 5h/weekly is closer),
+    /// using the same gauge fractions the bars show (server-live or local estimate). Idle when
+    /// there's no active session, so the pet sleeps when you're away.
+    public var mascotEmotion: MascotEmotion {
+        guard activeBlock != nil || serverDriven5h else { return .sleeping }
+        let pressure = max(blockFraction(unit: budgetUnit), weeklyFraction(unit: budgetUnit))
+        switch pressure {
+        case ..<0.05: return .celebrating   // fresh window, lots of room
+        case ..<0.50: return .happy
+        case ..<0.80: return .neutral
+        case ..<0.95: return .worried
+        default:      return .alarmed
+        }
     }
 
     // MARK: - Previews / snapshots

@@ -23,12 +23,15 @@ public struct MascotMachine {
 
     public init(seed: UInt64 = 0xC1A0_DE) { rng = SeededRNG(seed: seed) }
 
-    public func frames(for state: MascotState) -> [[[UInt8]]] {
+    public func frames(for state: MascotState, emotion: MascotEmotion = .neutral) -> [[[UInt8]]] {
+        func f(_ eye: MascotArt.Eyes? = nil, leg: Int = 0, y: Int = 0) -> [[UInt8]] {
+            MascotArt.face(emotion, eyeOverride: eye, legPhase: leg, yOffset: y)
+        }
         switch state {
-        case .sit:   return [MascotArt.sit]
-        case .blink: return [MascotArt.blink, MascotArt.sit]
-        case .walk:  return [MascotArt.walkA, MascotArt.sit, MascotArt.walkB, MascotArt.sit]
-        case .hop:   return [MascotArt.sit, MascotArt.hop, MascotArt.hop, MascotArt.sit]
+        case .sit:   return [f()]
+        case .blink: return [f(.closed), f()]
+        case .walk:  return [f(leg: 1), f(), f(leg: 2), f()]
+        case .hop:   return [f(), f(y: 2), f(y: 2), f()]
         }
     }
 
@@ -41,14 +44,29 @@ public struct MascotMachine {
         }
     }
 
-    /// Pick the next state: mostly sit, frequent blinks, occasional walk, rare hop.
-    public mutating func nextState() -> MascotState {
+    /// Pick the next idle action, biased by mood: calm moods wander/hop, stressed moods stay
+    /// put and just blink, sleeping holds still.
+    public mutating func nextState(for emotion: MascotEmotion = .neutral) -> MascotState {
         let roll = Double(rng.next() % 1000) / 1000.0
-        switch roll {
-        case ..<0.46: return .sit
-        case ..<0.80: return .blink
-        case ..<0.93: return .walk
-        default:      return .hop
+        switch emotion {
+        case .sleeping:
+            return .sit                                   // hold the sleeping pose
+        case .worried, .alarmed:
+            return roll < 0.7 ? .sit : .blink             // anxious — no wandering
+        case .happy, .celebrating:
+            switch roll {                                 // livelier
+            case ..<0.40: return .sit
+            case ..<0.70: return .blink
+            case ..<0.85: return .walk
+            default:      return .hop
+            }
+        case .neutral:
+            switch roll {                                 // original idle mix
+            case ..<0.46: return .sit
+            case ..<0.80: return .blink
+            case ..<0.93: return .walk
+            default:      return .hop
+            }
         }
     }
 }

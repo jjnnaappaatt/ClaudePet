@@ -11,16 +11,25 @@ public final class MascotEngine {
     private var index = 0
     private var accumulator = 0.0
     private var lastTick: Date?
+    private var emotion: MascotEmotion = .neutral
 
     public private(set) var currentState: MascotState = .sit
 
     public init(seed: UInt64 = 0xC1A0_DE) {
         machine = MascotMachine(seed: seed)
-        sequence = machine.frames(for: .sit)
+        sequence = machine.frames(for: .sit, emotion: .neutral)
         frameDuration = machine.frameDuration(for: .sit)
     }
 
     public var currentFrame: [[UInt8]] { sequence[min(index, sequence.count - 1)] }
+
+    /// Set the mood. Rebuilds the current sequence so the new face shows immediately.
+    public func setEmotion(_ e: MascotEmotion) {
+        guard e != emotion else { return }
+        emotion = e
+        sequence = machine.frames(for: currentState, emotion: emotion)
+        index = min(index, sequence.count - 1)
+    }
 
     /// Advance to `date`. dt is clamped so waking from sleep/occlusion doesn't fast-forward.
     public func advance(to date: Date) {
@@ -32,9 +41,9 @@ public final class MascotEngine {
             accumulator -= frameDuration
             index += 1
             if index >= sequence.count {
-                let next = machine.nextState()
+                let next = machine.nextState(for: emotion)
                 currentState = next
-                sequence = machine.frames(for: next)
+                sequence = machine.frames(for: next, emotion: emotion)
                 frameDuration = machine.frameDuration(for: next)
                 index = 0
             }
