@@ -169,7 +169,7 @@ struct SettingsView: View {
             // MARK: Footer
             Section {
                 HStack {
-                    Text("ClaudePet 0.1.0").font(.caption).foregroundStyle(.secondary)
+                    Text("ClaudePet \(ClaudePetCore.version)").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Quit ClaudePet") { NSApplication.shared.terminate(nil) }
                 }

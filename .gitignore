@@ -1,6 +1,11 @@
 # Build products
 .build/
 ClaudePet.app/
+dist/
+
+# Working material (not part of the published source)
+Design Feedback
+.playwright-mcp/
 
 # macOS / Xcode cruft
 .DS_Store

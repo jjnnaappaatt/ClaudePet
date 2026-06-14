@@ -1,0 +1,84 @@
+<!-- @dsCard group="Foundations" -->
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>ClaudePet — Typography</title><style>:root{
+  --coral:#D97757; --highlight:#F2A485; --dark-outline:#793923;
+  --card-top:#2B2B30; --card-bottom:#1A1A1C; --card-stroke:rgba(255,255,255,.08);
+  --text-primary:#fff; --text-secondary:rgba(255,255,255,.62); --text-faint:rgba(255,255,255,.40);
+  --track:rgba(255,255,255,.12); --orange:#FF9500; --red:#FF3B30;
+  --corner:18px; --pad:12px;
+  --m-body:#D97757; --m-belly:#F4AA8D; --m-outline:#5A2618; --m-pupil:#1B1B1E;
+  --m-white:#fff; --m-sweat:#66B8F2; --m-alarm:#ED4D45;
+  --dot-fable:#B78CF2; --dot-opus:var(--coral); --dot-sonnet:var(--highlight);
+  --dot-haiku:#8CC7F2; --dot-other:#9AA0A6;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+  --font-round:ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#101216;color:var(--text-primary);font-family:var(--font);
+  padding:28px;display:flex;justify-content:center}
+.wrap{width:100%;max-width:600px}
+h1{font-size:15px;margin:0 0 2px;font-weight:700}
+.sub{font-size:11px;color:var(--text-secondary);margin:0 0 16px;line-height:1.45}
+.panel{background:linear-gradient(var(--card-top),var(--card-bottom));
+  border:1px solid var(--card-stroke);border-radius:14px;padding:16px}
+.num{font-family:var(--font-round);font-feature-settings:"tnum"}
+.grow{flex:1}
+.dim{color:var(--text-faint)}
+/* badges */
+.badge{white-space:nowrap;font-size:8.5px;font-weight:700;color:var(--coral);
+  background:rgba(217,119,87,.20);padding:1.5px 5px;border-radius:999px}
+.live{white-space:nowrap;font-size:7.5px;font-weight:700;color:var(--coral);background:rgba(217,119,87,.22);
+  padding:.5px 4px;border-radius:999px;letter-spacing:.2px}
+.live.alt{color:var(--highlight);background:rgba(242,164,133,.22)}
+/* stats header */
+.stats{display:flex;flex-direction:column;gap:2px}
+.row1{display:flex;align-items:center;gap:5px}
+.today{font-size:11px;font-weight:600;color:var(--text-secondary);white-space:nowrap}
+.cost{font-size:21px;font-weight:700;color:var(--coral);white-space:nowrap}
+.row2,.row3{display:flex;align-items:baseline;gap:6px}
+.work{font-size:17px;font-weight:700;color:var(--text-primary)}
+.cache{font-size:12px;font-weight:500;color:var(--text-secondary)}
+.unit{font-size:10px;color:var(--text-secondary)}
+.unit.faint{color:rgba(255,255,255,.43)}
+/* gauges */
+.gauge{display:flex;flex-direction:column;gap:4px}
+.ghead{display:flex;align-items:center;gap:5px}
+.t-label{font-size:10px;font-weight:600;color:var(--text-secondary)}
+.t-pct{font-size:10px;font-weight:600;color:var(--text-secondary)}
+.bar{height:7px;background:var(--track);border-radius:999px;overflow:hidden}
+.bar>i{display:block;height:100%;border-radius:999px}
+.gsub{display:flex;font-size:9.5px;color:var(--text-secondary)}
+.gsub.dim2{color:rgba(255,255,255,.53)}
+/* model rows */
+.mrow{display:flex;align-items:center;gap:6px}
+.dot{width:6px;height:6px;border-radius:50%;flex:none}
+.mname{font-size:11px;font-weight:500;color:var(--text-primary)}
+.mtok{font-size:10px;color:var(--text-secondary)}
+.mcost{font-size:10px;font-weight:600;color:var(--text-primary);width:44px;text-align:right}
+.mcost.unpriced{color:rgba(255,255,255,.5);font-weight:400}
+/* weekly chart */
+.chart{display:flex;flex-direction:column;gap:4px}
+.chead{display:flex;align-items:center}
+.chead .cap{font-size:8.5px;color:rgba(255,255,255,.6);margin-left:auto}
+.bars{display:flex;align-items:flex-end;gap:5px}
+.barcol{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;justify-content:flex-end}
+.barcol .b{width:100%;border-radius:2px;background:rgba(217,119,87,.40)}
+.barcol.today .b{background:var(--coral)}
+.bl{font-size:7px;color:rgba(255,255,255,.7)}
+.barcol.today .bl{color:var(--coral)}
+/* footer + billing */
+.footer{display:flex;align-items:center;gap:4px;font-size:10px}
+.fl{color:rgba(255,255,255,.5)}
+.fv{color:var(--text-primary)}
+.gear{margin-left:auto;color:var(--text-secondary);font-size:12px;line-height:1}
+.billing{display:flex;flex-direction:column;gap:3px;font-size:10px}
+.brow{display:flex;align-items:center;gap:5px}
+.bl2{color:var(--text-secondary)}
+.bv{color:var(--text-primary)}
+.coral{color:var(--coral)}
+/* layout */
+.sep{height:1px;background:var(--card-stroke)}
+.vsep{width:1px;background:var(--card-stroke);align-self:stretch}
+.header{display:flex;align-items:flex-start;gap:11px}
+.petbox svg{width:64px;height:64px;image-rendering:pixelated;display:block}
+.vstack{display:flex;flex-direction:column}
+.wrap{max-width:600px}</style></head><body><div class="wrap"><h1>Typography</h1><p class="sub">Two faces: rounded tabular numerals for every metric, SF Pro Text for labels — mirroring the native widget.</p><div class="panel" style="display:flex;flex-direction:column;gap:14px"><div><div style="font-size:9px;color:var(--text-secondary);margin-bottom:4px">Numerals — SF Pro Rounded (tabular)</div><div style="display:flex;align-items:baseline;gap:14px"><span class="num" style="font-size:28px;font-weight:700">262.5k</span><span class="num coral" style="font-size:21px;font-weight:700">~$26.38</span><span class="num" style="font-size:12px;color:var(--text-secondary)">32.6M</span></div></div><div class="sep"></div><div><div style="font-size:9px;color:var(--text-secondary);margin-bottom:6px">Labels — SF Pro Text</div><div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:11px;font-weight:600;color:var(--text-secondary)">Today · 11 semibold</span><span style="font-size:10px;font-weight:600;color:var(--text-secondary)">5h current session · 10 semibold</span><span style="font-size:9.5px;color:var(--text-secondary)">625.8k used this window · 9.5 regular</span><span style="font-size:8.5px;color:rgba(255,255,255,.6)">work/day · 8.5 caption</span><span style="font-size:7.5px;font-weight:700;color:var(--coral)">LIVE · 7.5 badge</span></div></div></div></div></body></html>

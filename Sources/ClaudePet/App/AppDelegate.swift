@@ -50,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let s = ProcessInfo.processInfo.environment["CLAUDEPET_SCALE"], let v = Double(s) {
                 metrics.widgetScale = v
             }
+            if let lay = ProcessInfo.processInfo.environment["CLAUDEPET_LAYOUT"],
+               let l = WidgetLayout(rawValue: lay) {
+                metrics.widgetLayout = l       // verification override; leaves the user's saved choice untouched
+            }
             Snapshot.render(ContentView().environment(metrics).environment(panelVisibility), to: snapPath)
             NSApp.terminate(nil)
             return

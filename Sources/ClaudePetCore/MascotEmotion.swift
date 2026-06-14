@@ -6,3 +6,11 @@ import Foundation
 public enum MascotEmotion: String, CaseIterable, Sendable {
     case sleeping, celebrating, happy, neutral, worried, alarmed
 }
+
+/// Severity of the binding limit — the single accent colour + a colour-blind-safe signal
+/// (the redesign pairs this with a status word so state never relies on colour alone).
+public enum StatusLevel: String, CaseIterable, Sendable {
+    case ok      // plenty of headroom (coral)
+    case warn    // getting tight (orange)
+    case over    // at the cap (red)
+}

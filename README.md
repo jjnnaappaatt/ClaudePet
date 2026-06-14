@@ -1,57 +1,82 @@
 # ClaudePet 🐾
 
-A native macOS floating desktop companion that monitors your Claude usage with an
-ambient pixel-art Claude mascot. Reads your local Claude Code logs — **no API key,
-no network**.
+A tiny native-macOS desktop pet that watches your Claude usage. A coral pixel critter sits on
+your desktop and shows, at a glance, how close you are to your limits — reading your **local**
+Claude Code logs only. **No API key, no network, no token.**
 
-![widget](docs/widget.png)
+<p align="center">
+  <img src="docs/widget-compact.png" width="280" alt="Compact one-glance widget">
+  &nbsp;&nbsp;
+  <img src="docs/widget-large.png" width="430" alt="Large tiered widget">
+</p>
 
 ## What it shows
 
-- **Today** — work tokens (input+output), total billable tokens (incl. cache), and cost
-- **5-hour block** — a gauge toward your budget (switchable tokens / US$), burn rate, reset countdown
-- **Per-model** — Opus / Sonnet / Haiku split with cost (unknown models flagged "unpriced")
-- **Week & all-time** totals
-- An **ambient pixel mascot** (sit / blink / walk / hop) that pauses when hidden / Low Power / Reduce Motion
+- **One glance (compact):** the pet, the limit you're closest to as a single big %, a status
+  word, and one muted line — "Resets in 2h 19m · ~$26.38 today."
+- **Tiered (large):** the pet + a plain-language status, both limits (the binding one in coral),
+  a real per-model split (Opus / Sonnet / Haiku tokens + cost), and a daily/weekly summary.
+- **The pet reacts.** It's *Cruising* with headroom and *At the wall* near a cap — the status
+  word carries the same signal as the colour, so it reads even if you're colour-blind.
 
-## How it works
+## Install (macOS 14+)
 
-Parses `~/.claude/projects/**/*.jsonl` (incl. `subagents/agent-*.jsonl`), **deduplicates by
-`message.id`** (~half of raw lines are duplicates), excludes `<synthetic>` lines, and computes
-cost from an **editable, dated pricing table** (cache read 0.1×, write 1.25×/2× input). Live
-updates via FSEvents with incremental re-parse (only changed files). Cost is notional
-API-equivalent (you're likely on a subscription).
+1. Download **`ClaudePet-x.y.z.dmg`** from the [Releases](../../releases) page.
+2. Open the DMG and **drag ClaudePet to Applications**.
+3. **First launch only** — the app is signed ad-hoc (not via a paid Apple Developer account), so
+   macOS Gatekeeper asks for a one-time confirmation:
+   - **Right-click** `ClaudePet` in Applications → **Open** → **Open** in the dialog. *(Just
+     double-clicking the first time will refuse — use right-click → Open.)*
+   - Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/ClaudePet.app`
 
-## Build & run
+After that it opens normally. It's a **dockless agent** (no Dock icon) — the pet just appears on
+your desktop. Drag it anywhere; it floats above other windows, shows on all Spaces, and remembers
+its position. Enable **Launch at login** in Settings to keep it around.
+
+## Using it
+
+- **Drag** the pet to reposition. Hover to reveal resize handles.
+- Click the **⚙ gear** for Settings.
+- Two layouts (Settings → Appearance): **compact** (one glance) and **large** (tiered).
+- Hover the gauges/numbers for tooltips explaining each value.
+
+## Settings (⚙)
+
+Budget source (auto-peak / plan / custom), tokens-vs-US$ unit, live-data toggle (reads
+[claude-statusline](https://github.com/andrewii23/claude-statusline)'s local cache when present
+for Claude's *real* numbers), manual calibration, billing-this-cycle, widget size, layout,
+launch-at-login, and an editable pricing table.
+
+## Privacy
+
+ClaudePet reads only local files under `~/.claude` (your transcripts, `~/.claude.json`, and —
+if installed — the statusline's local cache). It **never** reads your OAuth token, and it makes
+**no network requests**. Token counts come straight from your transcripts; cost is a *notional*
+API-equivalent estimate (you're likely on a subscription).
+
+## Uninstall
+
+Quit (Settings → Quit, or `pkill -x ClaudePet`), then drag `/Applications/ClaudePet.app` to the
+Trash. Preferences live in `~/Library/Preferences/com.napat.ClaudePet.plist`.
+
+## Build from source
+
+Requires Xcode 16 / Swift 6 on macOS 14+.
 
 ```bash
+git clone https://github.com/jjnnaappaatt/ClaudePet.git
+cd ClaudePet
 swift test            # data-engine unit tests
 ./bundle.sh release   # build ClaudePet.app (ad-hoc signed, non-sandboxed)
 open ClaudePet.app
+./release.sh          # optional: package dist/ClaudePet-<version>.dmg
 ```
 
-To keep it permanently: move `ClaudePet.app` to `/Applications`, then enable **Launch at login**
-in Settings (gear icon). A stable path makes the login item reliable.
+**Architecture:** `ClaudePetCore` is pure, unit-tested Swift (models, JSONL parser + dedup,
+aggregator, 5-hour/weekly engines, pricing, `MetricsStore`, mascot logic). The app layer is a
+`FloatingPanel` (NSPanel) hosting SwiftUI, with a pixel-matrix mascot renderer. A web mirror of
+the UI (for [claude.ai/design](https://claude.ai/design)) lives in `frontend/`.
 
-It runs as a dockless agent (no Dock icon). Drag it anywhere; it remembers its position,
-floats above other windows, and shows on all Spaces. Quit via `pkill -x ClaudePet`
-(a quit affordance can be added later).
+## License
 
-## Settings (gear icon)
-
-5-hour budget + unit (tokens/US$), include-subagent-usage toggle, launch-at-login, and an
-editable pricing table (with "reset to defaults").
-
-## Architecture
-
-- **`ClaudePetCore`** (pure Swift, unit-tested) — models, JSONL parser, dedup, aggregator,
-  5-hour block engine, pricing, file watcher, `MetricsStore`, and the pure mascot logic
-  (`MascotArt`/`MascotMachine`/`MascotEngine`).
-- **App** — `FloatingPanel` (NSPanel) hosting SwiftUI via `NSHostingView`; SwiftUI views;
-  pixel-matrix mascot renderer.
-
-## Verification
-
-Built/verified headlessly with a permission-free `ImageRenderer` snapshot mode
-(`CLAUDEPET_SNAPSHOT`, `CLAUDEPET_MASCOT`, `CLAUDEPET_SETTINGS`), on-screen window
-geometry/level checks, a live file-watcher heartbeat, and 33 unit tests.
+[MIT](LICENSE) © 2026 JJ_NAPAT.
