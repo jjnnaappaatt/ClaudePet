@@ -1,7 +1,7 @@
 import Foundation
 
-/// Pixel-art-as-code mascot (16×16). A flat Claude-coral critter — wide rounded body,
-/// two side nubs, two legs — with swappable eyes / mouth / accent so it can emote.
+/// Pixel-art-as-code mascot (16×16). A rounded Claude-coral critter — oval body, slim side
+/// nubs, big glinting eyes, two legs — with swappable eyes / mouth / accent so it can emote.
 public enum MascotArt {
     static let n = 16
 
@@ -9,8 +9,8 @@ public enum MascotArt {
     public enum Mouth { case none, smile, open }
     public enum Accent { case none, sweat, sparkle, alarm, sleep }
 
-    /// Palette indices: 1 coral body, 3 dark (mouth), 4 sparkle/zzz, 5 eye, 6 sweat, 8 alarm.
-    static func build(eyes: Eyes = .slit, mouth: Mouth = .none, accent: Accent = .none,
+    /// Palette indices: 1 coral body, 3 dark (mouth), 4 glint/sparkle/zzz, 5 pupil, 6 sweat, 8 alarm.
+    static func build(eyes: Eyes = .slit, mouth: Mouth = .smile, accent: Accent = .none,
                       legPhase: Int = 0, yOffset: Int = 0) -> [[UInt8]] {
         var g = [[UInt8]](repeating: [UInt8](repeating: 0, count: n), count: n)
         func set(_ r: Int, _ c: Int, _ v: UInt8) {
@@ -19,20 +19,19 @@ public enum MascotArt {
             g[rr][c] = v
         }
 
-        // Body: rounded rectangle rows 4...10, cols 3...12 (corners trimmed).
+        // Body: a rounded oval — widest across the eyes (rows 6...8), tapering top & bottom.
         for r in 4...10 {
-            for c in 3...12 {
-                if (r == 4 || r == 10) && (c == 3 || c == 12) { continue }
-                set(r, c, 1)
-            }
+            let inset = (r == 4 || r == 10) ? 2 : (r == 5 || r == 9) ? 1 : 0
+            for c in (3 + inset)...(12 - inset) { set(r, c, 1) }
         }
-        // Side nubs (ears): rows 6...7 at cols 1-2 and 13-14.
-        for r in 6...7 { set(r, 1, 1); set(r, 2, 1); set(r, 13, 1); set(r, 14, 1) }
+        // Slim side nubs (little arms): one pixel each side, mid-body.
+        for r in 6...7 { set(r, 2, 1); set(r, 13, 1) }
 
-        // Eyes (index 5).
+        // Eyes: pupils are index 5; index 4 adds a white glint.
         switch eyes {
-        case .slit:
-            for r in 6...7 { set(r, 6, 5); set(r, 9, 5) }
+        case .slit:                                                        // calm, round
+            for r in 6...7 { for c in [5, 6, 9, 10] { set(r, c, 5) } }      // two 2×2 eyes
+            set(6, 5, 4); set(6, 9, 4)                                      // top-left glint
         case .closed:
             set(7, 5, 5); set(7, 6, 5); set(7, 9, 5); set(7, 10, 5)        // ‿ ‿ lines
         case .happy:
@@ -79,7 +78,7 @@ public enum MascotArt {
         case .sleeping:    return (.closed, .none,  .sleep)
         case .celebrating: return (.happy,  .smile, .sparkle)
         case .happy:       return (.happy,  .smile, .none)
-        case .neutral:     return (.slit,   .none,  .none)
+        case .neutral:     return (.slit,   .smile, .none)
         case .worried:     return (.wide,   .none,  .sweat)
         case .alarmed:     return (.wide,   .open,  .alarm)
         }

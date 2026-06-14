@@ -12,6 +12,8 @@ struct StatsHeaderView: View {
                 Text("Today")
                     .scaledFont(11, weight: .semibold)
                     .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
                 Text(metrics.plan.displayName)
                     .scaledFont(8.5, weight: .bold)
                     .padding(.horizontal, 5 * scale)
@@ -20,8 +22,10 @@ struct StatsHeaderView: View {
                     .foregroundStyle(Theme.claudeCoral)
                 Spacer()
                 Text("~" + Format.currency(metrics.today.costUSD))
-                    .scaledFont(15, weight: .bold, design: .rounded)
+                    .scaledFont(21, weight: .bold, design: .rounded)
                     .foregroundStyle(Theme.claudeCoral)
+                    .lineLimit(1)
+                    .fixedSize()
                     .help("Notional API-equivalent cost (estimate) — on a subscription you don't pay per token. The token counts below are exact (read from Claude's transcripts).")
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {

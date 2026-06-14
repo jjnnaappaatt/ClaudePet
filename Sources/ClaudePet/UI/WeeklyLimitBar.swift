@@ -60,7 +60,7 @@ struct WeeklyLimitBar: View {
 
             HStack(spacing: 4) {
                 if metrics.serverDriven7d {
-                    Text("\(amount(metrics.weeklyValue(unit: unit))) used this week")
+                    Text("\(amount(metrics.weeklyTokensUsed(unit: unit))) used this week")
                 } else {
                     Text("\(amount(metrics.weeklyValue(unit: unit))) / \(amount(metrics.weeklyBudget(unit: unit)))")
                     Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))

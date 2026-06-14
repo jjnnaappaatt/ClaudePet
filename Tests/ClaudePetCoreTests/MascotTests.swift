@@ -30,6 +30,12 @@ import Foundation
         #expect(MascotArt.face(.neutral) == MascotArt.sit)   // neutral == the original idle face
     }
 
+    @Test func neutralFaceHasGlintAndSmile() {
+        let flat = MascotArt.face(.neutral).flatMap { $0 }
+        #expect(flat.contains(4))   // refined eyes carry a white glint
+        #expect(flat.contains(3))   // and a small smile
+    }
+
     @Test func machineIsDeterministicForSeed() {
         var a = MascotMachine(seed: 42)
         var b = MascotMachine(seed: 42)

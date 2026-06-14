@@ -331,6 +331,13 @@ public final class MetricsStore {
         return weightTokensByModel ? b.weightedTokens : Double(b.workTokens)
     }
 
+    /// Real tokens (or $) actually used this block — raw work tokens, never cost-weighted.
+    /// For display, so "X used" always reports true usage even when the gauge is weighted.
+    public func blockTokensUsed(unit: BudgetUnit) -> Double {
+        guard let b = activeBlock else { return 0 }
+        return unit == .usd ? b.costUSD : Double(b.workTokens)
+    }
+
     public func blockBudget(unit: BudgetUnit) -> Double {
         if autoPeakBudget {
             // A fresh manual calibration is the most accurate anchor — it wins until a reset.
@@ -367,7 +374,7 @@ public final class MetricsStore {
     public func blockBurnPerHour(unit: BudgetUnit, now: Date = Date()) -> Double {
         guard let b = activeBlock else { return 0 }
         let hours = max(now.timeIntervalSince(b.actualStart) / 3600, 1.0 / 60)
-        return blockValue(unit: unit) / hours
+        return blockTokensUsed(unit: unit) / hours   // burn in real tokens, matching "used"
     }
 
     // MARK: - Weekly (7-day) gauge helpers
@@ -375,6 +382,11 @@ public final class MetricsStore {
     public func weeklyValue(unit: BudgetUnit) -> Double {
         if unit == .usd { return week.costUSD }
         return weightTokensByModel ? week.weightedTokens : Double(week.workTokens)
+    }
+
+    /// Real tokens (or $) actually used this week — raw work tokens, never cost-weighted.
+    public func weeklyTokensUsed(unit: BudgetUnit) -> Double {
+        unit == .usd ? week.costUSD : Double(week.workTokens)
     }
 
     public func weeklyBudget(unit: BudgetUnit) -> Double {

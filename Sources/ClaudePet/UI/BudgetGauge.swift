@@ -61,8 +61,8 @@ struct BudgetGauge: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     if metrics.serverDriven5h {
-                        // Server gives a %, not a token cap — show local tokens as context only.
-                        Text("\(amount(metrics.blockValue(unit: unit))) used this window")
+                        // Server gives a %, not a token cap — show real tokens used as context.
+                        Text("\(amount(metrics.blockTokensUsed(unit: unit))) used this window")
                     } else {
                         Text("\(amount(metrics.blockValue(unit: unit))) / \(amount(metrics.blockBudget(unit: unit)))")
                         Spacer()

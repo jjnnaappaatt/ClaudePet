@@ -8,7 +8,7 @@ struct ContentView: View {
     @Environment(MetricsStore.self) private var metrics
     @State private var hovering = false
     static let baseWidth: CGFloat = 520       // landscape two-column card
-    static let verticalWidth: CGFloat = 268   // original tall single-column card
+    static let verticalWidth: CGFloat = 300   // original tall single-column card (wide enough for the larger mascot + cost on one line)
     private static let handleMargin: CGFloat = 11   // transparent margin OUTSIDE the card for the grips
     private static let forceHandles = ProcessInfo.processInfo.environment["CLAUDEPET_HANDLES"] != nil
 
@@ -79,7 +79,7 @@ struct ContentView: View {
 
     private func header(scale: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 11 * scale) {
-            MascotView(size: 48 * scale)
+            MascotView(size: 64 * scale)
             StatsHeaderView()
         }
     }
