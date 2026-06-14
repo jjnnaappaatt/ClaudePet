@@ -15,24 +15,24 @@ struct ModelBreakdownView: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 3) {
             if metrics.todayByModel.isEmpty {
-                Text("No model usage today")
-                    .scaledFont(13).foregroundStyle(Theme.textSecondary.opacity(0.7))
+                Text("no model usage today")
+                    .scaledFont(10).foregroundStyle(Theme.textSecondary.opacity(0.7))
             } else {
                 ForEach(metrics.todayByModel) { row in
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Circle().fill(dotColor[row.family] ?? .gray)
-                            .frame(width: 8 * scale, height: 8 * scale)
+                            .frame(width: 6 * scale, height: 6 * scale)
                         Text(row.family.displayName)
-                            .scaledFont(13, weight: .medium).foregroundStyle(Theme.textPrimary)
+                            .scaledFont(11, weight: .medium).foregroundStyle(Theme.textPrimary)
                         Spacer()
                         Text(Format.tokens(row.workTokens))
-                            .scaledFont(13, design: .rounded).foregroundStyle(Theme.textSecondary)
+                            .scaledFont(10, design: .rounded).foregroundStyle(Theme.textSecondary)
                         Text(row.unpriced ? "—" : Format.currency(row.costUSD))
-                            .scaledFont(13, weight: .semibold, design: .rounded)
+                            .scaledFont(10, weight: .semibold, design: .rounded)
                             .foregroundStyle(row.unpriced ? Theme.textSecondary.opacity(0.6) : Theme.textPrimary)
-                            .frame(width: 56 * scale, alignment: .trailing)
+                            .frame(width: 44 * scale, alignment: .trailing)
                             .help(row.unpriced
                                 ? "No price set for \(row.family.displayName) — tokens are exact, cost can't be estimated."
                                 : "Notional API-equivalent cost estimate; tokens are exact.")

@@ -5,19 +5,21 @@ your desktop and shows, at a glance, how close you are to your limits — readin
 Claude Code logs only. **No API key, no network, no token.**
 
 <p align="center">
-  <img src="docs/widget-compact.png" width="280" alt="Compact one-glance widget">
+  <img src="docs/widget-compact.png" width="250" alt="Tall single-column widget">
   &nbsp;&nbsp;
-  <img src="docs/widget-large.png" width="430" alt="Large tiered widget">
+  <img src="docs/widget-large.png" width="440" alt="Wide two-column widget">
 </p>
 
 ## What it shows
 
-- **One glance (compact):** the pet, the limit you're closest to as a single big %, a status
-  word, and one muted line — "Resets in 2h 19m · ~$26.38 today."
-- **Tiered (large):** the pet + a plain-language status, both limits (the binding one in coral),
-  a real per-model split (Opus / Sonnet / Haiku tokens + cost), and a daily/weekly summary.
-- **The pet reacts.** It's *Cruising* with headroom and *At the wall* near a cap — the status
-  word carries the same signal as the colour, so it reads even if you're colour-blind.
+- **Today** — work tokens (input + output), total billable tokens (incl. cache), and notional cost.
+- **5-hour session** — a gauge toward your limit (live from Claude's real numbers when available),
+  burn rate, and a reset countdown.
+- **Weekly (all models)** — your 7-day usage with its own reset countdown.
+- **By model** — Opus / Sonnet / Haiku split with tokens + cost (unpriced models flagged).
+- **This week** — a per-day bar chart, plus Week & cycle totals and a billing line.
+- An **ambient pixel mascot** whose mood tracks how close you are to a limit — happy with
+  headroom, worried near a cap, asleep when you're away.
 
 ## Install (macOS 14+)
 
@@ -37,8 +39,32 @@ its position. Enable **Launch at login** in Settings to keep it around.
 
 - **Drag** the pet to reposition. Hover to reveal resize handles.
 - Click the **⚙ gear** for Settings.
-- Two layouts (Settings → Appearance): **compact** (one glance) and **large** (tiered).
+- Two layouts (Settings → Appearance): **tall** single-column and **wide** two-column.
 - Hover the gauges/numbers for tooltips explaining each value.
+
+## Live data — link to your Claude account
+
+Out of the box, ClaudePet *estimates* your limits from local logs. To show Claude's **real**
+5-hour and weekly usage (a **`live`** badge on the gauges), link it to your account through
+[**claude-statusline**](https://github.com/andrewii23/claude-statusline) — a separate tool that
+authenticates and writes a small local usage cache. ClaudePet only *reads that file*; it never
+touches your token or the network.
+
+1. **Install claude-statusline** following its README.
+2. **Add it as your Claude Code status line** in `~/.claude/settings.json`:
+   ```json
+   "statusLine": { "type": "command", "command": "bash ~/.claude/statusline.sh" }
+   ```
+   The first run authorizes it against your Claude account.
+3. **Use Claude Code once** so the status line runs — it writes
+   `/tmp/claude/statusline-usage-cache.json`.
+4. Done: ClaudePet has **"Use Claude's live usage"** on by default (Settings → *Match the Claude
+   app*) and picks up the cache automatically — the gauges switch to Claude's real % with a `live`
+   badge. No live data yet? You can still **calibrate** the gauges by hand in Settings to match
+   what `/usage` shows.
+
+> ClaudePet reads **only** the local cache file — no OAuth token, no network. claude-statusline is
+> the component that links to your account; install it only if you're comfortable with that.
 
 ## Settings (⚙)
 
@@ -58,6 +84,18 @@ API-equivalent estimate (you're likely on a subscription).
 
 Quit (Settings → Quit, or `pkill -x ClaudePet`), then drag `/Applications/ClaudePet.app` to the
 Trash. Preferences live in `~/Library/Preferences/com.napat.ClaudePet.plist`.
+
+## Design system
+
+The widget's look is mirrored as a small, self-contained HTML component library in
+[`frontend/`](frontend/) — colours, typography, the mascot's six moods, the gauges, and both
+widget layouts. Open any file in a browser to preview it, or import the whole set into
+[claude.ai/design](https://claude.ai/design) with the `/design-sync` skill. Details in
+[`frontend/README.md`](frontend/README.md).
+
+<p align="center">
+  <img src="docs/frontend-preview.png" width="520" alt="ClaudePet design system — mascot moods">
+</p>
 
 ## Build from source
 

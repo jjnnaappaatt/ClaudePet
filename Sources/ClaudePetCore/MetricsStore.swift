@@ -539,63 +539,6 @@ public final class MetricsStore {
         }
     }
 
-    // MARK: - Status (binding limit + plain-language state, for the one-glance redesign)
-
-    /// The limit closest to its cap — the single number the compact card leads with.
-    public var bindingFraction: Double {
-        max(blockFraction(unit: budgetUnit), weeklyFraction(unit: budgetUnit))
-    }
-
-    /// True when the weekly limit is the binding (closer) one — so the UI knows which row
-    /// wears the lone coral accent and which reset to count down. Ties favour the 5h session.
-    public var bindingIsWeekly: Bool {
-        weeklyFraction(unit: budgetUnit) > blockFraction(unit: budgetUnit)
-    }
-
-    /// Reset moment of whichever limit is binding.
-    public var bindingResetDate: Date? {
-        bindingIsWeekly ? weeklyResetDate : blockResetDate
-    }
-
-    /// Severity of the binding limit — drives the single accent colour and a non-colour signal.
-    public var statusLevel: StatusLevel {
-        guard activeBlock != nil || serverDriven5h else { return .ok }
-        switch bindingFraction {
-        case ..<0.80: return .ok
-        case ..<0.95: return .warn
-        default:      return .over
-        }
-    }
-
-    /// One-word state for the mascot ("Cruising" / "Steady" / "Getting tight" / "At the wall").
-    public var statusWord: String {
-        switch mascotEmotion {
-        case .sleeping:            return "Asleep"
-        case .celebrating, .happy: return "Cruising"
-        case .neutral:             return "Steady"
-        case .worried:             return "Getting tight"
-        case .alarmed:             return "At the wall"
-        }
-    }
-
-    /// A plain-language sentence pairing the state with the nearest reset countdown.
-    public func statusLine(now: Date = Date()) -> String {
-        guard activeBlock != nil || serverDriven5h else { return "No active session" }
-        let mood: String
-        switch mascotEmotion {
-        case .celebrating, .happy: mood = "Plenty of headroom"
-        case .neutral:             mood = "On track"
-        case .worried:             mood = "Ease up soon"
-        case .alarmed:             mood = "Cap almost hit"
-        case .sleeping:            mood = "Away"
-        }
-        let limit = bindingIsWeekly ? "weekly limit" : "session"
-        if let reset = bindingResetDate {
-            return "\(mood) — \(limit) resets in \(Format.durationLong(reset.timeIntervalSince(now)))."
-        }
-        return "\(mood)."
-    }
-
     // MARK: - Previews / snapshots
 
     public func loadSampleForPreview() {
