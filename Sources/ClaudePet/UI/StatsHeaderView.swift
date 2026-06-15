@@ -16,6 +16,8 @@ struct StatsHeaderView: View {
                     .fixedSize()
                 Text(metrics.plan.displayName)
                     .scaledFont(8.5, weight: .bold)
+                    .lineLimit(1)
+                    .fixedSize()
                     .padding(.horizontal, 5 * scale)
                     .padding(.vertical, 1.5 * scale)
                     .background(Theme.claudeCoral.opacity(0.20), in: Capsule())
