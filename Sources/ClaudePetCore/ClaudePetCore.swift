@@ -4,5 +4,5 @@ import Foundation
 /// The real data engine (models, parser, dedup, aggregation, pricing, 5h block)
 /// lives in the sibling files of this target.
 public enum ClaudePetCore {
-    public static let version = "0.2.0"
+    public static let version = "0.2.1"
 }

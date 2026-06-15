@@ -1,0 +1,17 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-15      # ships Xcode 16 / Swift 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift --version
+        run: swift --version
+      - name: swift test
+        run: swift test

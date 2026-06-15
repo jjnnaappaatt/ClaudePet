@@ -55,6 +55,26 @@ private func writeTempJSON(_ json: String) -> String {
         #expect(u?.fiveHour?.isUsable() == false)   // its window already reset → stale
         #expect(u?.sevenDay == nil)
     }
+
+    // Freshness gate: a cache the statusline wrote long ago is no longer "live", even if its
+    // window hasn't reset yet — the percentages have simply gone stale.
+    @Test func freshWhenJustWritten() {
+        let now = Date()
+        let u = StatuslineUsage(fiveHour: nil, sevenDay: nil, asOf: now)
+        #expect(u.isFresh(now: now, maxAge: 1800))
+    }
+
+    @Test func freshExactlyAtBoundary() {
+        let now = Date()
+        let u = StatuslineUsage(fiveHour: nil, sevenDay: nil, asOf: now.addingTimeInterval(-1800))
+        #expect(u.isFresh(now: now, maxAge: 1800))   // age == maxAge → still fresh
+    }
+
+    @Test func staleJustPastBoundary() {
+        let now = Date()
+        let u = StatuslineUsage(fiveHour: nil, sevenDay: nil, asOf: now.addingTimeInterval(-1801))
+        #expect(u.isFresh(now: now, maxAge: 1800) == false)
+    }
 }
 
 /// The store prefers Claude's real numbers (from the cache) to drive the gauges, but only
@@ -115,5 +135,21 @@ private func writeTempJSON(_ json: String) -> String {
 
         #expect(store.serverDriven5h == false)   // expired window not used
         #expect(store.blockFraction(unit: .tokens) != 0.99)
+    }
+
+    @Test func staleCacheFileFallsBackToLocal() {
+        let store = MetricsStore(defaults: freshDefaults())
+        store.weightTokensByModel = false
+        // Window is still open (resets in 2h) but the file was written long ago → stale.
+        let path = writeCache(fiveHour: 99, sevenDay: 99, resetsInHours: 2)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let old = Date().addingTimeInterval(-(MetricsStore.serverDataMaxAge + 60))
+        try! FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: path)
+        store.statuslineCachePath = path
+        store.ingestForTesting([TestSupport.entry(at: Date(), model: "claude-sonnet-4-6", input: 600, output: 400)])
+
+        #expect(store.serverDriven5h == false)   // fresh-window but stale file → not "live"
+        #expect(store.serverDriven7d == false)
+        #expect(store.blockFraction(unit: .tokens) != 0.99)   // local estimate, not the cached %
     }
 }

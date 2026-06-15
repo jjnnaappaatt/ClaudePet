@@ -365,7 +365,7 @@ public final class MetricsStore {
     /// Clamped [0,1] fill for the bar. Prefers Claude's real utilization (from the
     /// statusline cache) when available; otherwise the local budget estimate.
     public func blockFraction(unit: BudgetUnit) -> Double {
-        if let s = serverUsage?.fiveHour, s.isUsable() { return s.fraction }
+        if let s = serverUsage?.fiveHour, serverFresh, s.isUsable() { return s.fraction }
         let budget = blockBudget(unit: unit)
         guard budget > 0 else { return 0 }
         return min(1, max(0, blockValue(unit: unit) / budget))
@@ -412,7 +412,7 @@ public final class MetricsStore {
     }
 
     public func weeklyFraction(unit: BudgetUnit) -> Double {
-        if let s = serverUsage?.sevenDay, s.isUsable() { return s.fraction }
+        if let s = serverUsage?.sevenDay, serverFresh, s.isUsable() { return s.fraction }
         let budget = weeklyBudget(unit: unit)
         guard budget > 0 else { return 0 }
         return min(1, max(0, weeklyValue(unit: unit) / budget))
@@ -503,10 +503,18 @@ public final class MetricsStore {
 
     // MARK: - Live server usage (from the statusline cache)
 
-    /// True when Claude's real 5h utilization is available and its window hasn't reset.
-    public var serverDriven5h: Bool { serverUsage?.fiveHour?.isUsable() == true }
-    /// True when Claude's real 7-day utilization is available and its window hasn't reset.
-    public var serverDriven7d: Bool { serverUsage?.sevenDay?.isUsable() == true }
+    /// How recently the statusline must have written its cache for us to treat it as "live".
+    /// Past this, the snapshot is assumed stale (the statusline stopped running) and we fall back
+    /// to the local estimate.
+    public static let serverDataMaxAge: TimeInterval = 30 * 60   // 30 min
+
+    /// True only while the statusline cache is recent enough to trust.
+    private var serverFresh: Bool { serverUsage?.isFresh(maxAge: Self.serverDataMaxAge) == true }
+
+    /// True when Claude's real 5h utilization is available, fresh, and its window hasn't reset.
+    public var serverDriven5h: Bool { serverFresh && serverUsage?.fiveHour?.isUsable() == true }
+    /// True when Claude's real 7-day utilization is available, fresh, and its window hasn't reset.
+    public var serverDriven7d: Bool { serverFresh && serverUsage?.sevenDay?.isUsable() == true }
 
     /// Relative age of the statusline cache ("2m ago"), or nil if no cache was read.
     public var serverDataAge: String? { serverUsage.map { Format.relativeAge(from: $0.asOf) } }

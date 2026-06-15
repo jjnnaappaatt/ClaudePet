@@ -36,6 +36,13 @@ public struct StatuslineUsage: Sendable, Equatable {
         self.sevenDay = sevenDay
         self.asOf = asOf
     }
+
+    /// Fresh only while the cache file was written recently — a statusline that stopped running
+    /// leaves a stale snapshot whose percentages no longer reflect reality, so callers should
+    /// drop the "live" badge and fall back to the local estimate.
+    public func isFresh(now: Date = Date(), maxAge: TimeInterval) -> Bool {
+        now.timeIntervalSince(asOf) <= maxAge
+    }
 }
 
 public enum StatuslineUsageReader {
