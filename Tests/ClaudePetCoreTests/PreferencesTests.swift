@@ -21,6 +21,7 @@ import Foundation
         a.costBudget = 12.5
         a.includeSubagents = false
         a.weightTokensByModel = false   // default is true — verify a saved `false` survives
+        a.weatherEffectsEnabled = false // default is true — verify a saved `false` survives
         a.weeklyResetWeekday = 5        // Thursday
         a.weeklyResetHour = 9
         a.weeklyResetMinute = 30
@@ -36,6 +37,7 @@ import Foundation
         #expect(b.costBudget == 12.5)
         #expect(b.includeSubagents == false)
         #expect(b.weightTokensByModel == false)
+        #expect(b.weatherEffectsEnabled == false)
         #expect(b.weeklyResetWeekday == 5)
         #expect(b.weeklyResetHour == 9)
         #expect(b.weeklyResetMinute == 30)

@@ -32,6 +32,7 @@ public final class MetricsStore {
     public var weightTokensByModel = true        // gauge counts Opus tokens heavier than Haiku (cost-weighted)
     public var widgetScale: Double = 1.0         // uniform zoom (all resize handles + slider)
     public var widgetLayout: WidgetLayout = .landscape   // wide two-column (default) vs tall single column
+    public var weatherEffectsEnabled = true      // ambient weather + celebrations behind the pet
     public var account: AccountInfo = .unknown   // plan + subscription start
     public var plan: AccountPlan { account.plan }
     public var autoBudgetFromPlan = true         // budget follows the plan unless overridden
@@ -186,6 +187,7 @@ public final class MetricsStore {
         // no network — ClaudePet only reads the file the user's statusline already wrote).
         serverUsage = useStatuslineData ? StatuslineUsageReader.read(path: statuslineCachePath) : nil
         lastUpdated = now
+        detectWeatherEdges()
         onRecompute?()
     }
 
@@ -217,6 +219,7 @@ public final class MetricsStore {
         static let weeklyResetMinute = "weeklyResetMinute"
         static let lastCalibratedAt = "lastCalibratedAt"
         static let useStatuslineData = "useStatuslineData"
+        static let weatherEffectsEnabled = "weatherEffectsEnabled"
     }
 
     public func loadConfig() {
@@ -282,6 +285,9 @@ public final class MetricsStore {
         if defaults.object(forKey: Key.useStatuslineData) != nil {
             useStatuslineData = defaults.bool(forKey: Key.useStatuslineData)
         }
+        if defaults.object(forKey: Key.weatherEffectsEnabled) != nil {
+            weatherEffectsEnabled = defaults.bool(forKey: Key.weatherEffectsEnabled)
+        }
     }
 
     /// Persist config and re-aggregate so changes show immediately.
@@ -317,6 +323,7 @@ public final class MetricsStore {
             defaults.removeObject(forKey: Key.lastCalibratedAt)
         }
         defaults.set(useStatuslineData, forKey: Key.useStatuslineData)
+        defaults.set(weatherEffectsEnabled, forKey: Key.weatherEffectsEnabled)
         recompute()
         onConfigChange?()
     }
@@ -544,6 +551,62 @@ public final class MetricsStore {
         case ..<0.80: return .neutral
         case ..<0.95: return .worried
         default:      return .alarmed
+        }
+    }
+
+    // MARK: - Weather
+
+    /// The pet's ambient sky, derived from the same mood the face shows — so the two always agree.
+    public var weatherCondition: WeatherCondition { .from(mascotEmotion) }
+
+    /// One-shot weather moments (confetti, lightning) raised on a usage transition. The view drains
+    /// these via `consumeWeatherEvents()`; they are never part of the steady weather state.
+    public private(set) var pendingWeatherEvents: [WeatherEvent] = []
+
+    // Previous state for edge detection. @ObservationIgnored so updating them inside `recompute()`
+    // (which runs often) never triggers a view refresh.
+    @ObservationIgnored private var prevWindowToken: WindowToken?
+    @ObservationIgnored private var prevEmotion: MascotEmotion?
+    @ObservationIgnored private var didInitialEdgePass = false
+
+    /// Identity of the current 5-hour window, robust across local and server-driven modes — so we
+    /// can tell when a genuinely *fresh* window has begun (vs. the same window being recomputed).
+    private struct WindowToken: Equatable {
+        var blockStart: Date?     // local 5h block start
+        var serverReset: Date?    // Claude's real window reset (only when server-driven)
+        var isActive: Bool        // is any 5h window active at all
+    }
+
+    /// Drain the queued one-shot weather events (returns them and clears the queue). The view calls
+    /// this from an `.onChange`, never inside its draw closure.
+    public func consumeWeatherEvents() -> [WeatherEvent] {
+        let events = pendingWeatherEvents
+        pendingWeatherEvents = []
+        return events
+    }
+
+    /// Notice usage transitions and queue one-shot weather events. Called at the end of every
+    /// `recompute()`. Each event fires exactly once per transition; nothing fires on the first pass
+    /// after launch, so loading an already-active or already-high window doesn't spam confetti or
+    /// lightning.
+    private func detectWeatherEdges() {
+        let token = WindowToken(blockStart: activeBlock?.start,
+                                serverReset: serverDriven5h ? serverUsage?.fiveHour?.resetsAt : nil,
+                                isActive: activeBlock != nil || serverDriven5h)
+        let emotion = mascotEmotion
+        defer { prevWindowToken = token; prevEmotion = emotion; didInitialEdgePass = true }
+
+        guard didInitialEdgePass, let prev = prevWindowToken else { return }   // first pass: prime only
+
+        // Fresh 5h window: became active from idle, or the window identity advanced while active.
+        let freshWindow = (token.isActive && !prev.isActive)
+            || (token.isActive && prev.isActive
+                && (token.blockStart != prev.blockStart || token.serverReset != prev.serverReset))
+        if freshWindow { pendingWeatherEvents.append(.confetti) }
+
+        // Crossed into the danger zone (≥95/100%) from a calmer mood.
+        if emotion == .alarmed, let p = prevEmotion, p != .alarmed {
+            pendingWeatherEvents.append(.lightningStrike)
         }
     }
 

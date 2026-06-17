@@ -152,6 +152,9 @@ struct SettingsView: View {
                     Text("\(Int((metrics.widgetScale * 100).rounded()))%")
                         .monospacedDigit().frame(width: 46, alignment: .trailing)
                 }
+                Toggle("Weather effects", isOn: $metrics.weatherEffectsEnabled)
+                    .onChange(of: metrics.weatherEffectsEnabled) { persist() }
+                caption("Ambient sky behind the pet — sun, clouds, rain and the odd celebration, reacting to your usage.")
                 Toggle("Include subagent usage", isOn: $metrics.includeSubagents)
                     .onChange(of: metrics.includeSubagents) { persist() }
                 Toggle("Keep on top of other windows", isOn: $metrics.keepOnTop)

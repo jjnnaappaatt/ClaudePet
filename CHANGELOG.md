@@ -3,6 +3,17 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [Unreleased]
+
+### Added
+- **Reactive weather & celebrations** behind the pet — an ambient pixel sky that follows your usage,
+  driven by the same mood signal as the mascot's face: a gentle sun when idle or with headroom,
+  drifting clouds at mid-usage, rain as you approach a limit, and a heavy storm with lightning at the
+  edge. A fresh 5-hour window triggers a confetti burst; crossing into the danger zone (≥95%)
+  triggers a lightning strike (each fires once, on the transition). The sky sits in a taller scene
+  above the pet so the two never overlap. Honors Reduce Motion, pauses when occluded / in Low Power,
+  and can be turned off via Settings → Appearance → "Weather effects" (on by default).
+
 ## [0.2.1] — 2026-06-15
 
 ### Fixed

@@ -54,6 +54,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let l = WidgetLayout(rawValue: lay) {
                 metrics.widgetLayout = l       // verification override; leaves the user's saved choice untouched
             }
+            // Debug-only: force a weather condition by faking the statusline utilization (0–100).
+            if let u = ProcessInfo.processInfo.environment["CLAUDEPET_UTIL"], let util = Double(u) {
+                let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                let reset = f.string(from: Date().addingTimeInterval(2 * 3600))
+                let json = "{\"five_hour\":{\"utilization\":\(util),\"resets_at\":\"\(reset)\"},\"seven_day\":{\"utilization\":0,\"resets_at\":\"\(reset)\"}}"
+                let path = NSTemporaryDirectory() + "cp-snap-util.json"
+                try? json.write(toFile: path, atomically: true, encoding: .utf8)
+                metrics.useStatuslineData = true
+                metrics.statuslineCachePath = path
+                metrics.recompute()
+            }
             Snapshot.render(ContentView().environment(metrics).environment(panelVisibility), to: snapPath)
             NSApp.terminate(nil)
             return
