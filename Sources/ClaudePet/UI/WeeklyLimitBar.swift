@@ -78,7 +78,7 @@ struct WeeklyLimitBar: View {
             }
             .scaledFont(9.5)
             .foregroundStyle(Theme.textSecondary)
-            .lineLimit(1).minimumScaleFactor(0.8)
+            .lineLimit(1)
         }
         .help(limitHelp)
     }

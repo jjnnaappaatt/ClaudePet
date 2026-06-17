@@ -54,11 +54,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let l = WidgetLayout(rawValue: lay) {
                 metrics.widgetLayout = l       // verification override; leaves the user's saved choice untouched
             }
-            // Debug-only: force a weather condition by faking the statusline utilization (0–100).
-            if let u = ProcessInfo.processInfo.environment["CLAUDEPET_UTIL"], let util = Double(u) {
+            // Debug-only: force weather/gauges by faking the statusline utilization. Accepts a single
+            // value ("61", drives 5h) or "five,seven" ("61,25") for both gauges.
+            if let u = ProcessInfo.processInfo.environment["CLAUDEPET_UTIL"] {
+                let parts = u.split(separator: ",").compactMap { Double($0) }
+                let five = parts.first ?? 0
+                let seven = parts.count > 1 ? parts[1] : 0
                 let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
                 let reset = f.string(from: Date().addingTimeInterval(2 * 3600))
-                let json = "{\"five_hour\":{\"utilization\":\(util),\"resets_at\":\"\(reset)\"},\"seven_day\":{\"utilization\":0,\"resets_at\":\"\(reset)\"}}"
+                let json = "{\"five_hour\":{\"utilization\":\(five),\"resets_at\":\"\(reset)\"},\"seven_day\":{\"utilization\":\(seven),\"resets_at\":\"\(reset)\"}}"
                 let path = NSTemporaryDirectory() + "cp-snap-util.json"
                 try? json.write(toFile: path, atomically: true, encoding: .utf8)
                 metrics.useStatuslineData = true

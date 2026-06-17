@@ -69,7 +69,6 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 9 * scale) {
                 header(scale: scale)
                 separator
-                ModelBreakdownView()
                 WeeklyBarChart()
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -80,6 +79,7 @@ struct ContentView: View {
                 BudgetGauge()
                 WeeklyLimitBar()
                 separator
+                ModelBreakdownView()
                 WeekAllTimeView()
                 BillingLineView()
             }

@@ -14,6 +14,11 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   above the pet so the two never overlap. Honors Reduce Motion, pauses when occluded / in Low Power,
   and can be turned off via Settings → Appearance → "Weather effects" (on by default).
 
+### Changed
+- Wide layout: grouped the numeric blocks (5h, weekly, by-model, totals, billing) in the right
+  column and kept the pet header + weekly chart on the left, so the two columns balance in height.
+- The 5h and weekly gauge captions now render at a single consistent size (no per-block shrinking).
+
 ## [0.2.1] — 2026-06-15
 
 ### Fixed
