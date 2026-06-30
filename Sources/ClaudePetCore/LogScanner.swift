@@ -27,7 +27,8 @@ public actor UsageScanner {
             present.insert(url)
             let (mtime, size) = Self.stat(url)
             if let hit = cache[url], hit.mtime == mtime, hit.size == size { continue }
-            let entries = (try? JSONLParser.entries(inFileAt: url)) ?? []
+            // Drain the parse temporaries per file so a big rescan doesn't balloon the peak.
+            let entries = autoreleasepool { (try? JSONLParser.entries(inFileAt: url)) ?? [] }
             cache[url] = CachedFile(mtime: mtime, size: size, entries: entries)
         }
         // Forget files that disappeared.
@@ -46,8 +47,11 @@ public actor UsageScanner {
     // MARK: - Helpers
 
     static func merge(_ entries: [UsageEntry]) -> [UsageEntry] {
-        // Sort by time so dedup keeps the earliest copy deterministically.
-        Deduplicator.deduplicated(entries.sorted { $0.timestamp < $1.timestamp })
+        // Sort by time so dedup keeps the earliest copy deterministically. Sort in place
+        // (the caller's array is a fresh flatMap result) to avoid a second full-set copy.
+        var sorted = entries
+        sorted.sort { $0.timestamp < $1.timestamp }
+        return Deduplicator.deduplicated(sorted)
     }
 
     static func jsonlFiles(under root: URL) -> [URL] {

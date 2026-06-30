@@ -53,15 +53,37 @@ public enum JSONLParser {
         entry(fromLineData: Data(line.utf8))
     }
 
-    /// Parse one file into usage entries (one file held in memory at a time).
-    /// Bad lines are skipped; a read error is thrown.
+    /// Parse one file into usage entries, streaming it in fixed chunks so peak memory is
+    /// ~one chunk plus the longest line — never the whole file. (Transcripts reach 100 MB+;
+    /// `Data(contentsOf:)` would spike RSS that much on every re-read.) Bad lines are
+    /// skipped; a read error is thrown.
     public static func entries(inFileAt url: URL) throws -> [UsageEntry] {
-        let data = try Data(contentsOf: url)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
         var result: [UsageEntry] = []
-        for slice in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
-            if let entry = entry(fromLineData: Data(slice)) {
-                result.append(entry)
+        var buffer = Data()
+        let chunkSize = 1 << 20   // 1 MB
+
+        while case let chunk = handle.readData(ofLength: chunkSize), !chunk.isEmpty {
+            // Drain per chunk: JSON decoding spins off many autoreleased Foundation
+            // temporaries; without this they pile up to a huge peak over a 100 MB+ file.
+            autoreleasepool {
+                buffer.append(chunk)
+                // Process every complete line in the buffer; carry the trailing partial line.
+                guard let lastNewline = buffer.lastIndex(of: 0x0A) else { return }
+                let complete = buffer.subdata(in: buffer.startIndex..<lastNewline)
+                for slice in complete.split(separator: 0x0A, omittingEmptySubsequences: true) {
+                    if let entry = entry(fromLineData: Data(slice)) {
+                        result.append(entry)
+                    }
+                }
+                buffer = buffer.subdata(in: buffer.index(after: lastNewline)..<buffer.endIndex)   // compact tail
             }
+        }
+        // A final line with no trailing newline.
+        if !buffer.isEmpty, let entry = entry(fromLineData: buffer) {
+            result.append(entry)
         }
         return result
     }

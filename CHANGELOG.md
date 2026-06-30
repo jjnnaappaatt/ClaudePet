@@ -23,6 +23,12 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   column and kept the pet header + weekly chart on the left, so the two columns balance in height.
 - The 5h and weekly gauge captions now render at a single consistent size (no per-block shrinking).
 
+### Fixed
+- **Much lower memory use.** Transcript files (which reach 100 MB+) are now read in 1 MB streaming
+  chunks instead of loaded whole, and the JSON parse drains an autorelease pool per chunk/file so
+  temporaries don't pile up. On a ~900 MB history the scan peak dropped from ~885 MB to ~260 MB and
+  the steady footprint from ~250 MB to ~170 MB, with no change to the parsed results.
+
 ## [0.2.1] — 2026-06-15
 
 ### Fixed

@@ -70,4 +70,36 @@ import Foundation
         #expect(entries.count == 2)            // user line skipped
         #expect(entries.map(\.messageID) == ["msg_1", "msg_9"])
     }
+
+    /// The streaming reader must reassemble lines that straddle 1 MB chunk boundaries.
+    @Test func parsesAcrossChunkBoundaries() throws {
+        // ~6000 assistant lines (>2 MB) so reads span several chunks; ids stay ordered.
+        let count = 6000
+        var blob = ""
+        for i in 0..<count {
+            blob += #"{"type":"assistant","timestamp":"2026-06-05T15:14:51.519Z","message":{"id":"msg_\#(i)","model":"claude-opus-4-8","usage":{"input_tokens":1,"output_tokens":1}}}"# + "\n"
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pt-\(UUID().uuidString).jsonl")
+        try Data(blob.utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let entries = try JSONLParser.entries(inFileAt: url)
+        #expect(entries.count == count)
+        #expect(entries.first?.messageID == "msg_0")
+        #expect(entries.last?.messageID == "msg_\(count - 1)")
+    }
+
+    /// A single line longer than the chunk (e.g. a turn with a huge field) must still parse.
+    @Test func parsesLineLongerThanChunk() throws {
+        let pad = String(repeating: "x", count: 2 << 20)   // 2 MB > 1 MB chunk
+        let line = #"{"type":"assistant","timestamp":"2026-06-05T15:14:51.519Z","pad":"\#(pad)","message":{"id":"big","model":"claude-opus-4-8","usage":{"input_tokens":3,"output_tokens":4}}}"#
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("pt-\(UUID().uuidString).jsonl")
+        try Data((line + "\n").utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let entries = try JSONLParser.entries(inFileAt: url)
+        #expect(entries.count == 1)
+        #expect(entries.first?.messageID == "big")
+        #expect(entries.first?.workTokens == 7)
+    }
 }
