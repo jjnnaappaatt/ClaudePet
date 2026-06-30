@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: macos-15      # ships Xcode 16 / Swift 6
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: swift --version
         run: swift --version
       - name: swift test
