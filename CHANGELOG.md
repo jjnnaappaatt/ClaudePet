@@ -6,6 +6,10 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Today daily-pace bar** in the gauges column, beneath the 5h and weekly bars — today's tokens
+  measured against your recent daily average (from the 7-day data the app already tracks). Claude
+  has no daily limit, so it's an informational pace gauge: the average day sits at the midpoint, so
+  a full bar is roughly twice a usual day. Respects the tokens/USD unit; local data only.
 - **Reactive weather & celebrations** behind the pet — an ambient pixel sky that follows your usage,
   driven by the same mood signal as the mascot's face: a gentle sun when idle or with headroom,
   drifting clouds at mid-usage, rain as you approach a limit, and a heavy storm with lightning at the

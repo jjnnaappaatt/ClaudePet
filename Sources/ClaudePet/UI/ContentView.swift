@@ -78,6 +78,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 9 * scale) {
                 BudgetGauge()
                 WeeklyLimitBar()
+                DailyPaceView()
                 separator
                 ModelBreakdownView()
                 WeekAllTimeView()
@@ -95,6 +96,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 9 * scale) {
                 BudgetGauge()
                 WeeklyLimitBar()
+                DailyPaceView()
             }
             separator
             ModelBreakdownView()

@@ -433,6 +433,45 @@ public final class MetricsStore {
         max(0, weeklyBudget(unit: unit) - weeklyValue(unit: unit))
     }
 
+    // MARK: - Daily pace
+    // Today's tokens vs your recent daily average. Claude has no daily limit, so this bar is
+    // informational: the average day sits at the midpoint (full ≈ 2× a usual day). All values
+    // come from the `weekDaily` series so today and the average stay on one consistent basis.
+
+    private func dayValue(_ d: DayTotal, unit: BudgetUnit) -> Double {
+        unit == .usd ? d.costUSD : Double(d.workTokens)
+    }
+
+    /// Today's tokens (or $) from the 7-day series — falls back to the canonical `today`
+    /// totals only if the series has no bucket for the current local day.
+    public func dailyTodayValue(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
+        if let t = weekDaily.first(where: { calendar.isDate($0.date, inSameDayAs: now) }) {
+            return dayValue(t, unit: unit)
+        }
+        return unit == .usd ? today.costUSD : Double(today.workTokens)
+    }
+
+    /// Average over the prior days in the window (excludes today and zero-usage days). 0 = no history.
+    public func dailyAverage(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
+        let priors = weekDaily
+            .filter { !calendar.isDate($0.date, inSameDayAs: now) }
+            .map { dayValue($0, unit: unit) }
+            .filter { $0 > 0 }
+        guard !priors.isEmpty else { return 0 }
+        return priors.reduce(0, +) / Double(priors.count)
+    }
+
+    /// Bar fill: the average day sits at the midpoint, so full ≈ 2× a usual day. 0 when no history.
+    public func dailyPaceFraction(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
+        let avg = dailyAverage(unit: unit, now: now, calendar: calendar)
+        guard avg > 0 else { return 0 }
+        return min(1, max(0, dailyTodayValue(unit: unit, now: now, calendar: calendar) / (2 * avg)))
+    }
+
+    public func hasDailyHistory(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        dailyAverage(unit: budgetUnit, now: now, calendar: calendar) > 0
+    }
+
     // MARK: - Calibration to Claude's /usage
 
     /// Fit the 5h and/or weekly budgets so the gauges read the percentages Claude's
