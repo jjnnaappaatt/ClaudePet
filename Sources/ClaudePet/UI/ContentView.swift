@@ -70,6 +70,8 @@ struct ContentView: View {
                 header(scale: scale)
                 separator
                 WeeklyBarChart()
+                separator
+                TodayHourlyChart()
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
 
@@ -102,6 +104,8 @@ struct ContentView: View {
             ModelBreakdownView()
             separator
             WeeklyBarChart()
+            separator
+            TodayHourlyChart()
             separator
             WeekAllTimeView()
             BillingLineView()

@@ -36,6 +36,21 @@ public struct DayTotal: Sendable, Equatable, Identifiable {
     public var id: TimeInterval { date.timeIntervalSince1970 }
 }
 
+public struct HourTotal: Sendable, Equatable, Identifiable {
+    public let hour: Int             // 0...23, local hour of today
+    public var workTokens: Int = 0
+    public var totalTokens: Int = 0
+    public var costUSD: Double = 0
+    public var id: Int { hour }
+
+    public init(hour: Int, workTokens: Int = 0, totalTokens: Int = 0, costUSD: Double = 0) {
+        self.hour = hour
+        self.workTokens = workTokens
+        self.totalTokens = totalTokens
+        self.costUSD = costUSD
+    }
+}
+
 public struct Aggregates: Sendable, Equatable {
     public var today: Totals = .init()
     public var week: Totals = .init()
@@ -43,6 +58,7 @@ public struct Aggregates: Sendable, Equatable {
     public var cycle: Totals = .init()         // current billing cycle
     public var todayByModel: [ModelTotal] = []
     public var weekDaily: [DayTotal] = []      // last 7 local days incl. today (all models)
+    public var todayHourly: [HourTotal] = []   // today's usage in 24 local-hour buckets (all models)
     public var unknownModels: Set<String> = []
 }
 
@@ -62,6 +78,9 @@ public enum Aggregator {
         let weekStart = calendar.date(byAdding: .day, value: -6, to: startOfToday) ?? startOfToday
 
         var modelMap: [ModelFamily: ModelTotal] = [:]
+
+        // 24 fixed buckets for today, so the chart always has a full 12a→12p axis.
+        var hourBuckets = (0...23).map { HourTotal(hour: $0) }
 
         // Prepare 7 day buckets (oldest → today), keyed by start-of-day.
         var dayBuckets: [Date: DayTotal] = [:]
@@ -106,6 +125,11 @@ public enum Aggregator {
                 mt.costUSD += cost
                 mt.unpriced = pricing.isUnpriced(e.family)
                 modelMap[e.family] = mt
+
+                let h = calendar.component(.hour, from: e.timestamp)
+                hourBuckets[h].workTokens += e.workTokens
+                hourBuckets[h].totalTokens += e.totalTokens
+                hourBuckets[h].costUSD += cost
             }
 
             if e.family == .other { agg.unknownModels.insert(e.model) }
@@ -117,6 +141,7 @@ public enum Aggregator {
             return $0.totalTokens > $1.totalTokens
         }
         agg.weekDaily = dayOrder.map { dayBuckets[$0] ?? DayTotal(date: $0) }
+        agg.todayHourly = hourBuckets
         return agg
     }
 }

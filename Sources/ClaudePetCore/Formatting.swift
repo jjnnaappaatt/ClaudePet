@@ -35,6 +35,14 @@ public enum Format {
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
     }
 
+    /// Friendly 12-hour clock label: 0 -> "12a", 9 -> "9a", 12 -> "12p", 18 -> "6p", 23 -> "11p"
+    public static func hourLabel(_ hour: Int) -> String {
+        let h = ((hour % 24) + 24) % 24
+        let ampm = h < 12 ? "a" : "p"
+        let twelve = h % 12 == 0 ? 12 : h % 12
+        return "\(twelve)\(ampm)"
+    }
+
     /// Compact "time since": "just now", "5m ago", "2h ago", "3d ago".
     public static func relativeAge(from date: Date, now: Date = Date()) -> String {
         let s = Int(max(0, now.timeIntervalSince(date)))

@@ -16,6 +16,7 @@ public final class MetricsStore {
     public var cycle = Totals()                  // current billing cycle
     public var todayByModel: [ModelTotal] = []
     public var weekDaily: [DayTotal] = []
+    public var todayHourly: [HourTotal] = []      // today's usage in 24 local-hour buckets
     public var unknownModels: Set<String> = []
     public var activeBlock: UsageBlock?
     public var weekReset: Date?                   // end of the current fixed weekly window
@@ -174,6 +175,7 @@ public final class MetricsStore {
         cycle = agg.cycle
         todayByModel = agg.todayByModel
         weekDaily = agg.weekDaily
+        todayHourly = agg.todayHourly
         unknownModels = agg.unknownModels
         activeBlock = FiveHourBlockEngine.activeSession(from: entries, pricing: pricing, now: now,
                                                         resetOffset: sessionResetOffset)
@@ -472,6 +474,15 @@ public final class MetricsStore {
         dailyAverage(unit: budgetUnit, now: now, calendar: calendar) > 0
     }
 
+    // MARK: - Hourly (today)
+
+    /// The local hour (0...23) with the most usage today, or nil if today has no usage.
+    public func peakHour(unit: BudgetUnit) -> Int? {
+        let vals = todayHourly.map { unit == .usd ? $0.costUSD : Double($0.workTokens) }
+        guard let m = vals.max(), m > 0 else { return nil }
+        return vals.firstIndex(of: m)
+    }
+
     // MARK: - Calibration to Claude's /usage
 
     /// Fit the 5h and/or weekly budgets so the gauges read the percentages Claude's
@@ -674,6 +685,13 @@ public final class MetricsStore {
         weekDaily = (0..<7).map { i in
             DayTotal(date: now.addingTimeInterval(Double(i - 6) * 86_400),
                      workTokens: work[i], totalTokens: work[i] * 200, costUSD: Double(work[i]) / 7000)
+        }
+        // A representative morning-peak day (~9–11am busiest) for the "Today by hour" sparkline.
+        let hourWork = [0, 0, 0, 0, 0, 0, 500, 3_000, 8_000, 18_000, 22_000, 20_000,
+                        12_000, 9_000, 11_000, 8_000, 6_000, 5_000, 4_000, 3_000, 1_500, 500, 0, 0]
+        todayHourly = (0...23).map { h in
+            HourTotal(hour: h, workTokens: hourWork[h], totalTokens: hourWork[h] * 200,
+                      costUSD: Double(hourWork[h]) / 7000)
         }
         lastUpdated = now
     }

@@ -6,6 +6,10 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **"Today by hour" sparkline** in the wide layout's left column, beneath the weekly chart — a 24-bar
+  mini chart of today's tokens bucketed by local hour, so you can see *when* in the day you worked.
+  Highlights the current hour, respects the tokens/USD unit, and captions your busiest hour. Local
+  data only (the usage the app already scans; no token, no network).
 - **Today daily-pace bar** in the gauges column, beneath the 5h and weekly bars — today's tokens
   measured against your recent daily average (from the 7-day data the app already tracks). Claude
   has no daily limit, so it's an informational pace gauge: the average day sits at the midpoint, so
