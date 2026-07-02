@@ -10,6 +10,9 @@ struct MascotPreviewSheet: View {
         ("walkA", MascotArt.walkA),
         ("walkB", MascotArt.walkB),
         ("hop", MascotArt.hop),
+        ("glanceL", MascotArt.glanceL),
+        ("glanceR", MascotArt.glanceR),
+        ("celebrate", MascotArt.celebrating),
     ]
 
     var body: some View {

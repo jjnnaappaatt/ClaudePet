@@ -23,6 +23,12 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   and can be turned off via Settings → Appearance → "Weather effects" (on by default).
 
 ### Changed
+- **Mascot redesigned as a faithful Clawd** — the Claude Code terminal mascot: flat coral
+  rounded-rectangle body, plain dark square eyes (no glints), no mouth, small side claw-arms, and
+  four tiny feet, matching the CLI sprite's proportions and poses. It now emotes the way the real
+  sprite does: idle glances left/right, arms raised to celebrate a fresh window, closed eyes +
+  zzz asleep, wide eyes with sweat/alarm marks under pressure. The app icon was regenerated to
+  match. Still 100% original code-drawn pixels (an homage — no artwork copied or bundled).
 - Wide layout: grouped the numeric blocks (5h, weekly, by-model, totals, billing) in the right
   column and kept the pet header + weekly chart on the left, so the two columns balance in height.
 - The 5h and weekly gauge captions now render at a single consistent size (no per-block shrinking).

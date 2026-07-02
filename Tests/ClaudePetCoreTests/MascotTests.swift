@@ -30,10 +30,27 @@ import Foundation
         #expect(MascotArt.face(.neutral) == MascotArt.sit)   // neutral == the original idle face
     }
 
-    @Test func neutralFaceHasGlintAndSmile() {
+    @Test func neutralFaceIsMouthlessClawd() {
         let flat = MascotArt.face(.neutral).flatMap { $0 }
-        #expect(flat.contains(4))   // refined eyes carry a white glint
-        #expect(flat.contains(3))   // and a small smile
+        #expect(flat.contains(5))    // plain dark square eyes
+        #expect(!flat.contains(3))   // no mouth — Clawd is mouthless
+        #expect(!flat.contains(4))   // no eye glints either (flat terminal-sprite look)
+    }
+
+    @Test func glanceFramesDiffer() {
+        #expect(MascotArt.glanceL != MascotArt.sit)
+        #expect(MascotArt.glanceR != MascotArt.sit)
+        #expect(MascotArt.glanceL != MascotArt.glanceR)   // eyes shift opposite ways
+    }
+
+    @Test func celebratingRaisesArms() {
+        // Same eyes forced on both, so any difference is the arms-up pose (+ accents).
+        let up   = MascotArt.face(.celebrating, eyeOverride: .normal)
+        let side = MascotArt.face(.happy, eyeOverride: .normal)
+        #expect(up != side)
+        // Arms-up puts body pixels beside the head (row 4, cols 2 & 14); side arms don't.
+        #expect(up[4][2] == 1 && up[4][14] == 1)
+        #expect(side[4][2] == 0 && side[4][14] == 0)
     }
 
     @Test func machineIsDeterministicForSeed() {

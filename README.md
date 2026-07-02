@@ -4,6 +4,9 @@ A tiny native-macOS desktop pet that watches your Claude usage. A coral pixel cr
 your desktop and shows, at a glance, how close you are to your limits — reading your **local**
 Claude Code logs only. **No API key, no network, no token.**
 
+The pet's design is an original code-drawn homage to **Clawd**, the Claude Code terminal mascot
+(Anthropic) — no artwork assets are copied or bundled.
+
 <p align="center">
   <img src="docs/widget-compact.png" width="250" alt="Tall single-column widget">
   &nbsp;&nbsp;

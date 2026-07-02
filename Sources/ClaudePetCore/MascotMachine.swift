@@ -13,7 +13,7 @@ struct SeededRNG: RandomNumberGenerator {
 }
 
 public enum MascotState: CaseIterable {
-    case sit, blink, walk, hop
+    case sit, blink, walk, hop, glance
 }
 
 /// Weighted-random idle state machine. Each state owns a frame sequence and a
@@ -28,19 +28,21 @@ public struct MascotMachine {
             MascotArt.face(emotion, eyeOverride: eye, legPhase: leg, yOffset: y)
         }
         switch state {
-        case .sit:   return [f()]
-        case .blink: return [f(.closed), f()]
-        case .walk:  return [f(leg: 1), f(), f(leg: 2), f()]
-        case .hop:   return [f(), f(y: 2), f(y: 2), f()]
+        case .sit:    return [f()]
+        case .blink:  return [f(.closed), f()]
+        case .walk:   return [f(leg: 1), f(), f(leg: 2), f()]
+        case .hop:    return [f(), f(y: 2), f(y: 2), f()]
+        case .glance: return [f(.lookLeft), f(), f(.lookRight), f()]   // the CLI's look-left/right poses
         }
     }
 
     public func frameDuration(for state: MascotState) -> Double {
         switch state {
-        case .sit:   return 1.1
-        case .blink: return 0.11
-        case .walk:  return 0.18
-        case .hop:   return 0.14
+        case .sit:    return 1.1
+        case .blink:  return 0.11
+        case .walk:   return 0.18
+        case .hop:    return 0.14
+        case .glance: return 0.55                             // unhurried look around
         }
     }
 
@@ -55,16 +57,18 @@ public struct MascotMachine {
             return roll < 0.7 ? .sit : .blink             // anxious — no wandering
         case .happy, .celebrating:
             switch roll {                                 // livelier
-            case ..<0.40: return .sit
-            case ..<0.70: return .blink
-            case ..<0.85: return .walk
+            case ..<0.30: return .sit
+            case ..<0.60: return .blink
+            case ..<0.75: return .glance
+            case ..<0.88: return .walk
             default:      return .hop
             }
         case .neutral:
-            switch roll {                                 // original idle mix
-            case ..<0.46: return .sit
-            case ..<0.80: return .blink
-            case ..<0.93: return .walk
+            switch roll {                                 // idle mix with the odd look-around
+            case ..<0.36: return .sit
+            case ..<0.68: return .blink
+            case ..<0.83: return .glance
+            case ..<0.94: return .walk
             default:      return .hop
             }
         }
