@@ -34,6 +34,11 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 - The 5h and weekly gauge captions now render at a single consistent size (no per-block shrinking).
 
 ### Fixed
+- **Model pricing accuracy.** Mythos 5 is now priced as Fable ($10/$50) instead of showing as
+  unpriced; deprecated Opus 4.1 uses its true $15/$75 rate rather than the current Opus $5/$25; and
+  Claude Sonnet 5's introductory $2/$10 rate is applied to usage through 2026-08-31, reverting to
+  $3/$15 after. Version-specific rates are handled by a new per-model override layer over the
+  family rates; the four family rates are unchanged and verified current.
 - **Much lower memory use.** Transcript files (which reach 100 MB+) are now read in 1 MB streaming
   chunks instead of loaded whole, and the JSON parse drains an autorelease pool per chunk/file so
   temporaries don't pile up. On a ~900 MB history the scan peak dropped from ~885 MB to ~260 MB and

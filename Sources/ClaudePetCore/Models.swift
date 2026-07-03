@@ -48,7 +48,8 @@ public enum ModelFamily: String, Sendable, CaseIterable {
 
     public init(modelID: String) {
         let m = modelID.lowercased()
-        if m.contains("fable") { self = .fable }
+        // Mythos shares Fable's specs and pricing (Project Glasswing), so price it as Fable.
+        if m.contains("fable") || m.contains("mythos") { self = .fable }
         else if m.contains("opus") { self = .opus }
         else if m.contains("sonnet") { self = .sonnet }
         else if m.contains("haiku") { self = .haiku }

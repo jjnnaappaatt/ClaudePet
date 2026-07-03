@@ -52,4 +52,50 @@ import Foundation
         let back = try JSONDecoder().decode(PricingTable.self, from: data)
         #expect(back == PricingTable.default)
     }
+
+    // MARK: - Version-specific pricing gaps
+
+    @Test func mythos5IsPricedAsFable() {
+        let e = TestSupport.entry(at: Date(), model: "claude-mythos-5", input: 1_000_000, output: 1_000_000)
+        #expect(e.family == .fable)                       // routed to Fable pricing
+        #expect(!pricing.isUnpriced(e.family))
+        #expect(abs(pricing.cost(for: e) - 60) < 1e-6)    // 10 + 50, same as Fable
+    }
+
+    @Test func opus41UsesLegacyHigherRate() {
+        let e = TestSupport.entry(at: Date(), model: "claude-opus-4-1-20250805",
+                                  input: 1_000_000, output: 1_000_000)
+        #expect(e.family == .opus)
+        #expect(abs(pricing.cost(for: e) - 90) < 1e-6)    // 15 + 75, not the 5/25 family rate
+        // Current Opus versions keep the family rate.
+        let cur = TestSupport.entry(at: Date(), model: "claude-opus-4-8",
+                                    input: 1_000_000, output: 1_000_000)
+        #expect(abs(pricing.cost(for: cur) - 30) < 1e-6)  // 5 + 25
+    }
+
+    @Test func sonnet5IntroPriceThenReverts() {
+        let intro = TestSupport.entry(at: date("2026-07-15"), model: "claude-sonnet-5",
+                                      input: 1_000_000, output: 1_000_000)
+        #expect(abs(pricing.cost(for: intro) - 12) < 1e-6)   // 2 + 10 during intro window
+        let after = TestSupport.entry(at: date("2026-09-01"), model: "claude-sonnet-5",
+                                      input: 1_000_000, output: 1_000_000)
+        #expect(abs(pricing.cost(for: after) - 18) < 1e-6)   // 3 + 15 after 2026-08-31
+        // Older Sonnet versions are unaffected by the Sonnet-5 override.
+        let s46 = TestSupport.entry(at: date("2026-07-15"), model: "claude-sonnet-4-6",
+                                    input: 1_000_000, output: 1_000_000)
+        #expect(abs(pricing.cost(for: s46) - 18) < 1e-6)
+    }
+
+    @Test func mergingRestoresMissingOverrides() {
+        var old = PricingTable.default
+        old.overrides = []                                 // simulate a table persisted before overrides
+        #expect(old.mergingMissingDefaults().overrides == PricingTable.default.overrides)
+    }
+
+    private func date(_ ymd: String) -> Date {
+        let parts = ymd.split(separator: "-").compactMap { Int($0) }
+        var dc = DateComponents()
+        dc.year = parts[0]; dc.month = parts[1]; dc.day = parts[2]; dc.hour = 12
+        return Calendar.current.date(from: dc)!
+    }
 }
