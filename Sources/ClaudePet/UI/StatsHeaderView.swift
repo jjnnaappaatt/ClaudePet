@@ -1,7 +1,8 @@
 import SwiftUI
 import ClaudePetCore
 
-/// "Today" header: shows BOTH work (input+output) and total billable tokens, plus cost.
+/// "Today" header: a headline token count (cache-inclusive total by default, or work per the
+/// work/total setting), a separate cache-tokens line, and the notional cost.
 struct StatsHeaderView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -31,12 +32,15 @@ struct StatsHeaderView: View {
                     .help("Notional API-equivalent cost (estimate) — on a subscription you don't pay per token. The token counts below are exact (read from Claude's transcripts).")
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Format.tokens(metrics.today.workTokens))
+                Text(Format.tokens(metrics.totalsTokens(metrics.today)))
                     .scaledFont(17, weight: .bold, design: .rounded)
                     .foregroundStyle(Theme.textPrimary)
-                Text("work").scaledFont(10).foregroundStyle(Theme.textSecondary)
+                Text(metrics.tokenBasis == .total ? "total" : "work")
+                    .scaledFont(10).foregroundStyle(Theme.textSecondary)
             }
-            .help("Work tokens = input + output (the actual prompt & response).")
+            .help(metrics.tokenBasis == .total
+                ? "Total tokens = input + output + cache reads & writes — everything Claude processed. Switch to 'work' in Settings → Appearance."
+                : "Work tokens = input + output (the actual prompt & response).")
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(Format.tokens(metrics.today.cacheTokens))
                     .scaledFont(12, weight: .medium, design: .rounded)

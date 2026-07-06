@@ -9,7 +9,11 @@ import Foundation
         let name = "claudepet-test-\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
-        return MetricsStore(defaults: d)
+        let store = MetricsStore(defaults: d)
+        // These pace-math tests assert work-basis numbers; the .total default is exercised
+        // separately by `tokenBasisSelectsWorkVsTotal` / `peakHourFollowsTokenBasis` below.
+        store.tokenBasis = .work
+        return store
     }
 
     private let cal = Calendar.current
@@ -69,5 +73,46 @@ import Foundation
         store.weekDaily = [day(1, work: 500), day(2, work: 700)]   // no bucket for today
         #expect(store.dailyTodayValue(unit: .tokens, now: now, calendar: cal) == 777)
         #expect(store.dailyTodayValue(unit: .usd, now: now, calendar: cal) == 1.5)
+    }
+
+    @Test func tokenBasisSelectsWorkVsTotal() {
+        let store = freshStore()                       // freshStore pins .work
+        let d = day(0, work: 1000)                     // totalTokens = work * 100 = 100_000
+        let t = Totals(workTokens: 1000, totalTokens: 100_000, costUSD: 2)
+        let h = HourTotal(hour: 9, workTokens: 1000, totalTokens: 100_000)
+        let m = ModelTotal(family: .opus, workTokens: 1000, totalTokens: 100_000, costUSD: 2)
+
+        store.tokenBasis = .work
+        #expect(store.dayTokens(d) == 1000)
+        #expect(store.hourTokens(h) == 1000)
+        #expect(store.modelTokens(m) == 1000)
+        #expect(store.totalsTokens(t) == 1000)
+
+        store.tokenBasis = .total
+        #expect(store.dayTokens(d) == 100_000)
+        #expect(store.hourTokens(h) == 100_000)
+        #expect(store.modelTokens(m) == 100_000)
+        #expect(store.totalsTokens(t) == 100_000)
+
+        // The daily-pace "today" value follows the basis too (via dayValue over the series).
+        store.weekDaily = [d]
+        store.tokenBasis = .work
+        #expect(store.dailyTodayValue(unit: .tokens, now: now, calendar: cal) == 1000)
+        store.tokenBasis = .total
+        #expect(store.dailyTodayValue(unit: .tokens, now: now, calendar: cal) == 100_000)
+    }
+
+    @Test func peakHourFollowsTokenBasis() {
+        let store = freshStore()
+        // Hour 9 is the work-heaviest; hour 14 is the total(cache)-heaviest.
+        store.todayHourly = (0...23).map { hr in
+            if hr == 9  { return HourTotal(hour: 9,  workTokens: 100, totalTokens: 100) }
+            if hr == 14 { return HourTotal(hour: 14, workTokens: 10,  totalTokens: 10_000) }
+            return HourTotal(hour: hr)
+        }
+        store.tokenBasis = .work
+        #expect(store.peakHour(unit: .tokens) == 9)
+        store.tokenBasis = .total
+        #expect(store.peakHour(unit: .tokens) == 14)
     }
 }

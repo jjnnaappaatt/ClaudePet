@@ -145,6 +145,13 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .onChange(of: metrics.widgetLayout) { persist() }
                 caption("Wide = the two-column landscape card; Tall = the original single column.")
+                Picker("Count tokens as", selection: $metrics.tokenBasis) {
+                    Text("Work").tag(TokenBasis.work)
+                    Text("Total").tag(TokenBasis.total)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: metrics.tokenBasis) { persist() }
+                caption("Work = input + output. Total also counts cache reads & writes — far larger, and what Claude actually processes. The charts, daily pace, per-model split and Week/cycle counts follow this. Cost ($) always includes cache.")
                 HStack {
                     Text("Widget size")
                     Slider(value: $metrics.widgetScale, in: 0.8...1.8, step: 0.05)

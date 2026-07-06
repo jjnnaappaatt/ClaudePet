@@ -11,7 +11,7 @@ struct TodayHourlyChart: View {
     private var unit: BudgetUnit { metrics.budgetUnit }
 
     private func value(_ h: HourTotal) -> Double {
-        unit == .usd ? h.costUSD : Double(h.workTokens)
+        unit == .usd ? h.costUSD : Double(metrics.hourTokens(h))
     }
 
     private func amount(_ v: Double) -> String {
@@ -54,7 +54,7 @@ struct TodayHourlyChart: View {
 
     /// Today's total in the gauge's unit, matching the header / daily-pace figure.
     private func value(from t: Totals) -> Double {
-        unit == .usd ? t.costUSD : Double(t.workTokens)
+        unit == .usd ? t.costUSD : Double(metrics.totalsTokens(t))
     }
 
     private var caption: String {

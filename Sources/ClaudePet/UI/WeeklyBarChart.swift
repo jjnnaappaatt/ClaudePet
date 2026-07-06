@@ -12,7 +12,7 @@ struct WeeklyBarChart: View {
     }()
 
     private func value(_ d: DayTotal) -> Double {
-        metrics.budgetUnit == .usd ? d.costUSD : Double(d.workTokens)
+        metrics.budgetUnit == .usd ? d.costUSD : Double(metrics.dayTokens(d))
     }
 
     var body: some View {
@@ -25,7 +25,7 @@ struct WeeklyBarChart: View {
                 Text("This week").scaledFont(10, weight: .semibold)
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text(metrics.budgetUnit == .usd ? "$/day" : "work/day")
+                Text(metrics.budgetUnit == .usd ? "$/day" : (metrics.tokenBasis == .total ? "total/day" : "work/day"))
                     .scaledFont(8.5).foregroundStyle(Theme.textSecondary.opacity(0.6))
             }
             HStack(alignment: .bottom, spacing: 5 * scale) {

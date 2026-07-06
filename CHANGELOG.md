@@ -6,6 +6,13 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **"Count tokens as: Work / Total" setting** (Settings → Appearance) that governs every per-day
+  token figure — the weekly chart, the "Today by hour" sparkline, the daily-pace bar, the per-model
+  split, the Week & cycle line, and the Today header's headline. It now defaults to **Total**
+  (input + output + cache reads & writes), so the numbers reflect the tokens Claude actually
+  processes. Previously these showed **work** (input + output) only, which under always-on prompt
+  caching is ~1% of real volume — so a day could read ~100× lower than expected. Switch back to
+  **Work** to restore the old view. Cost ($) is unchanged (always cache-inclusive). Local data only.
 - **"Today by hour" sparkline** in the wide layout's left column, beneath the weekly chart — a 24-bar
   mini chart of today's tokens bucketed by local hour, so you can see *when* in the day you worked.
   Highlights the current hour, respects the tokens/USD unit, and captions your busiest hour. Local

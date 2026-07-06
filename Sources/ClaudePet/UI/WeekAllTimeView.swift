@@ -30,7 +30,7 @@ struct WeekAllTimeView: View {
     private func label(_ name: String, _ t: Totals) -> some View {
         HStack(spacing: 4) {
             Text(name).foregroundStyle(Theme.textSecondary.opacity(0.8))
-            Text(Format.tokens(t.workTokens)).foregroundStyle(Theme.textPrimary)
+            Text(Format.tokens(metrics.totalsTokens(t))).foregroundStyle(Theme.textPrimary)
         }
     }
 }

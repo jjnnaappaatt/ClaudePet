@@ -22,6 +22,7 @@ import Foundation
         a.includeSubagents = false
         a.weightTokensByModel = false   // default is true — verify a saved `false` survives
         a.weatherEffectsEnabled = false // default is true — verify a saved `false` survives
+        a.tokenBasis = .work            // default is .total — verify a saved `.work` survives
         a.weeklyResetWeekday = 5        // Thursday
         a.weeklyResetHour = 9
         a.weeklyResetMinute = 30
@@ -38,11 +39,18 @@ import Foundation
         #expect(b.includeSubagents == false)
         #expect(b.weightTokensByModel == false)
         #expect(b.weatherEffectsEnabled == false)
+        #expect(b.tokenBasis == .work)
         #expect(b.weeklyResetWeekday == 5)
         #expect(b.weeklyResetHour == 9)
         #expect(b.weeklyResetMinute == 30)
         #expect(b.lastCalibratedAt?.timeIntervalSince1970 == 1_700_000_000)
         #expect(b.pricing.prices["opus"]?.inputPerM == 9.99)
+    }
+
+    @Test func tokenBasisDefaultsToTotal() {
+        // A fresh store (no stored key) shows cache-inclusive totals out of the box.
+        let s = MetricsStore(defaults: freshDefaults())
+        #expect(s.tokenBasis == .total)
     }
 
     @Test func planTierMapping() {

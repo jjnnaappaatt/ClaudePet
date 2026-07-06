@@ -41,6 +41,15 @@ public enum BudgetUnit: String, Codable, Sendable, CaseIterable {
     case usd
 }
 
+/// Whether per-day/hour/model token figures show "work" (input+output only) or cache-inclusive
+/// "total" (work + cache reads + cache writes). Display-only — aggregates always carry both, and
+/// cost ($) is cache-inclusive regardless. Default is `.total` so the numbers reflect the tokens
+/// Claude actually processes (work alone is ~1% of that under always-on prompt caching).
+public enum TokenBasis: String, Codable, Sendable, CaseIterable {
+    case work
+    case total
+}
+
 // MARK: - Model family
 
 public enum ModelFamily: String, Sendable, CaseIterable {

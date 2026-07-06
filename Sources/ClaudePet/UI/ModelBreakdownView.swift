@@ -1,7 +1,8 @@
 import SwiftUI
 import ClaudePetCore
 
-/// Today's per-model split (work tokens + cost). Unknown models are flagged "unpriced".
+/// Today's per-model split (tokens + cost); the token count follows the work/total setting.
+/// Unknown models are flagged "unpriced".
 struct ModelBreakdownView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -27,7 +28,7 @@ struct ModelBreakdownView: View {
                         Text(row.family.displayName)
                             .scaledFont(11, weight: .medium).foregroundStyle(Theme.textPrimary)
                         Spacer()
-                        Text(Format.tokens(row.workTokens))
+                        Text(Format.tokens(metrics.modelTokens(row)))
                             .scaledFont(10, design: .rounded).foregroundStyle(Theme.textSecondary)
                         Text(row.unpriced ? "—" : Format.currency(row.costUSD))
                             .scaledFont(10, weight: .semibold, design: .rounded)

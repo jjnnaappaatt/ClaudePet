@@ -31,6 +31,7 @@ public final class MetricsStore {
     public var weeklyCostBudget: Double = 2000
     public var includeSubagents = true
     public var weightTokensByModel = true        // gauge counts Opus tokens heavier than Haiku (cost-weighted)
+    public var tokenBasis: TokenBasis = .total   // per-day token figures: cache-inclusive total (default) vs work (in+out)
     public var widgetScale: Double = 1.0         // uniform zoom (all resize handles + slider)
     public var widgetLayout: WidgetLayout = .landscape   // wide two-column (default) vs tall single column
     public var weatherEffectsEnabled = true      // ambient weather + celebrations behind the pet
@@ -222,6 +223,7 @@ public final class MetricsStore {
         static let lastCalibratedAt = "lastCalibratedAt"
         static let useStatuslineData = "useStatuslineData"
         static let weatherEffectsEnabled = "weatherEffectsEnabled"
+        static let tokenBasis = "tokenBasis"
     }
 
     public func loadConfig() {
@@ -290,6 +292,9 @@ public final class MetricsStore {
         if defaults.object(forKey: Key.weatherEffectsEnabled) != nil {
             weatherEffectsEnabled = defaults.bool(forKey: Key.weatherEffectsEnabled)
         }
+        if let raw = defaults.string(forKey: Key.tokenBasis), let b = TokenBasis(rawValue: raw) {
+            tokenBasis = b
+        }
     }
 
     /// Persist config and re-aggregate so changes show immediately.
@@ -326,6 +331,7 @@ public final class MetricsStore {
         }
         defaults.set(useStatuslineData, forKey: Key.useStatuslineData)
         defaults.set(weatherEffectsEnabled, forKey: Key.weatherEffectsEnabled)
+        defaults.set(tokenBasis.rawValue, forKey: Key.tokenBasis)
         recompute()
         onConfigChange?()
     }
@@ -441,7 +447,7 @@ public final class MetricsStore {
     // come from the `weekDaily` series so today and the average stay on one consistent basis.
 
     private func dayValue(_ d: DayTotal, unit: BudgetUnit) -> Double {
-        unit == .usd ? d.costUSD : Double(d.workTokens)
+        unit == .usd ? d.costUSD : Double(dayTokens(d))
     }
 
     /// Today's tokens (or $) from the 7-day series — falls back to the canonical `today`
@@ -450,7 +456,7 @@ public final class MetricsStore {
         if let t = weekDaily.first(where: { calendar.isDate($0.date, inSameDayAs: now) }) {
             return dayValue(t, unit: unit)
         }
-        return unit == .usd ? today.costUSD : Double(today.workTokens)
+        return unit == .usd ? today.costUSD : Double(totalsTokens(today))
     }
 
     /// Average over the prior days in the window (excludes today and zero-usage days). 0 = no history.
@@ -474,11 +480,22 @@ public final class MetricsStore {
         dailyAverage(unit: budgetUnit, now: now, calendar: calendar) > 0
     }
 
+    // MARK: - Token display basis
+    // Per-day/hour/model token figures show "work" (input+output) or cache-inclusive "total",
+    // per the user's `tokenBasis`. Every per-day token display funnels through these so the choice
+    // stays consistent. Cost ($) is always cache-inclusive and is never routed through here.
+
+    public func tokens(work: Int, total: Int) -> Int { tokenBasis == .total ? total : work }
+    public func dayTokens(_ d: DayTotal) -> Int     { tokens(work: d.workTokens, total: d.totalTokens) }
+    public func hourTokens(_ h: HourTotal) -> Int   { tokens(work: h.workTokens, total: h.totalTokens) }
+    public func modelTokens(_ m: ModelTotal) -> Int { tokens(work: m.workTokens, total: m.totalTokens) }
+    public func totalsTokens(_ t: Totals) -> Int    { tokens(work: t.workTokens, total: t.totalTokens) }
+
     // MARK: - Hourly (today)
 
     /// The local hour (0...23) with the most usage today, or nil if today has no usage.
     public func peakHour(unit: BudgetUnit) -> Int? {
-        let vals = todayHourly.map { unit == .usd ? $0.costUSD : Double($0.workTokens) }
+        let vals = todayHourly.map { unit == .usd ? $0.costUSD : Double(hourTokens($0)) }
         guard let m = vals.max(), m > 0 else { return nil }
         return vals.firstIndex(of: m)
     }
