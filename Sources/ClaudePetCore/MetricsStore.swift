@@ -20,6 +20,8 @@ public final class MetricsStore {
     public var unknownModels: Set<String> = []
     public var activeBlock: UsageBlock?
     public var weekReset: Date?                   // end of the current fixed weekly window
+    public private(set) var cycleStart: Date?      // start of the current billing cycle
+    public private(set) var cycleReset: Date?      // end of the current billing cycle (next anniversary)
     public private(set) var serverUsage: StatuslineUsage?   // real 5h/7d from the statusline cache (local file read; no token/network)
 
     // Config (user-editable; persisted to UserDefaults)
@@ -165,15 +167,17 @@ public final class MetricsStore {
     public func recompute() {
         let now = Date()
         let entries = includeSubagents ? lastEntries : lastEntries.filter { !$0.isSidechain }
-        let cycleStart = account.billingCycleStart(now: now)
+        let cycleStartDate = account.billingCycleStart(now: now)
         let weekWin = WeeklyWindowEngine.window(anchor: weeklyAnchor, now: now)
         let agg = Aggregator.compute(entries: entries, pricing: pricing, now: now,
-                                     cycleStart: cycleStart, weekWindow: weekWin)
+                                     cycleStart: cycleStartDate, weekWindow: weekWin)
         today = agg.today
         week = agg.week                              // now the fixed weekly-reset window total
         weekReset = weekWin.end
         allTime = agg.allTime
         cycle = agg.cycle
+        cycleStart = cycleStartDate
+        cycleReset = account.billingCycleEnd(now: now)
         todayByModel = agg.todayByModel
         weekDaily = agg.weekDaily
         todayHourly = agg.todayHourly
@@ -685,6 +689,8 @@ public final class MetricsStore {
         week = Totals(workTokens: 1_200_000, totalTokens: 300_000_000, costUSD: 38, weightedTokens: 1_650_000)
         allTime = Totals(workTokens: 14_000_000, totalTokens: 3_400_000_000, costUSD: 402)
         cycle = Totals(workTokens: 5_400_000, totalTokens: 1_300_000_000, costUSD: 180)
+        cycleStart = now.addingTimeInterval(-18 * 86_400)   // ~18 days into the cycle
+        cycleReset = now.addingTimeInterval(12 * 86_400)    // ~12d until the cycle resets
         monthlyPrice = 100; creditSpent = 13.47; creditLimit = 60; creditBalance = 5.60
         todayByModel = [
             ModelTotal(family: .fable,  workTokens: 22_000, totalTokens: 9_000_000,  costUSD: 2.80),

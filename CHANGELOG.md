@@ -6,6 +6,9 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **Cycle reset date** on the "Cycle" line — now shows "· resets in Nd Nh" and the tooltip lists the
+  actual billing-cycle date range (e.g. "Jun 16 – Jul 16"), matching the "resets in" treatment the 5h
+  and weekly gauges already have. Local data only.
 - **"Count tokens as: Work / Total" setting** (Settings → Appearance) that governs every per-day
   token figure — the weekly chart, the "Today by hour" sparkline, the daily-pace bar, the per-model
   split, the Week & cycle line, and the Today header's headline. It now defaults to **Total**
@@ -41,6 +44,14 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 - The 5h and weekly gauge captions now render at a single consistent size (no per-block shrinking).
 
 ### Fixed
+- **Billing-cycle start date.** The monthly cycle now anchors to the exact subscription *instant*
+  (its monthly anniversary) instead of reconstructing a day-of-month by hand. This fixes three latent
+  bugs that mis-mapped the cycle for some accounts (verified correct for a day-16 subscription; not
+  previously exercised for others): subscriptions created on the 29th–31st renewed a day late on short
+  months (e.g. an anchor of the 31st still showed the prior cycle through all of June 30 instead of
+  resetting that day); the anchor day could be misread when the subscription's UTC timestamp fell near
+  local midnight in timezones far from UTC; and the cycle boundary landed at local midnight rather than
+  the real renewal time-of-day, misattributing up to a day of usage right at the boundary.
 - **Model pricing accuracy.** Mythos 5 is now priced as Fable ($10/$50) instead of showing as
   unpriced; deprecated Opus 4.1 uses its true $15/$75 rate rather than the current Opus $5/$25; and
   Claude Sonnet 5's introductory $2/$10 rate is applied to usage through 2026-08-31, reverting to

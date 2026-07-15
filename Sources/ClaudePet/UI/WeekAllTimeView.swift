@@ -10,7 +10,13 @@ struct WeekAllTimeView: View {
         HStack(spacing: 4) {
             label("Week", metrics.week).help("Current weekly-limit window (resets every 7 days).")
             Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))
-            label("Cycle", metrics.cycle).help("This billing cycle — resets monthly with your subscription.")
+            label("Cycle", metrics.cycle).help(cycleHelp)
+            if let reset = metrics.cycleReset {
+                TimelineView(.periodic(from: .now, by: 3600)) { context in
+                    Text("· \(Format.durationLong(reset.timeIntervalSince(context.date)))")
+                        .foregroundStyle(Theme.textSecondary.opacity(0.6))
+                }
+            }
             Spacer()
             Button {
                 // Open Settings in a real key-capable window (text fields need keyboard focus).
@@ -32,5 +38,17 @@ struct WeekAllTimeView: View {
             Text(name).foregroundStyle(Theme.textSecondary.opacity(0.8))
             Text(Format.tokens(metrics.totalsTokens(t))).foregroundStyle(Theme.textPrimary)
         }
+    }
+
+    /// "This billing cycle: Jun 16 – Jul 16 · resets in 1d 4h. Anchored to your subscription."
+    /// Falls back to the static description when the cycle dates aren't known yet.
+    private var cycleHelp: String {
+        guard let start = metrics.cycleStart, let end = metrics.cycleReset else {
+            return "This billing cycle — resets monthly with your subscription."
+        }
+        let range = start.formatted(.dateTime.month(.abbreviated).day())
+            + " – " + end.formatted(.dateTime.month(.abbreviated).day())
+        let resets = Format.durationLong(end.timeIntervalSince(Date()))
+        return "This billing cycle: \(range) · resets in \(resets). Anchored to your subscription."
     }
 }

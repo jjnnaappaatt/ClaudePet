@@ -71,24 +71,39 @@ public struct AccountInfo: Sendable, Equatable {
         subscriptionStart ?? Date(timeIntervalSince1970: 1_704_067_200)
     }
 
-    /// Start of the current monthly billing cycle (subscription day-of-month anchor),
-    /// clamped to month length. Falls back to start-of-month if no subscription date.
-    public func billingCycleStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
-        let anchorDay: Int
-        if let s = subscriptionStart {
-            anchorDay = calendar.component(.day, from: s)
+    /// The current billing cycle as `[start, end)`: the monthly anniversary of the subscription
+    /// instant, walked on a **UTC** calendar (matching `subscriptionCreatedAt`, which is UTC and
+    /// the only billing-zone signal we have). `Calendar.date(byAdding: .month:)` clamps short
+    /// months (e.g. Jan 31 → Feb 28) and preserves the renewal time-of-day for free; walking from
+    /// the *original* instant each time (never cumulatively) keeps the clamp from drifting. Returns
+    /// nil if there's no subscription date (caller falls back to start-of-month).
+    private func cycleBounds(now: Date, calendar: Calendar) -> (start: Date, end: Date)? {
+        guard let sub = subscriptionStart else { return nil }
+        var cal = calendar
+        cal.timeZone = TimeZone(identifier: "UTC") ?? calendar.timeZone
+        func anniversary(_ k: Int) -> Date { cal.date(byAdding: .month, value: k, to: sub) ?? sub }
+        var k = max(0, cal.dateComponents([.month], from: sub, to: now).month ?? 0)
+        if anniversary(k) > now {
+            k = max(0, k - 1)
         } else {
-            anchorDay = 1
+            while anniversary(k + 1) <= now { k += 1 }
         }
-        let startOfToday = calendar.startOfDay(for: now)
-        let todayDay = calendar.component(.day, from: startOfToday)
-        // The cycle started on `anchorDay` this month if we're past it, else last month.
-        let baseMonth = todayDay >= anchorDay
-            ? startOfToday
-            : (calendar.date(byAdding: .month, value: -1, to: startOfToday) ?? startOfToday)
-        var comps = calendar.dateComponents([.year, .month], from: baseMonth)
-        let range = calendar.range(of: .day, in: .month, for: baseMonth) ?? 1..<29
-        comps.day = min(anchorDay, (range.upperBound - 1))
-        return calendar.date(from: comps) ?? startOfToday
+        return (anniversary(k), anniversary(k + 1))
+    }
+
+    /// Start of the current monthly billing cycle. Falls back to start-of-local-month if no
+    /// subscription date is known.
+    public func billingCycleStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        if let b = cycleBounds(now: now, calendar: calendar) { return b.start }
+        let comps = calendar.dateComponents([.year, .month], from: now)
+        return calendar.date(from: comps) ?? calendar.startOfDay(for: now)
+    }
+
+    /// End of the current billing cycle — the next anniversary, i.e. the reset moment / the
+    /// countdown target for a "resets in …" display.
+    public func billingCycleEnd(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        if let b = cycleBounds(now: now, calendar: calendar) { return b.end }
+        let start = billingCycleStart(now: now, calendar: calendar)
+        return calendar.date(byAdding: .month, value: 1, to: start) ?? start
     }
 }

@@ -79,6 +79,51 @@ import Foundation
         #expect(s2.month == 6 && s2.day == 16)
     }
 
+    /// UTC-instant helper so these tests are deterministic regardless of the machine's local zone.
+    private func utc(_ y: Int, _ m: Int, _ d: Int, _ h: Int = 0, _ min: Int = 0, _ s: Int = 0) -> Date {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        return cal.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min, second: s))!
+    }
+
+    @Test func billingCycleRealShapeAnchorsToSubscriptionInstant() {
+        // Real-shape case: subscriptionCreatedAt 2026-03-16T03:03:51Z, evaluated 2026-07-15.
+        let sub = utc(2026, 3, 16, 3, 3, 51)
+        let info = AccountInfo(plan: .unknown, subscriptionStart: sub)
+        let now = utc(2026, 7, 15, 11, 0, 0)
+        #expect(info.billingCycleStart(now: now) == utc(2026, 6, 16, 3, 3, 51))
+        #expect(info.billingCycleEnd(now: now) == utc(2026, 7, 16, 3, 3, 51))
+    }
+
+    @Test func billingCycleClampsShortMonthsWithoutOffByOne() {
+        // Bug #1 regression: anchor day 31 must renew ON the clamped day (e.g. Jun 30), not a day late.
+        let sub = utc(2026, 1, 31, 12, 0, 0)
+        let info = AccountInfo(plan: .unknown, subscriptionStart: sub)
+
+        // Feb 15 → still in the Jan 31 → Feb 28 cycle.
+        #expect(info.billingCycleStart(now: utc(2026, 2, 15)) == utc(2026, 1, 31, 12))
+        // Exactly at the Jun 30 renewal instant → the NEW cycle has started (not still May 31).
+        #expect(info.billingCycleStart(now: utc(2026, 6, 30, 12, 0, 0)) == utc(2026, 6, 30, 12))
+        #expect(info.billingCycleEnd(now: utc(2026, 6, 30, 12, 0, 0)) == utc(2026, 7, 31, 12))
+    }
+
+    @Test func billingCycleAnchorsToUTCInstantRegardlessOfHostTimeZone() {
+        // Bug #2 regression: the anchor day comes from the UTC instant, not a local reinterpretation
+        // of it — so the result is identical no matter which Calendar/timezone is passed in.
+        let sub = utc(2026, 3, 1, 2, 0, 0)   // near UTC midnight — the case that broke local-calendar reads
+        let info = AccountInfo(plan: .unknown, subscriptionStart: sub)
+        let now = utc(2026, 3, 15)
+
+        var utcCal = Calendar(identifier: .gregorian); utcCal.timeZone = TimeZone(identifier: "UTC")!
+        var pacificCal = Calendar(identifier: .gregorian); pacificCal.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        var tokyoCal = Calendar(identifier: .gregorian); tokyoCal.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+
+        let expected = utc(2026, 3, 1, 2, 0, 0)
+        #expect(info.billingCycleStart(now: now, calendar: utcCal) == expected)
+        #expect(info.billingCycleStart(now: now, calendar: pacificCal) == expected)
+        #expect(info.billingCycleStart(now: now, calendar: tokyoCal) == expected)
+    }
+
     @Test func includeSubagentsTogglesAggregation() {
         let store = MetricsStore(defaults: freshDefaults())
         let now = Date()
