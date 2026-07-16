@@ -73,6 +73,10 @@ public final class MetricsStore {
     public var weeklyResetWeekday = 2            // weekly reset day (Calendar: 1=Sun … 2=Mon … 7=Sat); default Monday
     public var weeklyResetHour = 15              // hour of the weekly reset, local 24h (default 3 PM)
     public var weeklyResetMinute = 0             // minute of the weekly reset, local
+    public var billingCycleDayOverride: Int?     // manual day-of-month (1–31) override for the billing
+                                                  // cycle anchor, for accounts (e.g. org/team plans) whose
+                                                  // real Stripe billing day doesn't match subscriptionCreatedAt.
+                                                  // nil = use the subscription-derived anchor.
     public var lastCalibratedAt: Date?           // when budgets were last fitted to Claude's /usage
     public var useStatuslineData = true          // drive gauges from the statusline's local usage cache when present
     public var statuslineCachePath = StatuslineUsageReader.defaultPath   // injectable for tests
@@ -167,17 +171,22 @@ public final class MetricsStore {
     public func recompute() {
         let now = Date()
         let entries = includeSubagents ? lastEntries : lastEntries.filter { !$0.isSidechain }
-        let cycleStartDate = account.billingCycleStart(now: now)
+        let cycleBounds: (start: Date, end: Date)
+        if let day = billingCycleDayOverride {
+            cycleBounds = AccountInfo.dayOverrideCycleBounds(day: day, now: now)
+        } else {
+            cycleBounds = (account.billingCycleStart(now: now), account.billingCycleEnd(now: now))
+        }
         let weekWin = WeeklyWindowEngine.window(anchor: weeklyAnchor, now: now)
         let agg = Aggregator.compute(entries: entries, pricing: pricing, now: now,
-                                     cycleStart: cycleStartDate, weekWindow: weekWin)
+                                     cycleStart: cycleBounds.start, weekWindow: weekWin)
         today = agg.today
         week = agg.week                              // now the fixed weekly-reset window total
         weekReset = weekWin.end
         allTime = agg.allTime
         cycle = agg.cycle
-        cycleStart = cycleStartDate
-        cycleReset = account.billingCycleEnd(now: now)
+        cycleStart = cycleBounds.start
+        cycleReset = cycleBounds.end
         todayByModel = agg.todayByModel
         weekDaily = agg.weekDaily
         todayHourly = agg.todayHourly
@@ -224,6 +233,7 @@ public final class MetricsStore {
         static let weeklyResetWeekday = "weeklyResetWeekday"
         static let weeklyResetHour = "weeklyResetHour"
         static let weeklyResetMinute = "weeklyResetMinute"
+        static let billingCycleDayOverride = "billingCycleDayOverride"
         static let lastCalibratedAt = "lastCalibratedAt"
         static let useStatuslineData = "useStatuslineData"
         static let weatherEffectsEnabled = "weatherEffectsEnabled"
@@ -287,6 +297,9 @@ public final class MetricsStore {
         if defaults.object(forKey: Key.weeklyResetWeekday) != nil { weeklyResetWeekday = defaults.integer(forKey: Key.weeklyResetWeekday) }
         if defaults.object(forKey: Key.weeklyResetHour) != nil { weeklyResetHour = defaults.integer(forKey: Key.weeklyResetHour) }
         if defaults.object(forKey: Key.weeklyResetMinute) != nil { weeklyResetMinute = defaults.integer(forKey: Key.weeklyResetMinute) }
+        if defaults.object(forKey: Key.billingCycleDayOverride) != nil {
+            billingCycleDayOverride = defaults.integer(forKey: Key.billingCycleDayOverride)
+        }
         if defaults.object(forKey: Key.lastCalibratedAt) != nil {
             lastCalibratedAt = Date(timeIntervalSince1970: defaults.double(forKey: Key.lastCalibratedAt))
         }
@@ -328,6 +341,11 @@ public final class MetricsStore {
         defaults.set(weeklyResetWeekday, forKey: Key.weeklyResetWeekday)
         defaults.set(weeklyResetHour, forKey: Key.weeklyResetHour)
         defaults.set(weeklyResetMinute, forKey: Key.weeklyResetMinute)
+        if let d = billingCycleDayOverride {
+            defaults.set(d, forKey: Key.billingCycleDayOverride)
+        } else {
+            defaults.removeObject(forKey: Key.billingCycleDayOverride)
+        }
         if let t = lastCalibratedAt {
             defaults.set(t.timeIntervalSince1970, forKey: Key.lastCalibratedAt)
         } else {

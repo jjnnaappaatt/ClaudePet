@@ -106,4 +106,33 @@ public struct AccountInfo: Sendable, Equatable {
         let start = billingCycleStart(now: now, calendar: calendar)
         return calendar.date(byAdding: .month, value: 1, to: start) ?? start
     }
+
+    /// Cycle bounds from a manually-entered day-of-month (1–31), for accounts whose real Stripe
+    /// billing anchor doesn't match `subscriptionCreatedAt` — e.g. an org/team plan, where that
+    /// field reflects when *this seat* was created, not when the organization's invoice recurs.
+    /// There's no local-file signal for the true org billing day, so the user reads it off their
+    /// own invoice history and enters it here.
+    ///
+    /// Compares full `Date` instants (never raw day-of-month integers), so a short month's clamp
+    /// can't cause an off-by-one the way the old subscription-day reconstruction did: the current
+    /// month's clamped anchor either has already passed (this cycle) or hasn't (previous cycle).
+    public static func dayOverrideCycleBounds(day: Int, now: Date, calendar: Calendar = .current)
+        -> (start: Date, end: Date) {
+        let day = max(1, min(31, day))
+        func anchor(inMonthOf date: Date) -> Date {
+            var comps = calendar.dateComponents([.year, .month], from: date)
+            let range = calendar.range(of: .day, in: .month, for: date) ?? 1..<29
+            comps.day = min(day, range.upperBound - 1)
+            comps.hour = 0; comps.minute = 0; comps.second = 0
+            return calendar.date(from: comps) ?? date
+        }
+        let thisMonth = anchor(inMonthOf: now)
+        if thisMonth <= now {
+            let nextMonth = calendar.date(byAdding: .month, value: 1, to: now) ?? now
+            return (thisMonth, anchor(inMonthOf: nextMonth))
+        } else {
+            let prevMonth = calendar.date(byAdding: .month, value: -1, to: now) ?? now
+            return (anchor(inMonthOf: prevMonth), thisMonth)
+        }
+    }
 }

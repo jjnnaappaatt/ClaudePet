@@ -15,7 +15,7 @@ struct SettingsView: View {
     @State private var resetMsg: String?
     @FocusState private var focus: Field?
 
-    private enum Field { case session, weekly, resetMin, sessionBudget, weeklyBudget, price, creditSpent, creditLimit, creditBalance }
+    private enum Field { case session, weekly, resetMin, sessionBudget, weeklyBudget, price, creditSpent, creditLimit, creditBalance, billingDay }
 
     var body: some View {
         @Bindable var metrics = metricsEnv
@@ -118,6 +118,13 @@ struct SettingsView: View {
                 .onChange(of: metrics.weeklyResetWeekday) { persist() }
                 DatePicker("Weekly reset time", selection: weeklyResetTime, displayedComponents: .hourAndMinute)
                 caption("The weekly limit is a fixed 7-day window that resets to zero on this day & time (default Monday 3:00 PM) — set it to match the Claude app so the countdown and weekly bar line up.")
+
+                Divider()
+                Toggle("Override billing cycle day", isOn: billingDayOverrideEnabled)
+                if metrics.billingCycleDayOverride != nil {
+                    numberRow("Billing cycle day (1–31)", value: billingDayOverrideValue, focus: .billingDay)
+                }
+                caption("ClaudePet guesses the billing-cycle day from your subscription date, but on team/org plans that can differ from the org's real invoice day. If the Cycle countdown doesn't match Claude → Settings → Billing → Invoices, override it here with the day-of-month your invoices actually land on.")
             } header: { Text("Match the Claude app") }
 
             // MARK: Billing
@@ -215,6 +222,29 @@ struct SettingsView: View {
                 metricsEnv.weeklyResetMinute = c.minute ?? 0
                 persist()
             }
+        )
+    }
+
+    /// Whether the manual billing-cycle-day override is on. Turning it on seeds today's
+    /// day-of-month as a starting guess; turning it off clears the override (nil = auto).
+    private var billingDayOverrideEnabled: Binding<Bool> {
+        Binding(
+            get: { metricsEnv.billingCycleDayOverride != nil },
+            set: { on in
+                metricsEnv.billingCycleDayOverride = on
+                    ? (metricsEnv.billingCycleDayOverride ?? Calendar.current.component(.day, from: Date()))
+                    : nil
+                persist()
+            }
+        )
+    }
+
+    /// The override day (1–31) as a plain `Int` binding for `numberRow`, defaulting to 1 while off.
+    /// `numberRow` already persists on change, so this setter only clamps.
+    private var billingDayOverrideValue: Binding<Int> {
+        Binding(
+            get: { metricsEnv.billingCycleDayOverride ?? 1 },
+            set: { metricsEnv.billingCycleDayOverride = max(1, min(31, $0)) }
         )
     }
 

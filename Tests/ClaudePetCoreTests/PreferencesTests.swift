@@ -124,6 +124,51 @@ import Foundation
         #expect(info.billingCycleStart(now: now, calendar: tokyoCal) == expected)
     }
 
+    @Test func dayOverrideCycleBoundsUsesManualDayNotSubscriptionDate() {
+        // A team/org account whose real invoices land on the 4th, even though
+        // subscriptionCreatedAt (unused here) would suggest a different day.
+        let cal = Calendar.current
+        let now = cal.date(from: DateComponents(year: 2026, month: 7, day: 15))!
+        let b = AccountInfo.dayOverrideCycleBounds(day: 4, now: now, calendar: cal)
+        let s = cal.dateComponents([.month, .day], from: b.start)
+        let e = cal.dateComponents([.month, .day], from: b.end)
+        #expect(s.month == 7 && s.day == 4)
+        #expect(e.month == 8 && e.day == 4)
+    }
+
+    @Test func dayOverrideCycleBoundsClampsShortMonthsWithoutOffByOne() {
+        // Regression guard for the same bug class as billingCycleClampsShortMonthsWithoutOffByOne,
+        // but through the manual-override path: comparing full instants (not raw day ints) means
+        // an anchor of 31 still renews exactly on Jun 30, not a day late.
+        let cal = Calendar.current
+        let onRenewalDay = cal.date(from: DateComponents(year: 2026, month: 6, day: 30, hour: 9))!
+        let b1 = AccountInfo.dayOverrideCycleBounds(day: 31, now: onRenewalDay, calendar: cal)
+        let s1 = cal.dateComponents([.month, .day], from: b1.start)
+        #expect(s1.month == 6 && s1.day == 30)   // NOT May 31
+
+        let midMonth = cal.date(from: DateComponents(year: 2026, month: 6, day: 15))!
+        let b2 = AccountInfo.dayOverrideCycleBounds(day: 31, now: midMonth, calendar: cal)
+        let s2 = cal.dateComponents([.month, .day], from: b2.start)
+        #expect(s2.month == 5 && s2.day == 31)   // still in the May 31 → Jun 30 cycle
+    }
+
+    @Test func billingCycleDayOverridePersistsAndDrivesRecompute() {
+        let defaults = freshDefaults()
+        let a = MetricsStore(defaults: defaults)
+        #expect(a.billingCycleDayOverride == nil)   // default: use the subscription-derived anchor
+        a.billingCycleDayOverride = 4
+        a.saveConfigAndRecompute()
+
+        let b = MetricsStore(defaults: defaults)
+        #expect(b.billingCycleDayOverride == 4)
+
+        // Clearing the override removes the stored key rather than persisting a stale value.
+        b.billingCycleDayOverride = nil
+        b.saveConfigAndRecompute()
+        let c = MetricsStore(defaults: defaults)
+        #expect(c.billingCycleDayOverride == nil)
+    }
+
     @Test func includeSubagentsTogglesAggregation() {
         let store = MetricsStore(defaults: freshDefaults())
         let now = Date()

@@ -6,6 +6,11 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **"Override billing cycle day" setting** (Settings → Match the Claude app) for accounts — mainly
+  team/org plans — whose real Stripe billing anchor doesn't match the subscription date ClaudePet
+  reads locally (that date can reflect when *your seat* was created, not when the organization's
+  invoice recurs). Enter the day-of-month your invoices actually land on and the Cycle total/countdown
+  switches to it immediately; off by default (uses the subscription-derived anchor).
 - **Cycle reset date** on the "Cycle" line — now shows "· resets in Nd Nh" and the tooltip lists the
   actual billing-cycle date range (e.g. "Jun 16 – Jul 16"), matching the "resets in" treatment the 5h
   and weekly gauges already have. Local data only.
