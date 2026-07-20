@@ -73,10 +73,23 @@ import Foundation
         #expect(abs(store.weeklyBudget(unit: .tokens) - 2300) < 0.01)
     }
 
+    /// Pins the weekly-reset anchor ~3.5 days from `now`, putting `now` at the middle of its weekly
+    /// window — far from either boundary. Without this, `seed(now:)`'s -10h/now split assumes both
+    /// land in the same weekly window, which is false whenever the suite happens to run within 10h
+    /// of a real reset (e.g. shortly after the default Monday 3:00 PM boundary).
+    private func pinWeeklyAnchorFarFrom(_ now: Date, on store: MetricsStore) {
+        let mid = now.addingTimeInterval(3.5 * 86_400)
+        let c = Calendar.current.dateComponents([.weekday, .hour, .minute], from: mid)
+        store.weeklyResetWeekday = c.weekday ?? 2
+        store.weeklyResetHour = c.hour ?? 15
+        store.weeklyResetMinute = c.minute ?? 0
+    }
+
     @Test func freshCalibrationOverridesPeak() {
         let now = Date()
         let store = MetricsStore(defaults: freshDefaults())
         store.weightTokensByModel = false
+        pinWeeklyAnchorFarFrom(now, on: store)
         store.ingestForTesting(seed(now: now))
         // Live gauge values: active block = 500 work; current week = 1000 + 500 = 1500 work.
         #expect(store.blockValue(unit: .tokens) == 500)

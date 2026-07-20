@@ -5,6 +5,8 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-20
+
 ### Added
 - **"Override billing cycle day" setting** (Settings → Match the Claude app) for accounts — mainly
   team/org plans — whose real Stripe billing anchor doesn't match the subscription date ClaudePet
