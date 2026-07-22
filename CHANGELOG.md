@@ -5,6 +5,11 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- `CONTRIBUTING.md` — build/test steps, the project layout, the two non-negotiable constraints
+  (local-file-only, original art only), the settings-persistence pattern, and a deterministic-tests
+  note prompted by a real flaky test fixed this release.
+
 ## [0.3.0] — 2026-07-20
 
 ### Added

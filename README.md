@@ -118,6 +118,8 @@ aggregator, 5-hour/weekly engines, pricing, `MetricsStore`, mascot logic). The a
 `FloatingPanel` (NSPanel) hosting SwiftUI, with a pixel-matrix mascot renderer. A web mirror of
 the UI (for [claude.ai/design](https://claude.ai/design)) lives in `frontend/`.
 
+Want to contribute? See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## License
 
 [MIT](LICENSE) © 2026 JJ_NAPAT.
