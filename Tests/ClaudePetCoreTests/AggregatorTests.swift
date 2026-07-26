@@ -58,7 +58,7 @@ import Foundation
         let agg = Aggregator.compute(entries: entries, pricing: pricing, now: now, calendar: cal,
                                      weekWindow: window)
         #expect(agg.week.workTokens == 165)                       // the pre-reset entry reset off
-        #expect(agg.weekDaily.count == 8)                         // mid-day reset → reset day at both ends
+        #expect(agg.weekDaily.count == 7)                         // a week has 7 days, always
         #expect(agg.weekDaily.reduce(0) { $0 + $1.workTokens } == agg.week.workTokens)
 
         // Reset day is the first bar and holds only what counts toward the limit.
@@ -71,6 +71,26 @@ import Foundation
         let todayBar = agg.weekDaily.first { cal.isDate($0.date, inSameDayAs: now) }
         #expect(todayBar?.workTokens == 55)
         #expect(agg.allTime.workTokens == 165 + 990)              // …but it still counts all-time
+    }
+
+    /// A mid-day reset makes the window touch 8 calendar dates, but a week has 7 days — so the
+    /// trailing reset-day hours fold back onto the same weekday slot the window opened with
+    /// instead of growing an 8th bar.
+    @Test func resetDayGetsOneBarHoldingBothEndsOfTheWindow() {
+        let now = noon
+        let windowStart = now.addingTimeInterval(-21 * 3600)           // ~15:00 the previous day
+        let windowEnd = windowStart.addingTimeInterval(7 * 86_400)
+        let entries = [
+            TestSupport.entry(at: windowStart.addingTimeInterval(60), input: 100, output: 10),  // window opens
+            TestSupport.entry(at: windowEnd.addingTimeInterval(-3600), input: 200, output: 20), // window closes
+        ]
+        let agg = Aggregator.compute(entries: entries, pricing: pricing, now: now, calendar: cal,
+                                     weekWindow: (start: windowStart, end: windowEnd))
+        #expect(agg.weekDaily.count == 7)
+        #expect(agg.weekDaily[0].workTokens == 110 + 220)              // both ends, one weekday slot
+        #expect(agg.weekDaily.reduce(0) { $0 + $1.workTokens } == agg.week.workTokens)
+        #expect(cal.component(.weekday, from: agg.weekDaily[0].date)
+                == cal.component(.weekday, from: windowStart))
     }
 
     /// Without a window (callers/tests that pass none) the chart stays rolling calendar days.

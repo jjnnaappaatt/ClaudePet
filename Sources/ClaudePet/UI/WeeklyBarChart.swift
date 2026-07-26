@@ -1,11 +1,11 @@
 import SwiftUI
 import ClaudePetCore
 
-/// A "this week" bar chart (all models combined), like the Screen Time widget.
-/// The bars are the calendar days of the weekly-limit window, clipped to it, so they sum to the
-/// figure the weekly bar shows while still being real days. A mid-day reset splits reset day
-/// across the first and last bars, so there can be 8. Values follow the gauge unit ($ or tokens)
-/// and the work/total basis; today is highlighted and days still to come are dimmed.
+/// A 7-bar "this week" chart (all models combined), like the Screen Time widget.
+/// One bar per weekday of the weekly-limit window, so they sum to the figure the weekly bar shows
+/// while still being real weekdays; reset day's bar holds only the parts inside the window.
+/// Values follow the gauge unit ($ or tokens) and the work/total basis; today is highlighted and
+/// days still to come are dimmed.
 struct WeeklyBarChart: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -27,9 +27,9 @@ struct WeeklyBarChart: View {
         let basis = metrics.budgetUnit == .usd ? "Cost" : "\(metrics.tokenBasisLabel.capitalized) tokens"
         return """
             \(basis) per day across the current weekly-limit window, so these bars add up to the \
-            weekly figure above rather than to a rolling seven days. Reset day is counted only \
-            from the reset onward, which is why it can appear at both ends of the row as a part \
-            day. Today is highlighted; days still to come are dimmed.
+            weekly figure above rather than to a rolling seven days. Reset day counts only the \
+            hours inside the window, so its bar can look short. Today is highlighted; days still \
+            to come are dimmed.
             """
     }
 

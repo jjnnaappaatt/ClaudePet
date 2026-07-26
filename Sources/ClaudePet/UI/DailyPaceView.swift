@@ -16,6 +16,7 @@ struct DailyPaceView: View {
     private var todayValue: Double { metrics.dailyTodayValue(unit: unit) }
     private var average: Double { metrics.dailyAverage(unit: unit) }
     private var fraction: Double { metrics.dailyPaceFraction(unit: unit) }
+    private var hasHistory: Bool { metrics.hasDailyHistory() && average > 0 }
 
     private func amount(_ v: Double) -> String {
         unit == .tokens ? Format.tokens(Int(v)) : Format.currency(v)
@@ -23,10 +24,12 @@ struct DailyPaceView: View {
 
     private var help: String {
         """
-        Today's usage compared with your recent daily average. There's no daily limit — the \
-        average day sits at the bar's midpoint, so a full bar is roughly twice a usual day. Days \
-        come from the chart below, which covers the weekly-limit window, so on reset day this \
-        counts only the part since the reset. Local data only — no token, no network.
+        Today's usage compared with your recent daily average. There's no daily limit, so this \
+        is a pace check, not a budget: the tick marks a usual day, and a full bar is about twice \
+        one — so landing left of the tick means a quieter day than normal. The "today %" is \
+        measured against the average, not against the bar. Days come from the chart below, which \
+        covers the weekly-limit window, so on reset day this counts only the part since the \
+        reset. Local data only — no token, no network.
         """
     }
 
@@ -44,13 +47,21 @@ struct DailyPaceView: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.12))
                     Capsule().fill(Theme.highlight).frame(width: max(3, geo.size.width * fraction))
+                    // The average day sits at the midpoint, and that was invisible: a day at 66%
+                    // of average draws a 33% bar, which reads as "barely a third" rather than
+                    // "a bit below normal". The tick is what makes the scale legible.
+                    if hasHistory {
+                        Rectangle().fill(Color.white.opacity(0.5))
+                            .frame(width: 1)
+                            .offset(x: geo.size.width / 2)
+                    }
                 }
             }
             .frame(height: 7 * scale)
 
             HStack(spacing: 4) {
-                if metrics.hasDailyHistory() {
-                    Text("\(amount(average))/day avg this week")
+                if hasHistory {
+                    Text("\(amount(average))/day avg · today \(Int((todayValue / average * 100).rounded()))%")
                 } else {
                     Text("building daily average…")
                 }

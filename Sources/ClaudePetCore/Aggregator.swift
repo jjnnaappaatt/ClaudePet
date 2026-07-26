@@ -104,16 +104,21 @@ public enum Aggregator {
         // highlighted Saturday and would have jumped to Sunday at 15:00. Weekday letters have to
         // mean weekdays.
         //
-        // A mid-day reset means the window touches 8 calendar days, reset day split across the
-        // first and last bars. With no window, fall back to the rolling last 7 days.
+        // A mid-day reset makes the window touch 8 calendar dates, but a week has 7 days, so the
+        // bars are WEEKDAY SLOTS of the window: reset day gets one bar holding both its
+        // post-reset part at the start of the window and its pre-reset part at the end. Seven
+        // bars, one per weekday, still summing to `week`.
+        //
+        // With no window, fall back to the rolling last 7 days.
+        let weekGridStart = weekWindow.map { calendar.startOfDay(for: $0.start) }
         var dayBuckets: [Date: DayTotal] = [:]
         var dayOrder: [Date] = []
-        if let ww = weekWindow {
-            var d = calendar.startOfDay(for: ww.start)
-            while d < ww.end {
+        if let first = weekGridStart {
+            for i in 0..<7 {
+                let d = calendar.date(byAdding: .day, value: i, to: first)
+                    ?? first.addingTimeInterval(Double(i) * 86_400)
                 dayBuckets[d] = DayTotal(date: d)
                 dayOrder.append(d)
-                d = calendar.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86_400)
             }
         } else {
             for offset in (0...6).reversed() {
@@ -140,11 +145,17 @@ public enum Aggregator {
             }
 
             // Day-by-day history chart. Inside a window only in-window entries count, so reset
-            // day's bar holds just the part that counts toward the limit.
+            // day's bar holds just the parts that count toward the limit. `% 7` folds the
+            // window's trailing reset-day date back onto the same weekday slot it opened with.
             let dayKey: Date?
-            if let ww = weekWindow {
-                dayKey = (e.timestamp >= ww.start && e.timestamp < ww.end)
-                    ? calendar.startOfDay(for: e.timestamp) : nil
+            if let ww = weekWindow, let first = weekGridStart {
+                if e.timestamp >= ww.start && e.timestamp < ww.end {
+                    let day = calendar.startOfDay(for: e.timestamp)
+                    let n = calendar.dateComponents([.day], from: first, to: day).day ?? 0
+                    dayKey = dayOrder[((n % 7) + 7) % 7]
+                } else {
+                    dayKey = nil
+                }
             } else {
                 dayKey = e.timestamp >= weekStart ? calendar.startOfDay(for: e.timestamp) : nil
             }

@@ -474,13 +474,16 @@ public final class MetricsStore {
         unit == .usd ? d.costUSD : Double(dayTokens(d))
     }
 
-    /// Is this the `weekDaily` bucket holding `now` — i.e. the "today" bar? Buckets are calendar
-    /// days (clipped to the weekly window), so this is a plain same-day test. Order-independent
-    /// on purpose: callers build the array both oldest-first and newest-first, so it must not
-    /// assume the current day is the last element.
+    /// Is this the `weekDaily` bucket holding `now` — i.e. the "today" bar?
+    ///
+    /// Matches on WEEKDAY, not on the date: the buckets are the seven weekday slots of the weekly
+    /// window, so reset day's slot is dated to the window's opening date even once `now` has
+    /// reached the window's closing date a week later. Seven slots are seven distinct weekdays, so
+    /// this stays unambiguous. Order-independent too — callers build the array both oldest-first
+    /// and newest-first, so it must not assume the current day is the last element.
     public func isCurrentDayBucket(_ d: DayTotal, now: Date = Date(),
                                    calendar: Calendar = .current) -> Bool {
-        calendar.isDate(d.date, inSameDayAs: now)
+        calendar.component(.weekday, from: d.date) == calendar.component(.weekday, from: now)
     }
 
     /// Today's tokens (or $) from the 7-day series — falls back to the canonical `today`

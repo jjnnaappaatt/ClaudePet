@@ -95,16 +95,21 @@ doesn't chase the numerator.
   cache-inclusive and never routed through it.
 
 Also: `week` is the **fixed weekly-reset window** total (mirrors the Claude app, resets to zero at
-each boundary), and `weekDaily` is the **calendar days that window covers, clipped to it** — so the
-chart bars sum to `week` while still being real days. A mid-day reset means 8 buckets, reset day
-split across the first and last, each holding only its in-window part. `Aggregator.compute` falls
-back to a rolling last-7-days only when no `weekWindow` is passed. Anything asking "which bar is
-today?" must use `MetricsStore.isCurrentDayBucket`, never the last array index — the last bucket is
-the end of the window, which mid-week is still in the future.
+each boundary), and `weekDaily` is the **seven weekday slots of that window** — so the chart bars sum to `week`
+while staying real weekdays. A mid-day reset makes the window touch 8 calendar dates, so the
+trailing reset-day hours fold back (`% 7`) onto the slot the window opened with, rather than
+growing an 8th bar. `Aggregator.compute` falls back to a rolling last-7-days only when no
+`weekWindow` is passed.
 
-Do **not** re-anchor those buckets to the reset *instant*. It sums correctly too, but the bucket
-holding `now` then begins the previous afternoon, so the chart labels and highlights the wrong
-weekday (Saturday on a Sunday, flipping at 15:00). Weekday letters have to mean weekdays.
+Two traps, both hit in practice:
+
+- Anything asking "which bar is today?" must use `MetricsStore.isCurrentDayBucket`, which matches on
+  **weekday**, not date — reset day's slot is dated to the window's opening date even once `now` is
+  the closing date a week later. Never use the last array index either: mid-week the last slot is
+  still in the future.
+- Do **not** re-anchor the buckets to the reset *instant*. That sums correctly too, but the bucket
+  holding `now` then begins the previous afternoon, so the chart labels and highlights the wrong
+  weekday (Saturday on a Sunday, flipping at 15:00). Weekday letters have to mean weekdays.
 
 ### Pricing
 

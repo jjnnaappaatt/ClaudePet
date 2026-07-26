@@ -25,13 +25,16 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   weekly bar read "4.2M used this week" directly above a footer reading "Week 1.3B", the same
   window ~300× apart, with the unit printed on neither. The `%` beside it is Claude's server-side
   number and the count below it is a local token sum; the tooltips now say so outright.
-- **The "This week" chart now covers the weekly-limit window** — the calendar days that window
-  spans, clipped to it — instead of the rolling last-7-calendar-days, so the bars sum to exactly
-  the weekly total above them. With a mid-afternoon reset the two disagreed by everything logged
-  earlier on reset day: 682,822 work tokens, ~16%, on real data. Reset day counts only from the
-  reset onward and so shows at both ends of the row as a part day (8 bars, not 7); today is
-  highlighted, days still to come are dimmed. The daily-pace row reads the same series, so on
-  reset day it likewise counts only the part since the reset.
+- **The "This week" chart now covers the weekly-limit window** — one bar per weekday of that
+  window — instead of the rolling last-7-calendar-days, so the bars sum to exactly the weekly
+  total above them. With a mid-afternoon reset the two disagreed by everything logged earlier on
+  reset day: 682,822 work tokens, ~16%, on real data. Still seven bars: reset day counts only the
+  hours inside the window, and the window's trailing reset-day hours fold back onto the same
+  weekday rather than adding an eighth. Today is highlighted, days still to come are dimmed.
+- **The daily-pace bar shows where "average" is.** A usual day sits at the bar's midpoint (full ≈
+  2× a usual day), which was invisible — a day at 66% of average drew a 33% bar and read as
+  "barely a third" rather than "a bit below normal". There's now a tick at the midpoint, and the
+  line beneath states the comparison directly: "679.1k/day avg · today 66%".
 
 ### Fixed
 - **A failed transcript read is no longer cached as "empty".** `UsageScanner` keyed a swallowed
