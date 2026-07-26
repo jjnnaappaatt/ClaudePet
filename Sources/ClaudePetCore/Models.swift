@@ -19,6 +19,14 @@ struct RawMessage: Decodable {
     let usage: RawUsage?
 }
 
+/// The five fields below are ALL of the token-bearing ones — audited against 33k real assistant
+/// turns, so the rest are deliberate omissions rather than oversights:
+/// - `server_tool_use` is `{web_search_requests, web_fetch_requests}` — request *counts*, billed
+///   per request, and the fetched text is already inside `input_tokens`. Folding it into
+///   `totalTokens` would be a category error. (Every observed occurrence was also zero.)
+/// - `iterations[]` is a per-iteration breakdown that duplicates these totals — it matched the
+///   top level on 31,805 of 31,806 turns, so summing it would roughly double-count.
+/// - `service_tier`, `inference_geo`, `speed` are strings.
 struct RawUsage: Decodable {
     let input_tokens: Int?
     let output_tokens: Int?

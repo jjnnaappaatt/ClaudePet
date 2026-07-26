@@ -28,7 +28,16 @@ public actor UsageScanner {
             let (mtime, size) = Self.stat(url)
             if let hit = cache[url], hit.mtime == mtime, hit.size == size { continue }
             // Drain the parse temporaries per file so a big rescan doesn't balloon the peak.
-            let entries = autoreleasepool { (try? JSONLParser.entries(inFileAt: url)) ?? [] }
+            //
+            // A read failure must NOT be cached. The key is (mtime, size), and a completed
+            // subagent transcript is write-once — its key never changes again, so a cached `[]`
+            // would zero that file for the life of the process, silently and unrecoverably.
+            // `present` already holds this URL (inserted above), so skipping here leaves any
+            // prior good parse intact and un-evicted; the next scan retries the read.
+            // (Explicit `invoking:` label — a trailing closure here would be parsed as the
+            // guard's else-body.)
+            guard let entries = autoreleasepool(invoking: { try? JSONLParser.entries(inFileAt: url) })
+            else { continue }
             cache[url] = CachedFile(mtime: mtime, size: size, entries: entries)
         }
         // Forget files that disappeared.
