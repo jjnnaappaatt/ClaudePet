@@ -158,7 +158,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: metrics.tokenBasis) { persist() }
-                caption("Work = input + output. Total also counts cache reads & writes — far larger, and what Claude actually processes. The charts, daily pace, per-model split and Week/cycle counts follow this. Cost ($) always includes cache.")
+                caption("Work = input + output. Total also counts cache reads & writes — far larger (often 100–300×), and what Claude actually processes. Every token figure follows this: the header, charts, daily pace, per-model split, Week/cycle counts and the \"used this window/week\" line under each gauge. Cost ($) always includes cache.")
                 HStack {
                     Text("Widget size")
                     Slider(value: $metrics.widgetScale, in: 0.8...1.8, step: 0.05)
@@ -171,6 +171,7 @@ struct SettingsView: View {
                 caption("Ambient sky behind the pet — sun, clouds, rain and the odd celebration, reacting to your usage.")
                 Toggle("Include subagent usage", isOn: $metrics.includeSubagents)
                     .onChange(of: metrics.includeSubagents) { persist() }
+                caption("Counts turns run by the Task tool (the subagents/ transcripts under ~/.claude) — often a large share of your turns, but their cost is nearly all cache reads, so they barely register under 'Work' and only show their true size under 'Total'. While Claude's live usage drives the gauges, turning this off changes the token counts but NOT the two bar percentages — those are Claude's own accounting, which always includes subagents.")
                 Toggle("Keep on top of other windows", isOn: $metrics.keepOnTop)
                     .onChange(of: metrics.keepOnTop) { persist() }
                 Toggle("Show on all Spaces (can cover fullscreen)", isOn: $metrics.showOnAllSpaces)

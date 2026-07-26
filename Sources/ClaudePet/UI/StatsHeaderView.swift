@@ -7,6 +7,15 @@ struct StatsHeaderView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
+    /// Names the basis and, when there is one, the subagent slice — sub-agents are a big share of
+    /// real usage but a tiny share of *work* tokens, so on that basis they look uncounted.
+    private var tokenCountHelp: String {
+        let base = metrics.tokenBasis == .total
+            ? "Total tokens = input + output + cache reads & writes — everything Claude processed. Switch to 'work' in Settings → Appearance."
+            : "Work tokens = input + output (the actual prompt & response) — around 1% of what Claude really processes once prompt caching is counted. Switch to 'total' in Settings → Appearance."
+        return base + metrics.sidechainNote(metrics.today)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 5 * scale) {
@@ -35,12 +44,10 @@ struct StatsHeaderView: View {
                 Text(Format.tokens(metrics.totalsTokens(metrics.today)))
                     .scaledFont(17, weight: .bold, design: .rounded)
                     .foregroundStyle(Theme.textPrimary)
-                Text(metrics.tokenBasis == .total ? "total" : "work")
+                Text(metrics.tokenBasisLabel)
                     .scaledFont(10).foregroundStyle(Theme.textSecondary)
             }
-            .help(metrics.tokenBasis == .total
-                ? "Total tokens = input + output + cache reads & writes — everything Claude processed. Switch to 'work' in Settings → Appearance."
-                : "Work tokens = input + output (the actual prompt & response).")
+            .help(tokenCountHelp)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(Format.tokens(metrics.today.cacheTokens))
                     .scaledFont(12, weight: .medium, design: .rounded)

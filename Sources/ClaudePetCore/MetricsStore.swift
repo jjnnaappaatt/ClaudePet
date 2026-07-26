@@ -368,11 +368,12 @@ public final class MetricsStore {
         return weightTokensByModel ? b.weightedTokens : Double(b.workTokens)
     }
 
-    /// Real tokens (or $) actually used this block — raw work tokens, never cost-weighted.
-    /// For display, so "X used" always reports true usage even when the gauge is weighted.
+    /// Real tokens (or $) actually used this block — raw, NEVER cost-weighted (that's
+    /// `blockValue`), on the user's work/total basis so this subtitle can't contradict the
+    /// header, charts and footer sitting beside it.
     public func blockTokensUsed(unit: BudgetUnit) -> Double {
         guard let b = activeBlock else { return 0 }
-        return unit == .usd ? b.costUSD : Double(b.workTokens)
+        return unit == .usd ? b.costUSD : Double(blockTokens(b))
     }
 
     public func blockBudget(unit: BudgetUnit) -> Double {
@@ -411,7 +412,7 @@ public final class MetricsStore {
     public func blockBurnPerHour(unit: BudgetUnit, now: Date = Date()) -> Double {
         guard let b = activeBlock else { return 0 }
         let hours = max(now.timeIntervalSince(b.actualStart) / 3600, 1.0 / 60)
-        return blockTokensUsed(unit: unit) / hours   // burn in real tokens, matching "used"
+        return blockTokensUsed(unit: unit) / hours   // real tokens, sharing "used"'s basis
     }
 
     // MARK: - Weekly (7-day) gauge helpers
@@ -421,9 +422,10 @@ public final class MetricsStore {
         return weightTokensByModel ? week.weightedTokens : Double(week.workTokens)
     }
 
-    /// Real tokens (or $) actually used this week — raw work tokens, never cost-weighted.
+    /// Real tokens (or $) actually used this week — raw, NEVER cost-weighted, on the user's
+    /// work/total basis (so it agrees with the "Week" figure in the footer directly below).
     public func weeklyTokensUsed(unit: BudgetUnit) -> Double {
-        unit == .usd ? week.costUSD : Double(week.workTokens)
+        unit == .usd ? week.costUSD : Double(totalsTokens(week))
     }
 
     public func weeklyBudget(unit: BudgetUnit) -> Double {
@@ -472,19 +474,29 @@ public final class MetricsStore {
         unit == .usd ? d.costUSD : Double(dayTokens(d))
     }
 
+    /// Is this the `weekDaily` bucket that `now` falls inside — i.e. the "today" bar?
+    ///
+    /// The series is 24h cells anchored at the weekly reset (so a cell can start mid-afternoon
+    /// and is NOT a calendar day), which is why this can't be `isDate(inSameDayAs:)` any more.
+    /// Order-independent on purpose: callers build the array both oldest-first and newest-first.
+    public func isCurrentDayBucket(_ d: DayTotal, now: Date = Date()) -> Bool {
+        d.date <= now && now < d.date.addingTimeInterval(86_400)
+    }
+
     /// Today's tokens (or $) from the 7-day series — falls back to the canonical `today`
-    /// totals only if the series has no bucket for the current local day.
+    /// totals only if the series has no bucket covering `now`.
     public func dailyTodayValue(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
-        if let t = weekDaily.first(where: { calendar.isDate($0.date, inSameDayAs: now) }) {
+        if let t = weekDaily.first(where: { isCurrentDayBucket($0, now: now) }) {
             return dayValue(t, unit: unit)
         }
         return unit == .usd ? today.costUSD : Double(totalsTokens(today))
     }
 
-    /// Average over the prior days in the window (excludes today and zero-usage days). 0 = no history.
+    /// Average over the prior buckets in the window (excludes the current one and zero-usage
+    /// buckets, so not-yet-started cells can't drag the average down). 0 = no history.
     public func dailyAverage(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
         let priors = weekDaily
-            .filter { !calendar.isDate($0.date, inSameDayAs: now) }
+            .filter { !isCurrentDayBucket($0, now: now) }
             .map { dayValue($0, unit: unit) }
             .filter { $0 > 0 }
         guard !priors.isEmpty else { return 0 }
@@ -503,15 +515,56 @@ public final class MetricsStore {
     }
 
     // MARK: - Token display basis
-    // Per-day/hour/model token figures show "work" (input+output) or cache-inclusive "total",
-    // per the user's `tokenBasis`. Every per-day token display funnels through these so the choice
-    // stays consistent. Cost ($) is always cache-inclusive and is never routed through here.
+    // Every token figure on screen shows "work" (input+output) or cache-inclusive "total", per the
+    // user's `tokenBasis`, and funnels through these so the choice stays consistent. The gauge
+    // subtitles included: they used to be hard-wired to work, which put a ~300× gap between
+    // "4.2M used this week" and the "Week" figure directly below it under the .total default.
+    // Cost ($) is always cache-inclusive and is never routed through here.
 
     public func tokens(work: Int, total: Int) -> Int { tokenBasis == .total ? total : work }
     public func dayTokens(_ d: DayTotal) -> Int     { tokens(work: d.workTokens, total: d.totalTokens) }
     public func hourTokens(_ h: HourTotal) -> Int   { tokens(work: h.workTokens, total: h.totalTokens) }
     public func modelTokens(_ m: ModelTotal) -> Int { tokens(work: m.workTokens, total: m.totalTokens) }
     public func totalsTokens(_ t: Totals) -> Int    { tokens(work: t.workTokens, total: t.totalTokens) }
+    public func blockTokens(_ b: UsageBlock) -> Int { tokens(work: b.workTokens, total: b.totalTokens) }
+
+    /// The word for the current basis, so a figure can name its own unit ("4.2M work used…").
+    public var tokenBasisLabel: String { tokenBasis == .total ? "total" : "work" }
+
+    // MARK: - Subagent share
+    // Subagent turns are a large slice of real usage (often ~40% of turns) but a tiny slice of
+    // WORK tokens — their cost is almost entirely cache reads, so on the work basis they look
+    // like they aren't being counted at all. These expose the split so a tooltip can say so.
+
+    public func sidechainTokens(_ t: Totals) -> Int {
+        tokens(work: t.sidechainWorkTokens, total: t.sidechainTotalTokens)
+    }
+    public func sidechainTokens(_ b: UsageBlock) -> Int {
+        tokens(work: b.sidechainWorkTokens, total: b.sidechainTotalTokens)
+    }
+
+    /// Subagent share, 0…1, on the current basis. Zero when nothing was counted.
+    public func sidechainShare(_ t: Totals) -> Double {
+        share(part: sidechainTokens(t), of: totalsTokens(t))
+    }
+    public func sidechainShare(_ b: UsageBlock) -> Double {
+        share(part: sidechainTokens(b), of: blockTokens(b))
+    }
+
+    /// A tooltip clause naming the subagent share, or "" when there's nothing to say.
+    public func sidechainNote(_ t: Totals) -> String { sidechainNote(share: sidechainShare(t)) }
+    public func sidechainNote(_ b: UsageBlock) -> String { sidechainNote(share: sidechainShare(b)) }
+
+    private func share(part: Int, of whole: Int) -> Double {
+        whole > 0 ? Double(part) / Double(whole) : 0
+    }
+
+    private func sidechainNote(share: Double) -> String {
+        guard includeSubagents else { return "" }
+        let pct = Int((share * 100).rounded())
+        guard pct > 0 else { return "" }
+        return " Sub-agents (the Task tool) account for \(pct)% of this \(tokenBasisLabel) figure."
+    }
 
     // MARK: - Hourly (today)
 

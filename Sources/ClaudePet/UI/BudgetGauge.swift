@@ -21,13 +21,23 @@ struct BudgetGauge: View {
         unit == .tokens ? Format.tokens(Int(value)) : Format.currency(value)
     }
 
+    /// Names the unit on the "used" line so it can't be misread as the other basis. Tokens only —
+    /// in $ mode the figure is currency and a work/total word would be meaningless.
+    private var basisSuffix: String { unit == .tokens ? " \(metrics.tokenBasisLabel)" : "" }
+
     /// When server-driven, the % is Claude's real number; otherwise it's an approximation
     /// and we say what it's measured against (and nudge re-calibration if one has lapsed).
     private var limitHelp: String {
         if metrics.serverDriven5h {
-            return "Claude's real 5-hour usage, via the statusline cache"
-                + (metrics.serverDataAge.map { " (as of \($0))" } ?? "")
-                + ". ClaudePet reads only the local file — no token, no network."
+            // One interpolated literal, not a `+` chain — the concatenation blew up the
+            // type-checker ("unable to type-check this expression in reasonable time").
+            let age = metrics.serverDataAge.map { " (as of \($0))" } ?? ""
+            return """
+                Claude's real 5-hour usage, via the statusline cache\(age). ClaudePet reads only \
+                the local file — no token, no network. The % is Claude's own accounting; the count \
+                below is ClaudePet's \(metrics.tokenBasisLabel)-token sum from your own transcripts, \
+                so the two aren't the same measurement. Change the basis in Settings → Appearance.
+                """
         }
         return "Approximate — the % is measured against \(metrics.budgetBasisDescription)."
             + (metrics.lastCalibratedAt != nil && metrics.calibrationIsStale
@@ -62,7 +72,7 @@ struct BudgetGauge: View {
                 HStack(spacing: 4) {
                     if metrics.serverDriven5h {
                         // Server gives a %, not a token cap — show real tokens used as context.
-                        Text("\(amount(metrics.blockTokensUsed(unit: unit))) used this window")
+                        Text("\(amount(metrics.blockTokensUsed(unit: unit)))\(basisSuffix) used this window")
                     } else {
                         Text("\(amount(metrics.blockValue(unit: unit))) / \(amount(metrics.blockBudget(unit: unit)))")
                         Spacer()
@@ -89,7 +99,7 @@ struct BudgetGauge: View {
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
         }
-        .help(limitHelp)
+        .help(limitHelp + (metrics.activeBlock.map { metrics.sidechainNote($0) } ?? ""))
     }
 
     @Environment(\.widgetScale) private var scaleHeight: CGFloat

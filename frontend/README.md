@@ -25,7 +25,7 @@ claude.ai/design reads that marker to place the file as a card in the Design Sys
 | `components/budget-gauge.html` | Gauges | 5-hour session gauge |
 | `components/weekly-bar.html` | Gauges | Weekly (all-models) limit bar |
 | `components/model-row.html` | Components | Per-model breakdown rows |
-| `components/weekly-chart.html` | Components | Work-per-day bar chart |
+| `components/weekly-chart.html` | Components | Per-day bars tiling the weekly-limit window (24h blocks anchored at the reset) |
 | `components/footer.html` | Components | Week / cycle totals + settings |
 | `components/billing.html` | Components | Paid vs API-value + credits |
 | `widgets/vertical.html` | Widget | Full tall card (300px) |

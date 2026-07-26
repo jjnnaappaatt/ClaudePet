@@ -9,6 +9,36 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 - `CONTRIBUTING.md` — build/test steps, the project layout, the two non-negotiable constraints
   (local-file-only, original art only), the settings-persistence pattern, and a deterministic-tests
   note prompted by a real flaky test fixed this release.
+- **Sub-agent share** in the tooltips on the Today header, both gauges and the Week/Cycle line —
+  "Sub-agents (the Task tool) account for N% of this …". Sub-agent turns were always counted, but
+  their cost is almost entirely cache reads, so on the Work basis they look like they aren't: on
+  real data they were 43% of turns yet 2.6% of the weekly *work* total. `Totals` and `UsageBlock`
+  now carry the sidechain split, accumulated in place at no extra cost. The "Include subagent
+  usage" toggle finally gets a caption, which also states the thing that surprises people — with
+  live usage on it changes the token counts but **not** the bar percentages, because those are
+  Claude's own accounting, which always includes sub-agents.
+
+### Changed
+- **The "used this window/week" line under each gauge now follows "Count tokens as" and names its
+  unit** ("4.2M work used this week"). It was hard-wired to work tokens while the header, charts,
+  per-model split and Week/cycle line all honoured the setting — so on the default Total basis the
+  weekly bar read "4.2M used this week" directly above a footer reading "Week 1.3B", the same
+  window ~300× apart, with the unit printed on neither. The `%` beside it is Claude's server-side
+  number and the count below it is a local token sum; the tooltips now say so outright.
+- **The "This week" chart tiles the weekly-limit window** — seven 24h blocks anchored at your reset
+  — instead of the rolling last-7-calendar-days, so the bars now sum to exactly the weekly total
+  above them. With a mid-afternoon reset the two disagreed by everything logged earlier on reset
+  day: 682,822 work tokens, ~16%, on real data. Blocks start at the reset time rather than
+  midnight, so a bar can span two dates; it is labelled with the weekday it begins on, the block
+  containing now is highlighted, and blocks that have not started are dimmed. The daily-pace row
+  reads the same series and so compares like with like.
+
+### Fixed
+- **A failed transcript read is no longer cached as "empty".** `UsageScanner` keyed a swallowed
+  read error to the file's `(mtime, size)`; finished sub-agent transcripts are never written again,
+  so one transient failure zeroed that file permanently for the life of the process — silently, and
+  they are 96% of the transcripts on a heavy user's disk. It now leaves the file uncached and
+  retries on the next scan.
 
 ## [0.3.0] — 2026-07-20
 

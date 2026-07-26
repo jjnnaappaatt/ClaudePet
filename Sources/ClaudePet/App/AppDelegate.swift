@@ -54,6 +54,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let l = WidgetLayout(rawValue: lay) {
                 metrics.widgetLayout = l       // verification override; leaves the user's saved choice untouched
             }
+            if let basis = ProcessInfo.processInfo.environment["CLAUDEPET_BASIS"],
+               let b = TokenBasis(rawValue: basis) {
+                metrics.tokenBasis = b         // ditto — lets a snapshot show work vs total side by side
+            }
             // Debug-only: force weather/gauges by faking the statusline utilization. Accepts a single
             // value ("61", drives 5h) or "five,seven" ("61,25") for both gauges.
             if let u = ProcessInfo.processInfo.environment["CLAUDEPET_UTIL"] {

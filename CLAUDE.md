@@ -28,6 +28,7 @@ exits. Use this instead of screenshots to check UI changes:
 CLAUDEPET_SNAPSHOT=/tmp/w.png ./ClaudePet.app/Contents/MacOS/ClaudePet   # widget, sample data
 CLAUDEPET_SNAPSHOT=/tmp/w.png CLAUDEPET_REAL=1 ...                       # real ~/.claude data
 CLAUDEPET_LAYOUT=vertical CLAUDEPET_SCALE=1.5 ...                        # override without touching saved prefs
+CLAUDEPET_BASIS=total ...           # render work-vs-total side by side, saved pref untouched
 CLAUDEPET_UTIL=96,40 ...            # fake statusline utilization → force gauge/weather/mood states
 CLAUDEPET_HANDLES=1 ...             # force resize grips visible
 ```
@@ -94,8 +95,11 @@ doesn't chase the numerator.
   cache-inclusive and never routed through it.
 
 Also: `week` is the **fixed weekly-reset window** total (mirrors the Claude app, resets to zero at
-each boundary), while `weekDaily` is the **rolling last-7-calendar-days** chart. Different bases on
-purpose — don't unify them.
+each boundary), and `weekDaily` tiles *that same window* into 7×24h cells anchored at the reset, so
+the chart bars sum to `week`. Those cells are **not calendar days** — one can start mid-afternoon
+and span two dates. `Aggregator.compute` falls back to rolling calendar days only when no
+`weekWindow` is passed. Anything asking "which bar is now?" must use
+`MetricsStore.isCurrentDayBucket` — never `isDate(inSameDayAs:)` or the last array index.
 
 ### Pricing
 

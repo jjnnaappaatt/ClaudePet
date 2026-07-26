@@ -8,7 +8,9 @@ struct WeekAllTimeView: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            label("Week", metrics.week).help("Current weekly-limit window (resets every 7 days).")
+            label("Week", metrics.week)
+                .help("Current weekly-limit window (resets every 7 days)."
+                      + metrics.sidechainNote(metrics.week))
             Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))
             label("Cycle", metrics.cycle).help(cycleHelp)
             if let reset = metrics.cycleReset {
@@ -49,6 +51,7 @@ struct WeekAllTimeView: View {
         let range = start.formatted(.dateTime.month(.abbreviated).day())
             + " – " + end.formatted(.dateTime.month(.abbreviated).day())
         let resets = Format.durationLong(end.timeIntervalSince(Date()))
-        return "This billing cycle: \(range) · resets in \(resets). Anchored to your subscription."
+        let base = "This billing cycle: \(range) · resets in \(resets). Anchored to your subscription."
+        return base + metrics.sidechainNote(metrics.cycle)
     }
 }

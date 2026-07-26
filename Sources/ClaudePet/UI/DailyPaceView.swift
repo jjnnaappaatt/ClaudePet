@@ -1,9 +1,13 @@
 import SwiftUI
 import ClaudePetCore
 
-/// "Today" daily-pace bar — today's tokens (or $) relative to your recent daily average.
+/// "Today" daily-pace bar — the current day's tokens (or $) relative to your recent daily average.
 /// Claude has no daily limit, so this is informational, not a budget: the average day sits at
 /// the bar's midpoint, so a full bar ≈ 2× a usual day. Sits beneath the 5h + weekly gauges.
+///
+/// "A day" here is one cell of `weekDaily` — a 24h block anchored at the weekly reset, the same
+/// unit the chart's bars use — so this row and the chart's highlighted bar are always the same
+/// number. That block starts at the reset time, not midnight; the tooltip says so.
 struct DailyPaceView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -18,9 +22,12 @@ struct DailyPaceView: View {
     }
 
     private var help: String {
-        "Today's usage compared with your recent daily average (from the last 7 days ClaudePet "
-            + "already tracks). There's no daily limit — the average day sits at the bar's midpoint, "
-            + "so a full bar is roughly twice a usual day. Local data only — no token, no network."
+        """
+        The current day's usage compared with your recent daily average. There's no daily limit — \
+        the average day sits at the bar's midpoint, so a full bar is roughly twice a usual day. \
+        A "day" here is a 24h block starting at your weekly reset time rather than at midnight, \
+        matching the highlighted bar in the chart below. Local data only — no token, no network.
+        """
     }
 
     var body: some View {

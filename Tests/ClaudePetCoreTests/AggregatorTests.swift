@@ -40,6 +40,41 @@ import Foundation
         #expect(sonnet.workTokens == 250)
     }
 
+    /// The chart bars tile the weekly-limit window, so they must sum to exactly the weekly total.
+    /// They used to be the rolling last-7-calendar-days while `week` was the fixed reset window —
+    /// so usage earlier on reset day appeared in the chart but not in the limit, and adding up the
+    /// visible bars gave a bigger number than the gauge above them.
+    @Test func weeklyChartBarsSumToTheWeeklyTotal() {
+        let now = noon
+        // Reset landed 21h ago — mid-afternoon yesterday — so reset day is split in two, which is
+        // exactly the case calendar-day buckets got wrong.
+        let windowStart = now.addingTimeInterval(-21 * 3600)
+        let window = (start: windowStart, end: windowStart.addingTimeInterval(7 * 86_400))
+        let entries = [
+            TestSupport.entry(at: windowStart.addingTimeInterval(-3600), input: 900, output: 90), // pre-reset
+            TestSupport.entry(at: windowStart.addingTimeInterval(60), input: 100, output: 10),    // cell 0
+            TestSupport.entry(at: now, input: 50, output: 5),                                     // cell 0 (21h in)
+        ]
+        let agg = Aggregator.compute(entries: entries, pricing: pricing, now: now, calendar: cal,
+                                     weekWindow: window)
+        #expect(agg.week.workTokens == 165)                       // the pre-reset entry reset off
+        #expect(agg.weekDaily.count == 7)
+        #expect(agg.weekDaily.reduce(0) { $0 + $1.workTokens } == agg.week.workTokens)
+        #expect(agg.weekDaily[0].date == windowStart)             // cells anchored at the reset
+        #expect(agg.weekDaily[0].workTokens == 165)               // both post-reset entries land in cell 0
+        #expect(agg.allTime.workTokens == 165 + 990)              // …but it still counts all-time
+    }
+
+    /// Without a window (callers/tests that pass none) the chart stays rolling calendar days.
+    @Test func weeklyChartFallsBackToCalendarDaysWithoutAWindow() {
+        let now = noon
+        let agg = Aggregator.compute(entries: [TestSupport.entry(at: now, input: 10, output: 1)],
+                                     pricing: pricing, now: now, calendar: cal)
+        #expect(agg.weekDaily.count == 7)
+        #expect(agg.weekDaily.last?.date == cal.startOfDay(for: now))
+        #expect(agg.weekDaily.last?.workTokens == 11)
+    }
+
     @Test func tracksUnknownModels() {
         let now = noon
         let entries = [TestSupport.entry(at: now, model: "claude-zeta-1", input: 10, output: 1)]

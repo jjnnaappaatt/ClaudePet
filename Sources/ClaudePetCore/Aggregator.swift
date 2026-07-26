@@ -7,6 +7,12 @@ public struct Totals: Sendable, Equatable {
     /// Work tokens scaled by each entry's model weight (Sonnet-equivalent). Used by
     /// the gauge when "weight tokens by model cost" is on; flat `workTokens` otherwise.
     public var weightedTokens: Double = 0
+    /// The subagent (sidechain) slice of the two counts above — accumulated in `add` from the
+    /// entry's own flag, so it costs no extra pass and can never disagree with the parent sums.
+    /// Zero when "Include subagent usage" is off: those entries never reach the aggregator.
+    /// These stay LAST so the synthesized memberwise init keeps existing call sites valid.
+    public var sidechainWorkTokens: Int = 0
+    public var sidechainTotalTokens: Int = 0
 
     /// Cache read + write tokens (the bulk of `totalTokens`).
     public var cacheTokens: Int { max(0, totalTokens - workTokens) }
@@ -16,6 +22,10 @@ public struct Totals: Sendable, Equatable {
         totalTokens += e.totalTokens
         costUSD += cost
         weightedTokens += Double(e.workTokens) * weight
+        if e.isSidechain {
+            sidechainWorkTokens += e.workTokens
+            sidechainTotalTokens += e.totalTokens
+        }
     }
 }
 
@@ -82,13 +92,30 @@ public enum Aggregator {
         // 24 fixed buckets for today, so the chart always has a full 12a→12p axis.
         var hourBuckets = (0...23).map { HourTotal(hour: $0) }
 
-        // Prepare 7 day buckets (oldest → today), keyed by start-of-day.
+        // 7 day buckets for the history chart, oldest → newest.
+        //
+        // Given a weekly-reset window, tile THAT window into 7×24h cells anchored at the reset,
+        // so the bars sum to exactly the weekly-limit total shown above them. They used to be
+        // rolling calendar days, which silently disagreed: with a mid-afternoon reset, the usage
+        // earlier on reset day sits in the chart but not in the limit — a ~16% gap on real data,
+        // with nothing on screen to explain it. Cells later than `now` stay empty.
+        //
+        // With no window (callers/tests that pass none) fall back to rolling calendar days.
+        let dayGridStart = weekWindow?.start
         var dayBuckets: [Date: DayTotal] = [:]
         var dayOrder: [Date] = []
-        for offset in (0...6).reversed() {
-            if let d = calendar.date(byAdding: .day, value: -offset, to: startOfToday) {
+        if let gridStart = dayGridStart {
+            for i in 0..<7 {
+                let d = gridStart.addingTimeInterval(Double(i) * 86_400)
                 dayBuckets[d] = DayTotal(date: d)
                 dayOrder.append(d)
+            }
+        } else {
+            for offset in (0...6).reversed() {
+                if let d = calendar.date(byAdding: .day, value: -offset, to: startOfToday) {
+                    dayBuckets[d] = DayTotal(date: d)
+                    dayOrder.append(d)
+                }
             }
         }
 
@@ -107,14 +134,20 @@ public enum Aggregator {
                 agg.week.add(e, cost: cost, weight: weight)
             }
 
-            // Day-by-day history chart is always the rolling last-7-calendar-days.
-            if e.timestamp >= weekStart {
-                let day = calendar.startOfDay(for: e.timestamp)
-                if dayBuckets[day] != nil {
-                    dayBuckets[day]!.workTokens += e.workTokens
-                    dayBuckets[day]!.totalTokens += e.totalTokens
-                    dayBuckets[day]!.costUSD += cost
-                }
+            // Day-by-day history chart — window cells when we have a window, else calendar days.
+            // The cell key is derived from `gridStart` exactly as the buckets were, so it matches.
+            let dayKey: Date?
+            if let gridStart = dayGridStart {
+                let step = (e.timestamp.timeIntervalSince(gridStart) / 86_400).rounded(.down)
+                dayKey = (step >= 0 && step < 7)
+                    ? gridStart.addingTimeInterval(step * 86_400) : nil
+            } else {
+                dayKey = e.timestamp >= weekStart ? calendar.startOfDay(for: e.timestamp) : nil
+            }
+            if let key = dayKey, dayBuckets[key] != nil {
+                dayBuckets[key]!.workTokens += e.workTokens
+                dayBuckets[key]!.totalTokens += e.totalTokens
+                dayBuckets[key]!.costUSD += cost
             }
 
             if calendar.isDate(e.timestamp, inSameDayAs: now) {

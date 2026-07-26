@@ -21,12 +21,22 @@ struct WeeklyLimitBar: View {
         unit == .tokens ? Format.tokens(Int(v)) : Format.currency(v)
     }
 
+    /// Names the unit on the "used" line so it can't be misread as the other basis. Tokens only —
+    /// in $ mode the figure is currency and a work/total word would be meaningless.
+    private var basisSuffix: String { unit == .tokens ? " \(metrics.tokenBasisLabel)" : "" }
+
     /// Server-driven → Claude's real weekly number; otherwise approximate, named by basis.
     private var limitHelp: String {
         if metrics.serverDriven7d {
-            return "Claude's real 7-day usage, via the statusline cache"
-                + (metrics.serverDataAge.map { " (as of \($0))" } ?? "")
-                + ". ClaudePet reads only the local file — no token, no network."
+            // One interpolated literal, not a `+` chain — the concatenation blew up the
+            // type-checker ("unable to type-check this expression in reasonable time").
+            let age = metrics.serverDataAge.map { " (as of \($0))" } ?? ""
+            return """
+                Claude's real 7-day usage, via the statusline cache\(age). ClaudePet reads only \
+                the local file — no token, no network. The % is Claude's own accounting; the count \
+                below is ClaudePet's \(metrics.tokenBasisLabel)-token sum from your own transcripts, \
+                so the two aren't the same measurement. Change the basis in Settings → Appearance.
+                """
         }
         return "Fixed 7-day window that resets to zero on a schedule (like the Claude app). "
             + "The % is measured against \(metrics.budgetBasisDescription)."
@@ -60,7 +70,7 @@ struct WeeklyLimitBar: View {
 
             HStack(spacing: 4) {
                 if metrics.serverDriven7d {
-                    Text("\(amount(metrics.weeklyTokensUsed(unit: unit))) used this week")
+                    Text("\(amount(metrics.weeklyTokensUsed(unit: unit)))\(basisSuffix) used this week")
                 } else {
                     Text("\(amount(metrics.weeklyValue(unit: unit))) / \(amount(metrics.weeklyBudget(unit: unit)))")
                     Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))
@@ -80,7 +90,7 @@ struct WeeklyLimitBar: View {
             .foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
         }
-        .help(limitHelp)
+        .help(limitHelp + metrics.sidechainNote(metrics.week))
     }
 
     @Environment(\.widgetScale) private var scale: CGFloat
