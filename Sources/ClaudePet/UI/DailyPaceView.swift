@@ -5,9 +5,9 @@ import ClaudePetCore
 /// Claude has no daily limit, so this is informational, not a budget: the average day sits at
 /// the bar's midpoint, so a full bar ≈ 2× a usual day. Sits beneath the 5h + weekly gauges.
 ///
-/// "A day" here is one cell of `weekDaily` — a 24h block anchored at the weekly reset, the same
-/// unit the chart's bars use — so this row and the chart's highlighted bar are always the same
-/// number. That block starts at the reset time, not midnight; the tooltip says so.
+/// "Today" is the same bucket the chart highlights — a calendar day clipped to the weekly window —
+/// so this row and the chart's highlighted bar always agree. On reset day that means only the part
+/// since the reset, which the tooltip says.
 struct DailyPaceView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -23,10 +23,10 @@ struct DailyPaceView: View {
 
     private var help: String {
         """
-        The current day's usage compared with your recent daily average. There's no daily limit — \
-        the average day sits at the bar's midpoint, so a full bar is roughly twice a usual day. \
-        A "day" here is a 24h block starting at your weekly reset time rather than at midnight, \
-        matching the highlighted bar in the chart below. Local data only — no token, no network.
+        Today's usage compared with your recent daily average. There's no daily limit — the \
+        average day sits at the bar's midpoint, so a full bar is roughly twice a usual day. Days \
+        come from the chart below, which covers the weekly-limit window, so on reset day this \
+        counts only the part since the reset. Local data only — no token, no network.
         """
     }
 

@@ -1,10 +1,11 @@
 import SwiftUI
 import ClaudePetCore
 
-/// A 7-bar "this week" chart (all models combined), like the Screen Time widget.
-/// The bars tile the weekly-limit window — 24h cells anchored at the reset — so they sum to the
-/// figure the weekly bar shows. Values follow the gauge unit ($ or tokens) and the work/total
-/// basis; the cell containing now is highlighted, and any cell that hasn't started is dimmed.
+/// A "this week" bar chart (all models combined), like the Screen Time widget.
+/// The bars are the calendar days of the weekly-limit window, clipped to it, so they sum to the
+/// figure the weekly bar shows while still being real days. A mid-day reset splits reset day
+/// across the first and last bars, so there can be 8. Values follow the gauge unit ($ or tokens)
+/// and the work/total basis; today is highlighted and days still to come are dimmed.
 struct WeeklyBarChart: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -26,9 +27,9 @@ struct WeeklyBarChart: View {
         let basis = metrics.budgetUnit == .usd ? "Cost" : "\(metrics.tokenBasisLabel.capitalized) tokens"
         return """
             \(basis) per day across the current weekly-limit window, so these bars add up to the \
-            weekly figure above. Each bar is a 24h block starting at your reset time and is \
-            labelled with the weekday it begins on, so a bar can span two calendar days; the \
-            last blocks are dimmed until they begin.
+            weekly figure above rather than to a rolling seven days. Reset day is counted only \
+            from the reset onward, which is why it can appear at both ends of the row as a part \
+            day. Today is highlighted; days still to come are dimmed.
             """
     }
 
@@ -48,8 +49,8 @@ struct WeeklyBarChart: View {
             }
             HStack(alignment: .bottom, spacing: 5 * scale) {
                 ForEach(days) { day in
-                    // Not `idx == days.count - 1` any more: with reset-anchored cells the last
-                    // bar is the end of the window, which mid-week is still in the future.
+                    // Not `idx == days.count - 1` any more: the last bar is the end of the
+                    // weekly window, which mid-week is still in the future.
                     let isNow = metrics.isCurrentDayBucket(day, now: now)
                     let notStarted = day.date > now
                     VStack(spacing: 2 * scale) {

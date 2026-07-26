@@ -92,23 +92,28 @@ public enum Aggregator {
         // 24 fixed buckets for today, so the chart always has a full 12a→12p axis.
         var hourBuckets = (0...23).map { HourTotal(hour: $0) }
 
-        // 7 day buckets for the history chart, oldest → newest.
+        // Day buckets for the history chart, oldest → newest.
         //
-        // Given a weekly-reset window, tile THAT window into 7×24h cells anchored at the reset,
-        // so the bars sum to exactly the weekly-limit total shown above them. They used to be
-        // rolling calendar days, which silently disagreed: with a mid-afternoon reset, the usage
-        // earlier on reset day sits in the chart but not in the limit — a ~16% gap on real data,
-        // with nothing on screen to explain it. Cells later than `now` stay empty.
+        // Given a weekly-reset window these are the CALENDAR DAYS that window covers, clipped to
+        // it: the bars sum to exactly the weekly-limit total above them (a rolling last-7-days
+        // silently disagreed with it by everything logged before a mid-afternoon reset — ~16% on
+        // real data) while still being real days.
         //
-        // With no window (callers/tests that pass none) fall back to rolling calendar days.
-        let dayGridStart = weekWindow?.start
+        // Anchoring 24h cells to the reset *instant* also summed correctly but mislabelled the
+        // bars: at 14:47 on a Sunday the cell holding `now` had begun Sat 15:00, so the chart
+        // highlighted Saturday and would have jumped to Sunday at 15:00. Weekday letters have to
+        // mean weekdays.
+        //
+        // A mid-day reset means the window touches 8 calendar days, reset day split across the
+        // first and last bars. With no window, fall back to the rolling last 7 days.
         var dayBuckets: [Date: DayTotal] = [:]
         var dayOrder: [Date] = []
-        if let gridStart = dayGridStart {
-            for i in 0..<7 {
-                let d = gridStart.addingTimeInterval(Double(i) * 86_400)
+        if let ww = weekWindow {
+            var d = calendar.startOfDay(for: ww.start)
+            while d < ww.end {
                 dayBuckets[d] = DayTotal(date: d)
                 dayOrder.append(d)
+                d = calendar.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86_400)
             }
         } else {
             for offset in (0...6).reversed() {
@@ -134,13 +139,12 @@ public enum Aggregator {
                 agg.week.add(e, cost: cost, weight: weight)
             }
 
-            // Day-by-day history chart — window cells when we have a window, else calendar days.
-            // The cell key is derived from `gridStart` exactly as the buckets were, so it matches.
+            // Day-by-day history chart. Inside a window only in-window entries count, so reset
+            // day's bar holds just the part that counts toward the limit.
             let dayKey: Date?
-            if let gridStart = dayGridStart {
-                let step = (e.timestamp.timeIntervalSince(gridStart) / 86_400).rounded(.down)
-                dayKey = (step >= 0 && step < 7)
-                    ? gridStart.addingTimeInterval(step * 86_400) : nil
+            if let ww = weekWindow {
+                dayKey = (e.timestamp >= ww.start && e.timestamp < ww.end)
+                    ? calendar.startOfDay(for: e.timestamp) : nil
             } else {
                 dayKey = e.timestamp >= weekStart ? calendar.startOfDay(for: e.timestamp) : nil
             }

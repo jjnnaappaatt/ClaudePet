@@ -58,10 +58,18 @@ import Foundation
         let agg = Aggregator.compute(entries: entries, pricing: pricing, now: now, calendar: cal,
                                      weekWindow: window)
         #expect(agg.week.workTokens == 165)                       // the pre-reset entry reset off
-        #expect(agg.weekDaily.count == 7)
+        #expect(agg.weekDaily.count == 8)                         // mid-day reset → reset day at both ends
         #expect(agg.weekDaily.reduce(0) { $0 + $1.workTokens } == agg.week.workTokens)
-        #expect(agg.weekDaily[0].date == windowStart)             // cells anchored at the reset
-        #expect(agg.weekDaily[0].workTokens == 165)               // both post-reset entries land in cell 0
+
+        // Reset day is the first bar and holds only what counts toward the limit.
+        #expect(cal.isDate(agg.weekDaily[0].date, inSameDayAs: windowStart))
+        #expect(agg.weekDaily[0].workTokens == 110)
+
+        // The bar holding `now` is TODAY's calendar day. Anchoring 24h cells to the reset instant
+        // summed correctly but put `now` in a cell that began the previous afternoon, so the chart
+        // highlighted (and labelled) the wrong weekday — Saturday on a Sunday.
+        let todayBar = agg.weekDaily.first { cal.isDate($0.date, inSameDayAs: now) }
+        #expect(todayBar?.workTokens == 55)
         #expect(agg.allTime.workTokens == 165 + 990)              // …but it still counts all-time
     }
 

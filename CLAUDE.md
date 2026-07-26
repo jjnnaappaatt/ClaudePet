@@ -95,11 +95,16 @@ doesn't chase the numerator.
   cache-inclusive and never routed through it.
 
 Also: `week` is the **fixed weekly-reset window** total (mirrors the Claude app, resets to zero at
-each boundary), and `weekDaily` tiles *that same window* into 7×24h cells anchored at the reset, so
-the chart bars sum to `week`. Those cells are **not calendar days** — one can start mid-afternoon
-and span two dates. `Aggregator.compute` falls back to rolling calendar days only when no
-`weekWindow` is passed. Anything asking "which bar is now?" must use
-`MetricsStore.isCurrentDayBucket` — never `isDate(inSameDayAs:)` or the last array index.
+each boundary), and `weekDaily` is the **calendar days that window covers, clipped to it** — so the
+chart bars sum to `week` while still being real days. A mid-day reset means 8 buckets, reset day
+split across the first and last, each holding only its in-window part. `Aggregator.compute` falls
+back to a rolling last-7-days only when no `weekWindow` is passed. Anything asking "which bar is
+today?" must use `MetricsStore.isCurrentDayBucket`, never the last array index — the last bucket is
+the end of the window, which mid-week is still in the future.
+
+Do **not** re-anchor those buckets to the reset *instant*. It sums correctly too, but the bucket
+holding `now` then begins the previous afternoon, so the chart labels and highlights the wrong
+weekday (Saturday on a Sunday, flipping at 15:00). Weekday letters have to mean weekdays.
 
 ### Pricing
 

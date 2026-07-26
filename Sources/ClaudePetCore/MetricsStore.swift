@@ -474,19 +474,19 @@ public final class MetricsStore {
         unit == .usd ? d.costUSD : Double(dayTokens(d))
     }
 
-    /// Is this the `weekDaily` bucket that `now` falls inside — i.e. the "today" bar?
-    ///
-    /// The series is 24h cells anchored at the weekly reset (so a cell can start mid-afternoon
-    /// and is NOT a calendar day), which is why this can't be `isDate(inSameDayAs:)` any more.
-    /// Order-independent on purpose: callers build the array both oldest-first and newest-first.
-    public func isCurrentDayBucket(_ d: DayTotal, now: Date = Date()) -> Bool {
-        d.date <= now && now < d.date.addingTimeInterval(86_400)
+    /// Is this the `weekDaily` bucket holding `now` — i.e. the "today" bar? Buckets are calendar
+    /// days (clipped to the weekly window), so this is a plain same-day test. Order-independent
+    /// on purpose: callers build the array both oldest-first and newest-first, so it must not
+    /// assume the current day is the last element.
+    public func isCurrentDayBucket(_ d: DayTotal, now: Date = Date(),
+                                   calendar: Calendar = .current) -> Bool {
+        calendar.isDate(d.date, inSameDayAs: now)
     }
 
     /// Today's tokens (or $) from the 7-day series — falls back to the canonical `today`
     /// totals only if the series has no bucket covering `now`.
     public func dailyTodayValue(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
-        if let t = weekDaily.first(where: { isCurrentDayBucket($0, now: now) }) {
+        if let t = weekDaily.first(where: { isCurrentDayBucket($0, now: now, calendar: calendar) }) {
             return dayValue(t, unit: unit)
         }
         return unit == .usd ? today.costUSD : Double(totalsTokens(today))
@@ -496,7 +496,7 @@ public final class MetricsStore {
     /// buckets, so not-yet-started cells can't drag the average down). 0 = no history.
     public func dailyAverage(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
         let priors = weekDaily
-            .filter { !isCurrentDayBucket($0, now: now) }
+            .filter { !isCurrentDayBucket($0, now: now, calendar: calendar) }
             .map { dayValue($0, unit: unit) }
             .filter { $0 > 0 }
         guard !priors.isEmpty else { return 0 }

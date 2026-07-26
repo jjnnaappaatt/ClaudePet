@@ -25,13 +25,13 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   weekly bar read "4.2M used this week" directly above a footer reading "Week 1.3B", the same
   window ~300× apart, with the unit printed on neither. The `%` beside it is Claude's server-side
   number and the count below it is a local token sum; the tooltips now say so outright.
-- **The "This week" chart tiles the weekly-limit window** — seven 24h blocks anchored at your reset
-  — instead of the rolling last-7-calendar-days, so the bars now sum to exactly the weekly total
-  above them. With a mid-afternoon reset the two disagreed by everything logged earlier on reset
-  day: 682,822 work tokens, ~16%, on real data. Blocks start at the reset time rather than
-  midnight, so a bar can span two dates; it is labelled with the weekday it begins on, the block
-  containing now is highlighted, and blocks that have not started are dimmed. The daily-pace row
-  reads the same series and so compares like with like.
+- **The "This week" chart now covers the weekly-limit window** — the calendar days that window
+  spans, clipped to it — instead of the rolling last-7-calendar-days, so the bars sum to exactly
+  the weekly total above them. With a mid-afternoon reset the two disagreed by everything logged
+  earlier on reset day: 682,822 work tokens, ~16%, on real data. Reset day counts only from the
+  reset onward and so shows at both ends of the row as a part day (8 bars, not 7); today is
+  highlighted, days still to come are dimmed. The daily-pace row reads the same series, so on
+  reset day it likewise counts only the part since the reset.
 
 ### Fixed
 - **A failed transcript read is no longer cached as "empty".** `UsageScanner` keyed a swallowed
