@@ -34,16 +34,26 @@ import Foundation
         #expect(store.hasDailyHistory(now: now, calendar: cal))
     }
 
-    @Test func fractionMidpointAtAverage() {
+    @Test func fractionIsFullAtAverage() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 600), day(1, work: 600)]   // today == avg → midpoint
-        #expect(abs(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) - 0.5) < 0.0001)
+        store.weekDaily = [day(0, work: 600), day(1, work: 600)]   // today == a usual day → full
+        #expect(abs(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) - 1.0) < 0.0001)
+        #expect(!store.dailyPaceExceedsAverage(unit: .tokens, now: now, calendar: cal))
     }
 
-    @Test func fractionFullAtDoubleAverage() {
+    /// The fill has to equal the "today N%" printed beside it. The old scale put the average at
+    /// the midpoint, so a day at 2/3 of normal drew a third of a bar and the two disagreed.
+    @Test func fractionEqualsShareOfAUsualDay() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 5000), day(1, work: 500)]   // today ≫ 2× avg → clamps to 1
+        store.weekDaily = [day(0, work: 400), day(1, work: 600)]   // today is 2/3 of a usual day
+        #expect(abs(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) - 2.0 / 3.0) < 0.0001)
+    }
+
+    @Test func fractionClampsAndFlagsAboveAverage() {
+        let store = freshStore()
+        store.weekDaily = [day(0, work: 5000), day(1, work: 500)]   // 10× a usual day → pinned full
         #expect(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) == 1.0)
+        #expect(store.dailyPaceExceedsAverage(unit: .tokens, now: now, calendar: cal))
     }
 
     @Test func zeroTodayGivesEmptyBar() {

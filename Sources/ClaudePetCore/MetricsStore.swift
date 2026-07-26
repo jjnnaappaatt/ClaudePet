@@ -506,11 +506,26 @@ public final class MetricsStore {
         return priors.reduce(0, +) / Double(priors.count)
     }
 
-    /// Bar fill: the average day sits at the midpoint, so full ≈ 2× a usual day. 0 when no history.
+    /// Bar fill: a usual day fills the bar, so the fill IS "today as a share of a usual day" and
+    /// matches the percentage printed beside it. 0 when no history.
+    ///
+    /// This used to put the average at the MIDPOINT (full ≈ 2× a usual day) to leave room to show
+    /// a heavy day. Nobody read it that way: a day at 66% of normal drew a third of a bar, and
+    /// once the caption stated "today 66%" the bar and the number visibly disagreed. Days past a
+    /// usual one now clamp at full and are called out by colour plus the exact % in the caption,
+    /// which keeps the information without making the bar lie.
     public func dailyPaceFraction(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
         let avg = dailyAverage(unit: unit, now: now, calendar: calendar)
         guard avg > 0 else { return 0 }
-        return min(1, max(0, dailyTodayValue(unit: unit, now: now, calendar: calendar) / (2 * avg)))
+        return min(1, max(0, dailyTodayValue(unit: unit, now: now, calendar: calendar) / avg))
+    }
+
+    /// True once today has passed a usual day — the bar is pinned full, so the caption's % and a
+    /// colour change are what carry the overshoot.
+    public func dailyPaceExceedsAverage(unit: BudgetUnit, now: Date = Date(),
+                                        calendar: Calendar = .current) -> Bool {
+        let avg = dailyAverage(unit: unit, now: now, calendar: calendar)
+        return avg > 0 && dailyTodayValue(unit: unit, now: now, calendar: calendar) > avg
     }
 
     public func hasDailyHistory(now: Date = Date(), calendar: Calendar = .current) -> Bool {

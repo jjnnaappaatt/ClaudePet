@@ -31,10 +31,13 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   reset day: 682,822 work tokens, ~16%, on real data. Still seven bars: reset day counts only the
   hours inside the window, and the window's trailing reset-day hours fold back onto the same
   weekday rather than adding an eighth. Today is highlighted, days still to come are dimmed.
-- **The daily-pace bar shows where "average" is.** A usual day sits at the bar's midpoint (full ≈
-  2× a usual day), which was invisible — a day at 66% of average drew a 33% bar and read as
-  "barely a third" rather than "a bit below normal". There's now a tick at the midpoint, and the
-  line beneath states the comparison directly: "679.1k/day avg · today 66%".
+- **The daily-pace bar now reads as "today, as a share of a usual day".** A usual day fills the
+  bar, so the fill and the percentage beside it always agree: "679.1k/day avg · today 70%" next to
+  a bar 70% full. It used to put the average at the *midpoint* (full ≈ 2× a usual day), so a day
+  at 70% of normal drew a third of a bar — which reads as "barely a third of normal", and once the
+  caption spelled the percentage out the bar and the number plainly contradicted each other. A day
+  heavier than usual now pins the bar full and turns it coral, with the percentage carrying the
+  overshoot past 100%.
 
 ### Fixed
 - **A failed transcript read is no longer cached as "empty".** `UsageScanner` keyed a swallowed
