@@ -17,6 +17,14 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   usage" toggle finally gets a caption, which also states the thing that surprises people — with
   live usage on it changes the token counts but **not** the bar percentages, because those are
   Claude's own accounting, which always includes sub-agents.
+- **"Count repeated log lines (match /stats)"** in Settings → Appearance, off by default. Claude
+  Code writes the same assistant turn to its transcript several times — 62% of logged lines on real
+  data repeat a `message.id` already seen, with byte-identical usage — and its own `/stats` counts
+  the lines rather than the turns, which is why `/stats` reports roughly 2.4× ClaudePet's figure.
+  Turning this on reproduces that counting. It finds no missing usage; it counts one API response
+  more than once, and inflates **cost** along with the token counts, so it's for reconciling the
+  two tools rather than for daily use. Related: `/stats` "Total tokens" is `input + output` only —
+  cache is excluded there, so it maps to ClaudePet's *Work*, never its *Total*.
 
 ### Changed
 - **The "used this window/week" line under each gauge now follows "Count tokens as" and names its
