@@ -19,7 +19,11 @@ public actor UsageScanner {
 
     /// Incremental scan: parse only new/changed files, drop deleted ones, return
     /// all entries deduplicated globally (earliest occurrence wins).
-    public func scan() -> [UsageEntry] {
+    ///
+    /// `deduplicated: false` keeps every logged line instead, which reproduces Claude Code's
+    /// `/stats` counting. Only the merge step changes — the per-file parse cache is shared — so
+    /// flipping the mode costs a re-merge, never a re-read.
+    public func scan(deduplicated: Bool = true) -> [UsageEntry] {
         let files = Self.jsonlFiles(under: root)
         var present = Set<URL>()
 
@@ -43,24 +47,25 @@ public actor UsageScanner {
         // Forget files that disappeared.
         for url in cache.keys where !present.contains(url) { cache[url] = nil }
 
-        return Self.merge(cache.values.flatMap(\.entries))
+        return Self.merge(cache.values.flatMap(\.entries), deduplicated: deduplicated)
     }
 
     // MARK: - One-shot (no cache) — used for synchronous snapshot rendering.
 
-    public static func scanOnce(root: URL = UsageScanner.defaultRoot) -> [UsageEntry] {
+    public static func scanOnce(root: URL = UsageScanner.defaultRoot,
+                                deduplicated: Bool = true) -> [UsageEntry] {
         let all = jsonlFiles(under: root).flatMap { (try? JSONLParser.entries(inFileAt: $0)) ?? [] }
-        return merge(all)
+        return merge(all, deduplicated: deduplicated)
     }
 
     // MARK: - Helpers
 
-    static func merge(_ entries: [UsageEntry]) -> [UsageEntry] {
+    static func merge(_ entries: [UsageEntry], deduplicated: Bool = true) -> [UsageEntry] {
         // Sort by time so dedup keeps the earliest copy deterministically. Sort in place
         // (the caller's array is a fresh flatMap result) to avoid a second full-set copy.
         var sorted = entries
         sorted.sort { $0.timestamp < $1.timestamp }
-        return Deduplicator.deduplicated(sorted)
+        return deduplicated ? Deduplicator.deduplicated(sorted) : sorted
     }
 
     static func jsonlFiles(under root: URL) -> [URL] {

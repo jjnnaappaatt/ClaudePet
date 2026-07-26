@@ -169,6 +169,16 @@ import Foundation
         #expect(c.billingCycleDayOverride == nil)
     }
 
+    /// Off by default — dedup stays on unless the user opts into `/stats`-style counting.
+    @Test func countRepeatedLogLinesDefaultsOffAndPersists() {
+        let defaults = freshDefaults()
+        let a = MetricsStore(defaults: defaults)
+        #expect(a.countRepeatedLogLines == false)
+        a.countRepeatedLogLines = true
+        a.saveConfigAndRecompute()
+        #expect(MetricsStore(defaults: defaults).countRepeatedLogLines == true)
+    }
+
     @Test func includeSubagentsTogglesAggregation() {
         let store = MetricsStore(defaults: freshDefaults())
         let now = Date()

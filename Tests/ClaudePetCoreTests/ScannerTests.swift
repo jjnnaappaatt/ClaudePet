@@ -75,6 +75,35 @@ import Foundation
         #expect(await scanner.scan().count == 2)
     }
 
+    /// `deduplicated: false` reproduces Claude Code's `/stats` counting: every logged line, including
+    /// the re-logs of a turn already recorded elsewhere. It counts one API response more than once
+    /// by design — it is not recovering usage the deduplicated scan missed.
+    @Test func nonDeduplicatedScanKeepsRepeatedLines() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let a = root.appendingPathComponent("a.jsonl")
+        let b = root.appendingPathComponent("subagents/agent-b.jsonl")
+        try (line(id: "msg_1", ts: "2026-06-05T10:00:00.000Z", input: 100) + "\n" +
+             line(id: "msg_2", ts: "2026-06-05T10:05:00.000Z", input: 10)).write(to: a, atomically: true, encoding: .utf8)
+        try line(id: "msg_1", ts: "2026-06-05T10:00:00.000Z", input: 100)
+            .write(to: b, atomically: true, encoding: .utf8)   // same turn, logged twice
+
+        let scanner = UsageScanner(root: root)
+        let deduped = await scanner.scan()
+        #expect(deduped.count == 2)
+        #expect(deduped.map(\.inputTokens).reduce(0, +) == 110)
+
+        let raw = await scanner.scan(deduplicated: false)
+        #expect(raw.count == 3)
+        #expect(raw.filter { $0.messageID == "msg_1" }.count == 2)     // the repeat is kept
+        #expect(raw.map(\.inputTokens).reduce(0, +) == 210)            // …and its tokens counted twice
+
+        // The mode only changes the merge: the per-file parse cache is shared, so switching back
+        // costs no re-read and returns the original result.
+        #expect(await scanner.scan().count == 2)
+    }
+
     @Test func scanOnceMatchesActorScan() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

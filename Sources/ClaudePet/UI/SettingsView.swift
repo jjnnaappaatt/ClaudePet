@@ -172,6 +172,9 @@ struct SettingsView: View {
                 Toggle("Include subagent usage", isOn: $metrics.includeSubagents)
                     .onChange(of: metrics.includeSubagents) { persist() }
                 caption("Counts turns run by the Task tool (the subagents/ transcripts under ~/.claude) — often a large share of your turns, but their cost is nearly all cache reads, so they barely register under 'Work' and only show their true size under 'Total'. While Claude's live usage drives the gauges, turning this off changes the token counts but NOT the two bar percentages — those are Claude's own accounting, which always includes subagents.")
+                Toggle("Count repeated log lines (match /stats)", isOn: $metrics.countRepeatedLogLines)
+                    .onChange(of: metrics.countRepeatedLogLines) { persist() }
+                caption("Claude Code writes the same assistant turn to its transcript several times — about 57% of logged lines repeat a message id already seen, with byte-identical usage. ClaudePet counts each turn once; Claude Code's /stats counts the lines, which is why it reports roughly 2.4× as many tokens. Turn this on to match /stats. It doesn't find missing usage — it counts one API response more than once — so leave it off unless you're reconciling the two.")
                 Toggle("Keep on top of other windows", isOn: $metrics.keepOnTop)
                     .onChange(of: metrics.keepOnTop) { persist() }
                 Toggle("Show on all Spaces (can cover fullscreen)", isOn: $metrics.showOnAllSpaces)

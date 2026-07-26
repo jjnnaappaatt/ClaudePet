@@ -32,6 +32,11 @@ public final class MetricsStore {
     public var weeklyTokenBudget: Int = 20_000_000
     public var weeklyCostBudget: Double = 2000
     public var includeSubagents = true
+    /// Count every logged assistant line instead of one per `message.id` — reproduces Claude
+    /// Code's `/stats` figure. Off by default: ~57% of logged lines repeat an id already seen,
+    /// with byte-identical usage, so they are re-logs of one API response rather than extra
+    /// consumption, and counting them roughly doubles every number.
+    public var countRepeatedLogLines = false
     public var weightTokensByModel = true        // gauge counts Opus tokens heavier than Haiku (cost-weighted)
     public var tokenBasis: TokenBasis = .total   // per-day token figures: cache-inclusive total (default) vs work (in+out)
     public var widgetScale: Double = 1.0         // uniform zoom (all resize handles + slider)
@@ -101,6 +106,11 @@ public final class MetricsStore {
     private var watcher: FileWatcher?
     private var tick: Timer?                       // time-based recompute (rolls windows while idle)
     private var lastEntries: [UsageEntry] = []
+    /// Which counting mode `lastEntries` was produced with, so a change can trigger a re-merge.
+    private var lastScanCountedRepeats = false
+    /// Only true once entries came from disk. Guards the auto re-merge below so a store fed by
+    /// `ingestForTesting` never kicks off a real scan of `~/.claude` behind a unit test.
+    private var hasScannedFromDisk = false
     private let defaults: UserDefaults
 
     public init(defaults: UserDefaults = .standard) {
@@ -155,14 +165,18 @@ public final class MetricsStore {
 
     public func refresh() async {
         isLoading = true
-        lastEntries = await scanner.scan()
+        lastScanCountedRepeats = countRepeatedLogLines
+        hasScannedFromDisk = true
+        lastEntries = await scanner.scan(deduplicated: !countRepeatedLogLines)
         recompute()
         isLoading = false
     }
 
     /// Synchronous one-shot load (used by snapshot rendering).
     public func loadFromDisk() {
-        lastEntries = UsageScanner.scanOnce()
+        lastScanCountedRepeats = countRepeatedLogLines
+        hasScannedFromDisk = true
+        lastEntries = UsageScanner.scanOnce(deduplicated: !countRepeatedLogLines)
         recompute()
     }
 
@@ -214,6 +228,7 @@ public final class MetricsStore {
         static let tokenBudget = "tokenBudget"
         static let costBudget = "costBudget"
         static let includeSubagents = "includeSubagents"
+        static let countRepeatedLogLines = "countRepeatedLogLines"
         static let weightTokensByModel = "weightTokensByModel"
         static let pricing = "pricingTable"
         static let widgetScale = "widgetScale"
@@ -252,6 +267,9 @@ public final class MetricsStore {
         }
         if defaults.object(forKey: Key.includeSubagents) != nil {
             includeSubagents = defaults.bool(forKey: Key.includeSubagents)
+        }
+        if defaults.object(forKey: Key.countRepeatedLogLines) != nil {
+            countRepeatedLogLines = defaults.bool(forKey: Key.countRepeatedLogLines)
         }
         if defaults.object(forKey: Key.weightTokensByModel) != nil {
             weightTokensByModel = defaults.bool(forKey: Key.weightTokensByModel)
@@ -320,6 +338,7 @@ public final class MetricsStore {
         defaults.set(tokenBudget, forKey: Key.tokenBudget)
         defaults.set(costBudget, forKey: Key.costBudget)
         defaults.set(includeSubagents, forKey: Key.includeSubagents)
+        defaults.set(countRepeatedLogLines, forKey: Key.countRepeatedLogLines)
         defaults.set(weightTokensByModel, forKey: Key.weightTokensByModel)
         if let data = try? JSONEncoder().encode(pricing) {
             defaults.set(data, forKey: Key.pricing)
@@ -355,6 +374,11 @@ public final class MetricsStore {
         defaults.set(weatherEffectsEnabled, forKey: Key.weatherEffectsEnabled)
         defaults.set(tokenBasis.rawValue, forKey: Key.tokenBasis)
         recompute()
+        // Dedup happens during the scan's merge, not in `recompute`, so this one setting needs a
+        // re-scan to take effect. It re-merges the per-file parse cache — no file is re-read.
+        if hasScannedFromDisk, lastScanCountedRepeats != countRepeatedLogLines {
+            Task { await refresh() }
+        }
         onConfigChange?()
     }
 
