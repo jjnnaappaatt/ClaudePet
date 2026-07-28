@@ -98,7 +98,7 @@ private func writeTempJSON(_ json: String) -> String {
     }
 
     @Test func serverDataDrivesGaugeFractions() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         store.weightTokensByModel = false
         let path = writeCache(fiveHour: 14, sevenDay: 8, resetsInHours: 2)
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -114,7 +114,7 @@ private func writeTempJSON(_ json: String) -> String {
     }
 
     @Test func toggleOffIgnoresServerData() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         let path = writeCache(fiveHour: 14, sevenDay: 8, resetsInHours: 2)
         defer { try? FileManager.default.removeItem(atPath: path) }
         store.statuslineCachePath = path
@@ -126,7 +126,7 @@ private func writeTempJSON(_ json: String) -> String {
     }
 
     @Test func expiredWindowFallsBackToLocal() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         store.weightTokensByModel = false
         let path = writeCache(fiveHour: 99, sevenDay: 99, resetsInHours: -1)   // already reset
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -138,7 +138,7 @@ private func writeTempJSON(_ json: String) -> String {
     }
 
     @Test func staleCacheFileFallsBackToLocal() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         store.weightTokensByModel = false
         // Window is still open (resets in 2h) but the file was written long ago → stale.
         let path = writeCache(fiveHour: 99, sevenDay: 99, resetsInHours: 2)

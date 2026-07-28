@@ -11,7 +11,7 @@ import Foundation
         let name = "mascot-\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
-        return MetricsStore(defaults: d)
+        return TestSupport.store(defaults: d)
     }
 
     /// Writes a statusline-cache fixture with given utilization (so fractions are deterministic).

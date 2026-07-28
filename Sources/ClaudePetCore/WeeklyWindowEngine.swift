@@ -58,9 +58,10 @@ public enum WeeklyWindowEngine {
         return WeeklyWindow(start: start, end: end, workTokens: work, totalTokens: total, costUSD: cost)
     }
 
-    /// Per-metric peak over all **completed** weekly windows in history — your heaviest week
-    /// ever, used to auto-size the weekly gauge budget from your own usage. The current
-    /// (still-growing) window is excluded so the denominator is stable.
+    /// Per-metric anchor over all **completed** weekly windows in history — near the top of your
+    /// own range (see `PeakEstimator`; not the single heaviest week), used to auto-size the weekly
+    /// gauge budget from your own usage. The current (still-growing) window is excluded so the
+    /// denominator is stable.
     public static func peakCompleted(from entries: [UsageEntry], pricing: PricingTable,
                                      anchor: Date, now: Date = Date())
         -> (work: Int, weighted: Double, cost: Double) {
@@ -77,10 +78,10 @@ public enum WeeklyWindowEngine {
             c.end = start.addingTimeInterval(weekDuration)
             cells[start] = c
         }
-        var pw = 0; var cw = 0.0; var cc = 0.0
-        for (_, c) in cells where c.end <= now {        // completed windows only
-            pw = max(pw, c.work); cw = max(cw, c.weighted); cc = max(cc, c.cost)
-        }
-        return (pw, cw, cc)
+        // Anchored per metric, independently — see the note in `FiveHourBlockEngine`.
+        let completed = cells.values.filter { $0.end <= now }   // completed windows only
+        return (PeakEstimator.anchor(completed.map(\.work)),
+                PeakEstimator.anchor(completed.map(\.weighted)),
+                PeakEstimator.anchor(completed.map(\.cost)))
     }
 }

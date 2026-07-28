@@ -21,7 +21,7 @@ import Foundation
         let name = "sidechain-\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
-        return MetricsStore(defaults: d)
+        return TestSupport.store(defaults: d)
     }
 
     /// A main turn and a sub-agent turn with the same total size but very different work sizes —

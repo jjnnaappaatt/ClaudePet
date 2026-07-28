@@ -132,11 +132,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     "lastUpdated": m.lastUpdated?.timeIntervalSince1970 ?? 0,
                     "todayWork": m.today.workTokens,
                     "todayTotal": m.today.totalTokens,
+                    // The Auto budgets and which denominator produced them — the only way to check
+                    // these against real data without a screenshot, since Settings isn't on screen.
+                    "sessionBudget": m.blockBudget(unit: m.budgetUnit),
+                    "weeklyBudget": m.weeklyBudget(unit: m.budgetUnit),
+                    "budgetBasis": m.budgetBasisDescription,
+                    // Our own 5h window, so its alignment against Claude's `resets_at` is checkable.
+                    "blockStart": m.activeBlock?.start.timeIntervalSince1970 ?? 0,
+                    "blockEnd": m.activeBlock?.endsAt.timeIntervalSince1970 ?? 0,
                 ]
                 if let d = try? JSONSerialization.data(withJSONObject: obj) {
                     try? d.write(to: URL(fileURLWithPath: hb))
                 }
             }
+        }
+
+        // Verification override; leaves the user's saved choice untouched (nothing persists unless
+        // they change a setting). Forces the local-history budget estimate so it can be checked
+        // without the statusline's numbers standing in front of it.
+        if ProcessInfo.processInfo.environment["CLAUDEPET_NOLIVE"] != nil {
+            metrics.useStatuslineData = false
+            metrics.clearCalibrationForTesting()   // else the last synced budgets still win
         }
 
         metrics.start()

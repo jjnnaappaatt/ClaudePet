@@ -9,7 +9,7 @@ import Foundation
         let name = "claudepet-test-\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
-        let store = MetricsStore(defaults: d)
+        let store = TestSupport.store(defaults: d)
         // These pace-math tests assert work-basis numbers; the .total default is exercised
         // separately by `tokenBasisSelectsWorkVsTotal` / `peakHourFollowsTokenBasis` below.
         store.tokenBasis = .work

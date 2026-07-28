@@ -14,7 +14,7 @@ import Foundation
 
     @Test func configRoundTripsThroughDefaults() {
         let defaults = freshDefaults()
-        let a = MetricsStore(defaults: defaults)
+        let a = TestSupport.store(defaults: defaults)
         a.autoBudgetFromPlan = false   // manual budget is only authoritative when plan-auto is off
         a.budgetUnit = .usd
         a.tokenBudget = 7_777_777
@@ -31,7 +31,7 @@ import Foundation
         a.saveConfigAndRecompute()
 
         // A new store reading the same defaults restores everything.
-        let b = MetricsStore(defaults: defaults)
+        let b = TestSupport.store(defaults: defaults)
         #expect(b.autoBudgetFromPlan == false)
         #expect(b.budgetUnit == .usd)
         #expect(b.tokenBudget == 7_777_777)
@@ -49,7 +49,7 @@ import Foundation
 
     @Test func tokenBasisDefaultsToTotal() {
         // A fresh store (no stored key) shows cache-inclusive totals out of the box.
-        let s = MetricsStore(defaults: freshDefaults())
+        let s = TestSupport.store(defaults: freshDefaults())
         #expect(s.tokenBasis == .total)
     }
 
@@ -154,33 +154,46 @@ import Foundation
 
     @Test func billingCycleDayOverridePersistsAndDrivesRecompute() {
         let defaults = freshDefaults()
-        let a = MetricsStore(defaults: defaults)
+        let a = TestSupport.store(defaults: defaults)
         #expect(a.billingCycleDayOverride == nil)   // default: use the subscription-derived anchor
         a.billingCycleDayOverride = 4
         a.saveConfigAndRecompute()
 
-        let b = MetricsStore(defaults: defaults)
+        let b = TestSupport.store(defaults: defaults)
         #expect(b.billingCycleDayOverride == 4)
 
         // Clearing the override removes the stored key rather than persisting a stale value.
         b.billingCycleDayOverride = nil
         b.saveConfigAndRecompute()
-        let c = MetricsStore(defaults: defaults)
+        let c = TestSupport.store(defaults: defaults)
         #expect(c.billingCycleDayOverride == nil)
     }
 
     /// Off by default — dedup stays on unless the user opts into `/stats`-style counting.
     @Test func countRepeatedLogLinesDefaultsOffAndPersists() {
         let defaults = freshDefaults()
-        let a = MetricsStore(defaults: defaults)
+        let a = TestSupport.store(defaults: defaults)
         #expect(a.countRepeatedLogLines == false)
         a.countRepeatedLogLines = true
         a.saveConfigAndRecompute()
-        #expect(MetricsStore(defaults: defaults).countRepeatedLogLines == true)
+        #expect(TestSupport.store(defaults: defaults).countRepeatedLogLines == true)
+    }
+
+    /// Prefs written before the calibration stamps were split carry one date covering both
+    /// gauges. Without the copy-across, an existing user's weekly budget would read as never
+    /// calibrated on first launch and drop to the local estimate.
+    @Test func oldSingleCalibrationStampMigratesToBothGauges() {
+        let defaults = freshDefaults()
+        let then = Date(timeIntervalSince1970: 1_780_000_000)
+        defaults.set(then.timeIntervalSince1970, forKey: "lastCalibratedAt")
+
+        let s = TestSupport.store(defaults: defaults)
+        #expect(s.lastCalibratedAt == then)
+        #expect(s.weeklyCalibratedAt == then)
     }
 
     @Test func includeSubagentsTogglesAggregation() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         let now = Date()
         let main = TestSupport.entry(id: "m", at: now, model: "claude-opus-4-8", input: 100, output: 0, sidechain: false)
         let sub  = TestSupport.entry(id: "s", at: now, model: "claude-opus-4-8", input: 40, output: 0, sidechain: true)

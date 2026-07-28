@@ -3,6 +3,50 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.5.0] — 2026-07-28
+
+### Added
+- **The Auto budget now syncs itself to Claude's real percentages** whenever the statusline cache
+  has a usable reading, instead of resting on the estimate built from your own history. That
+  estimate measures your habits and says nothing about where Anthropic's cap sits: measured against
+  the live numbers it ran **5.9× high on the 5h gauge and 2.7× high on the weekly one**, so the
+  bars read far cooler than Claude's own. The back-solve is the same one the Calibrate sheet has
+  always done (`budget = used ÷ %`), now re-fitted on every refresh, and Settings says which
+  denominator is live. Gated so a bad sync can't overwrite good budgets: both windows must be
+  present, unreset and at or above 10% (the cache stores whole percents, so a 3% reading carries
+  ±17% of budget error), and "Use Claude's live usage" is the opt-out. Still local files only —
+  same cache the gauges already read, no token, no network.
+  - Tokens are counted over **Claude's** window, not ClaudePet's. Our 5h block is gap-anchored to
+    your own first message and drifts off Anthropic's grid; dividing a block that spanned a reset
+    by the fresh percentage on the other side of it produced a 21.1M session budget where the
+    right answer was 2.3M.
+  - Both units are fitted every sync, so switching Gauge unit between Tokens and US$ no longer
+    shows a budget left over from whenever that unit was last selected.
+- **The 5-hour and weekly windows auto-align to Claude's real reset times** from the same cache,
+  so "Calibrate reset time" and the weekly reset-day pickers maintain themselves. They were out by
+  4 hours in practice (ours 09:15–14:15 against Claude's 13:00–18:00), which misattributes every
+  token logged between the two boundaries and makes "resets in" wrong; they now track to within a
+  second. Only the phase moves — the correction is folded into ±2.5h and always applied backwards,
+  since an anchor pushed past *now* would pin the window's start into the future.
+
+### Fixed
+- **A 5-hour reset no longer expires the weekly calibration.** One timestamp covered both gauges,
+  so each 5h rollover — several a day — dropped a perfectly good weekly fit back to the local
+  estimate (seen live: 22M → 57M and back). The two now carry their own stamps and their own noise
+  floor, so each syncs, expires and falls back on its own clock; one window being unusable or too
+  quiet to divide no longer holds the other hostage. Prefs saved with the old single stamp migrate
+  across, and each gauge's tooltip states its own denominator rather than sharing one sentence.
+- **The Auto budget no longer gets stricter on one gauge than the other just because it has seen
+  more windows.** It was the single heaviest completed window, and `max` over n samples climbs
+  with n — on real data the 5h grid had accumulated 137 completed windows against the weekly
+  grid's 9, so the 5h denominator sat deep in its own tail (its top window was 1.5× the next and
+  7× the median) while the weekly one sat beside a typical heavy week (1.05× the next). The same
+  "% of your own record" meant two different things: a heavy session filled 42% of its bar while a
+  heavy week filled 79%, and the gap widened every week. It's now a fixed quantile of the
+  completed windows, which converges instead of climbing — heavy session 88% vs heavy week 79% —
+  and one exceptional session no longer pins the denominator for good. Below 21 windows it still
+  takes the heaviest, which is the only sensible answer on a short history.
+
 ## [0.4.0] — 2026-07-26
 
 ### Added

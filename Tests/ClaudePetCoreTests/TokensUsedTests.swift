@@ -19,7 +19,7 @@ import Foundation
         let name = "tokensused-\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
-        let store = MetricsStore(defaults: d)
+        let store = TestSupport.store(defaults: d)
         store.tokenBasis = .work
         return store
     }

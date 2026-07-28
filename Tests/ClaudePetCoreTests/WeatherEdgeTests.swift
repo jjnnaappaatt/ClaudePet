@@ -11,7 +11,7 @@ import Foundation
         let name = "weather-edge-\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
-        let s = MetricsStore(defaults: d)
+        let s = TestSupport.store(defaults: d)
         s.useStatuslineData = false
         return s
     }

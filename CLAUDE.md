@@ -31,10 +31,15 @@ CLAUDEPET_LAYOUT=vertical CLAUDEPET_SCALE=1.5 ...                        # overr
 CLAUDEPET_BASIS=total ...           # render work-vs-total side by side, saved pref untouched
 CLAUDEPET_UTIL=96,40 ...            # fake statusline utilization → force gauge/weather/mood states
 CLAUDEPET_HANDLES=1 ...             # force resize grips visible
+CLAUDEPET_NOLIVE=1 ...              # ignore the statusline + drop the calibration anchor, so the
+                                    # local-history budget estimate is what you're looking at
 ```
 
 Other paths: `CLAUDEPET_SETTINGS` (Settings view), `CLAUDEPET_MASCOT` (all mascot frames),
-`CLAUDEPET_ICON` (1024px icon master), `CLAUDEPET_HEARTBEAT` (writes metrics JSON per recompute),
+`CLAUDEPET_ICON` (1024px icon master), `CLAUDEPET_HEARTBEAT` (writes metrics JSON per recompute —
+today's tokens plus both Auto budgets and `budgetBasisDescription`, the only way to check those
+against real data since Settings isn't on screen; note `CLAUDEPET_NOLIVE` pairs with it, and unlike
+the snapshot vars it runs in the normal app flow rather than rendering and exiting),
 `CLAUDEPET_OPENSETTINGS` (diagnoses the real gear→Settings activation flow).
 
 ## Two hard constraints
@@ -77,12 +82,47 @@ cycle windows roll to empty on the clock while the user is idle, not only when a
    and its window hasn't already reset (`ServerLimit.isUsable`). This is Claude's real %, and drives
    the `live` badge plus the real reset date.
 2. Otherwise `value / budget`, where `budget` comes from `blockBudget` / `weeklyBudget`:
-   fresh manual calibration → your own peak completed window × `(1 + peakHeadroom)` → plan estimate
-   → custom. `budgetSource` (`.auto`/`.plan`/`.custom`) is a UI facade over the `autoPeakBudget` /
-   `autoBudgetFromPlan` flags. `budgetBasisDescription` must stay honest about which one is active.
+   fresh calibration → `PeakEstimator` anchor over your completed windows × `(1 + peakHeadroom)` →
+   plan estimate → custom. `budgetSource` (`.auto`/`.plan`/`.custom`) is a UI facade over the
+   `autoPeakBudget` / `autoBudgetFromPlan` flags. `budgetBasisDescription` must stay honest about
+   which one is active — there are now two very different denominators behind "Auto".
 
-Peaks come from **completed** windows only (the still-growing one is excluded) so the denominator
-doesn't chase the numerator.
+The anchor comes from **completed** windows only (the still-growing one is excluded) so the
+denominator doesn't chase the numerator. It is **not** `max`: the 5h grid accumulates completed
+windows ~15× faster than the weekly grid (137 vs 9 on real data), and max-of-n climbs with n, so a
+plain max left the two gauges calibrated ~2× apart and drifting. `PeakEstimator` takes a fixed
+quantile instead, degrading to `max` below 21 windows.
+
+That anchor still only describes **your own habits**, never Anthropic's cap — measured against the
+live numbers it ran 5.9× high on the 5h gauge. So `applyServerCalibration` (in `recompute`)
+back-solves `budget = used ÷ server%` whenever the statusline cache offers a usable window, writing
+the same fields the Calibrate sheet does so step 1 of the list above picks them up unchanged. It
+also phase-aligns our own windows to `resetsAt`, which is what keeps step 2's numerator honest.
+
+**The two gauges are independent everywhere in this path.** They reset on different clocks, so they
+carry separate stamps (`lastCalibratedAt` / `weeklyCalibratedAt`), separate staleness
+(`blockCalibrationIsStale` / `weeklyCalibrationIsStale`), separate noise-floor checks, and separate
+`budgetBasisDescription(for:)` strings. Coupling them meant every 5h rollover — several a day —
+expired a perfectly good weekly fit (22M → 57M). Don't re-merge them, and don't let one side's
+stamp stand in for the other's: a session-only fit must not make the weekly budget read as synced.
+
+Four traps this code already handles — don't undo them:
+
+- **Count the tokens over Claude's window, not ours.** `activeBlock` is gap-anchored to the user's
+  first message and drifts off Anthropic's 5h grid; a block spanning a server reset divided by the
+  fresh % gave a 21.1M session budget instead of 2.3M. Use `resetsAt` minus the window length.
+- **Fold the 5h alignment correction backwards.** `activeSession` clamps `steps` at 0, so an anchor
+  pushed past `now` pins the window's start into the future instead of re-phasing the grid.
+- **Round the weekly reset to the minute and gate it on elapsed drift**, not on whether the
+  (weekday, hour, minute) triple differs. The server's instant wobbles across the minute boundary
+  (`07:59:59.74Z`, then `08:00:00.46Z`), which flipped the stored anchor 15:00 ⇄ 14:59 forever.
+- **Never call `calibrateLimits` from inside `recompute()`** — it ends in `saveConfigAndRecompute()`,
+  which recomputes. And clear `autoBudgetFromPlan`, or `init` re-mirrors the plan estimate over the
+  stored budgets on next launch.
+
+`MetricsStore.statuslineCachePath` defaults to the **real** `/tmp/claude` file, so any test that
+asserts a budget must go through `TestSupport.store(defaults:)` — otherwise it passes or fails by
+time of day, on the developer's own live usage.
 
 ### Token bases — three distinct things, easy to conflate
 

@@ -57,7 +57,7 @@ import Foundation
         let name = "claudepet-test-\(UUID().uuidString)"
         let d = UserDefaults(suiteName: name)!
         d.removePersistentDomain(forName: name)
-        let store = MetricsStore(defaults: d)
+        let store = TestSupport.store(defaults: d)
         store.tokenBasis = .work   // these fixtures set only workTokens; .total basis is covered in DailyPaceTests
 
         #expect(store.peakHour(unit: .tokens) == nil)          // no data yet

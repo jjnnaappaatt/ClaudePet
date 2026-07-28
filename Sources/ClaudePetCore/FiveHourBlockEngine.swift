@@ -77,10 +77,11 @@ public enum FiveHourBlockEngine {
                           sidechainWorkTokens: sideWork, sidechainTotalTokens: sideTotal)
     }
 
-    /// Per-metric peak over all **completed** 5h blocks in history — your heaviest session
-    /// ever, used to auto-size the gauge budget from your own usage. The active (still-growing)
-    /// block is excluded so the denominator is stable. Buckets entries onto the same
-    /// gap-anchored, grid-aligned cells `activeSession` uses, so peak and live value share a basis.
+    /// Per-metric anchor over all **completed** 5h blocks in history — near the top of your own
+    /// range (see `PeakEstimator`; not the single heaviest block), used to auto-size the gauge
+    /// budget from your own usage. The active (still-growing) block is excluded so the
+    /// denominator is stable. Buckets entries onto the same gap-anchored, grid-aligned cells
+    /// `activeSession` uses, so anchor and live value share a basis.
     public static func peakCompleted(from entries: [UsageEntry], pricing: PricingTable,
                                      now: Date = Date(), resetOffset: TimeInterval = 0)
         -> (work: Int, weighted: Double, cost: Double) {
@@ -105,10 +106,11 @@ public enum FiveHourBlockEngine {
             c.end = start.addingTimeInterval(blockDuration)
             cells[start] = c
         }
-        var pw = 0; var cw = 0.0; var cc = 0.0
-        for (_, c) in cells where c.end <= now {        // completed blocks only
-            pw = max(pw, c.work); cw = max(cw, c.weighted); cc = max(cc, c.cost)
-        }
-        return (pw, cw, cc)
+        // Each metric is anchored independently, exactly as the old per-metric max was: the
+        // 7th-heaviest block by work need not be the 7th-heaviest by cost.
+        let completed = cells.values.filter { $0.end <= now }   // completed blocks only
+        return (PeakEstimator.anchor(completed.map(\.work)),
+                PeakEstimator.anchor(completed.map(\.weighted)),
+                PeakEstimator.anchor(completed.map(\.cost)))
     }
 }

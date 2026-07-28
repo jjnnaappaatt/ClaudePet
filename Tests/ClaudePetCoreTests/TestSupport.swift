@@ -2,6 +2,24 @@ import Foundation
 @testable import ClaudePetCore
 
 enum TestSupport {
+
+    /// A statusline cache path that never exists.
+    ///
+    /// `MetricsStore.statuslineCachePath` defaults to the *real* `/tmp/claude/...` file, and the
+    /// store now re-anchors its Auto budgets to whatever percentages it finds there. Without this,
+    /// every budget assertion in the suite would depend on the developer's live Claude usage —
+    /// passing or failing by time of day (it was masked only because the 5h window happened to be
+    /// past its reset). Suites that *want* server data assign their own path after construction.
+    static let noStatuslineCache = "/nonexistent/claudepet-tests/statusline-usage-cache.json"
+
+    /// Store wired away from the real statusline cache. Use this instead of `MetricsStore(defaults:)`.
+    @MainActor
+    static func store(defaults: UserDefaults) -> MetricsStore {
+        let s = MetricsStore(defaults: defaults)
+        s.statuslineCachePath = noStatuslineCache
+        return s
+    }
+
     /// Build a usage entry with explicit fields for deterministic tests.
     static func entry(id: String = UUID().uuidString,
                       at date: Date,

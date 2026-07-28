@@ -39,7 +39,7 @@ struct WeeklyLimitBar: View {
                 """
         }
         return "Fixed 7-day window that resets to zero on a schedule (like the Claude app). "
-            + "The % is measured against \(metrics.budgetBasisDescription)."
+            + "The % is measured against \(metrics.budgetBasisDescription(for: .weekly))."
             + (metrics.lastCalibratedAt != nil && metrics.calibrationIsStale
                ? " A limit reset since you calibrated; re-calibrate in Settings to re-align." : "")
     }

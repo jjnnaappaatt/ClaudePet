@@ -18,7 +18,7 @@ import Foundation
     /// `budget = value / (pct/100)` for both gauges. With flat (unweighted) tokens the gauge
     /// value equals the window's work tokens, so the math is exact and checkable.
     @Test func calibrateLimitsBackSolvesBothBudgets() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         store.useStatuslineData = false        // isolate calibration math from any real statusline cache
         store.weightTokensByModel = false      // gauge value == flat work tokens
         let now = Date()
@@ -41,7 +41,7 @@ import Foundation
     /// A gauge with no measured usage can't be back-solved, so it's left untouched —
     /// never write a zero budget from a contradictory "X% of nothing".
     @Test func calibrateSkipsGaugeWithNoUsage() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         // No ingest → no active block, empty week → both gauge values are 0.
         let did = store.calibrateLimits(sessionPct: 50, weeklyPct: 50, unit: .tokens)
         #expect(did == false)
@@ -51,17 +51,20 @@ import Foundation
     /// Staleness flips once a weekly reset has moved past the calibration moment — the cue
     /// to re-sync. Never-calibrated also reads as stale.
     @Test func calibrationStaleFlipsAcrossWeeklyReset() {
-        let store = MetricsStore(defaults: freshDefaults())
+        let store = TestSupport.store(defaults: freshDefaults())
         let now1 = Date(timeIntervalSince1970: 1_780_000_000)
         #expect(store.calibrationIsStale(now: now1) == true)   // never calibrated
 
-        // Calibrate just inside the current weekly window → fresh.
+        // Calibrate just inside the current weekly window → fresh. Both stamps, as
+        // `calibrateLimits` sets them: the 5h and weekly calibrations expire independently.
         let weekStart1 = WeeklyWindowEngine.window(anchor: store.weeklyAnchor, now: now1).start
         store.lastCalibratedAt = weekStart1.addingTimeInterval(3600)
+        store.weeklyCalibratedAt = store.lastCalibratedAt
         #expect(store.calibrationIsStale(now: now1) == false)
 
         // Seven days on, the next reset has passed the calibration anchor → stale.
         let now2 = now1.addingTimeInterval(7 * 86_400)
+        #expect(store.weeklyCalibrationIsStale(now: now2) == true)
         #expect(store.calibrationIsStale(now: now2) == true)
     }
 }
