@@ -3,6 +3,39 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.5.1] — 2026-07-29
+
+### Fixed
+- **The session budget no longer reverts to a much worse estimate every few hours.** A budget fitted
+  from Claude's percentage was discarded the moment its window reset — 4–5× a day for the 5-hour
+  gauge — falling back to the estimate built from your own history. On real data that meant a
+  genuine 3.17M sitting unused in preferences while Settings displayed **6.2M against a real limit
+  of ~1.9M**. The premise was wrong: a reset expires the *percentage*, not the limit, which belongs
+  to the plan. A fitted budget now stands until something better replaces it, and only ages out
+  after two weeks so a plan change can still move it.
+- **A precise reading is no longer overwritten by a noisy one just for being newer.** The error in
+  `budget = used ÷ %` scales as 1/%: ±0.5% rounding is ±0.5% of the budget at 96% but ±7% at 7%. A
+  window that has just reset reads 10–12%, and those readings were replacing ones taken near the
+  limit — the same session's implied cap ranged **1.87M to 3.16M** purely by when it was sampled.
+  Each fit now records the percentage it came from and defends itself against less precise ones,
+  with that claim decaying to nothing over two weeks so it yields without a cliff. Readings at
+  ≥99% are ignored, where you may be throttled and still logging turns. Within one window
+  percentages only climb, so later readings there always refine the fit.
+- **Settings no longer calls a synced budget an estimate.** The caption tested whether *either*
+  gauge was stale, so with the weekly synced and the 5-hour not, it described both as "estimated
+  from your own heavy completed windows" — directly above a weekly figure that was Claude's own
+  number. Each budget now states its own basis, including the percentage it was fitted at.
+
+### Changed
+- **The local fallback is described as what it is.** It was worded as an approximation of your
+  ceiling; measured against Claude's live percentages it runs **~3× above the real 5-hour limit**.
+  The cause is structural and not fixable from local files: ClaudePet reconstructs 5-hour windows,
+  Claude re-anchors its own per session, and a reconstructed span that straddles one of its resets
+  holds more than one limit's worth (one held 2.92M against a 2.3M cap). Re-bucketing doesn't help —
+  a fixed lattice and a chained model landed at 5.72M and 6.67M against the same ~1.9M truth. It is
+  now labelled a rough upper bound, and the "a window reset — re-calibrate" prompt is gone, since
+  nothing needs re-aligning.
+
 ## [0.5.0] — 2026-07-28
 
 ### Added

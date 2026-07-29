@@ -192,6 +192,19 @@ import Foundation
         #expect(s.weeklyCalibratedAt == then)
     }
 
+    /// Budgets fitted before fit percentages were recorded load with an unknown precision, which
+    /// must read as "replaceable" rather than as an unbeatable 0%.
+    @Test func budgetsFittedBeforeFitPercentsWereRecordedLoadWithNoPrecision() {
+        let defaults = freshDefaults()
+        defaults.set(Date().timeIntervalSince1970, forKey: "lastCalibratedAt")
+        defaults.set(2_000_000, forKey: "tokenBudget")
+
+        let s = TestSupport.store(defaults: defaults)
+        #expect(s.blockFitPercent == nil)
+        #expect(s.weeklyFitPercent == nil)
+        #expect(s.blockFitIsExpired() == false)
+    }
+
     @Test func includeSubagentsTogglesAggregation() {
         let store = TestSupport.store(defaults: freshDefaults())
         let now = Date()

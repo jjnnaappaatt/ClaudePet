@@ -64,7 +64,10 @@ import Foundation
         #expect(s.weeklyBudget(unit: .tokens) == 4000)   // 1000 / 0.25
         #expect(s.calibrationWasAutomatic)
         #expect(s.calibrationIsStale == false)
-        #expect(s.budgetBasisDescription.contains("auto-synced"))
+        // The fit names the percentage it came from — that number IS its precision.
+        #expect(s.budgetBasisDescription.contains("synced"))
+        #expect(s.budgetBasisDescription.contains("50%"))
+        #expect(s.budgetBasisDescription(for: .weekly).contains("25%"))
     }
 
     /// The derived budgets outlive the process — and come back labelled as automatic, not as
@@ -123,6 +126,146 @@ import Foundation
         let sessionCost = s.blockBudget(unit: .usd)
         #expect(sessionCost > 0)
         #expect(abs(s.weeklyBudget(unit: .usd) - sessionCost * 2) < 1e-6)   // 1/0.25 vs 1/0.50
+    }
+
+    // MARK: A fitted cap outlives its window
+
+    /// The regression this whole pass exists for. `tokenBudget` held a real synced 3.17M while the
+    /// gauge showed a 6.2M local estimate, because the fit predated the current 5h window — which
+    /// rolls 4–5× a day. A limit is a property of the plan; it doesn't reset when a window does.
+    @Test func aWindowResetDoesNotDiscardTheFittedBudget() {
+        let path = writeCache(fiveHour: 50, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let s = store(cache: path)
+        s.ingestForTesting(oneThousandNow)
+        #expect(s.blockBudget(unit: .tokens) == 2000)
+
+        s.lastCalibratedAt = Date().addingTimeInterval(-6 * 3600)   // as if the 5h rolled over
+        #expect(s.blockCalibrationIsStale())
+        #expect(s.blockFitIsExpired() == false)
+        #expect(s.blockBudget(unit: .tokens) == 2000)               // held, not thrown away
+    }
+
+    // MARK: Precision beats recency
+
+    /// Error scales as 1/percent, so the newest reading is routinely the worst: a window that has
+    /// just reset reads 10–12%, where ±0.5% rounding is ±5% of the budget. Observed spread on real
+    /// data was 1.87M–3.16M depending purely on when the fit happened to be taken.
+    @Test func aLaterLowPercentReadingDoesNotReplaceAPreciseOne() {
+        let precise = writeCache(fiveHour: 90, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: precise) }
+        let s = store(cache: precise)
+        s.ingestForTesting(oneThousandNow)
+        #expect(s.tokenBudget == 1111)              // 1000 / 0.90
+        #expect(s.blockFitPercent == 90)
+
+        s.lastCalibratedAt = Date().addingTimeInterval(-6 * 3600)   // a new window since
+        let noisy = writeCache(fiveHour: 12, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: noisy) }
+        s.statuslineCachePath = noisy
+        s.recompute()
+        #expect(s.tokenBudget == 1111)              // 12% is 7× noisier — refused
+        #expect(s.blockFitPercent == 90)
+    }
+
+    @Test func aMorePreciseReadingDoesReplace() {
+        let coarse = writeCache(fiveHour: 20, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: coarse) }
+        let s = store(cache: coarse)
+        s.ingestForTesting(oneThousandNow)
+        #expect(s.tokenBudget == 5000)
+
+        s.lastCalibratedAt = Date().addingTimeInterval(-6 * 3600)
+        let better = writeCache(fiveHour: 60, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: better) }
+        s.statuslineCachePath = better
+        s.recompute()
+        #expect(s.tokenBudget == 1666)              // 1000 / 0.60
+        #expect(s.blockFitPercent == 60)
+    }
+
+    /// Inside one window the percentage only climbs, so a later reading there is strictly better
+    /// and the cross-window comparison must not block it. Driving it downwards isolates the branch —
+    /// it can't happen for real.
+    @Test func readingsInsideOneWindowAlwaysRefine() {
+        let first = writeCache(fiveHour: 40, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: first) }
+        let s = store(cache: first)
+        s.ingestForTesting(oneThousandNow)
+        #expect(s.tokenBudget == 2500)
+
+        let second = writeCache(fiveHour: 12, sevenDay: 25)   // same window, stamp untouched
+        defer { try? FileManager.default.removeItem(atPath: second) }
+        s.statuslineCachePath = second
+        s.recompute()
+        #expect(s.blockCalibrationIsStale() == false)
+        #expect(s.tokenBudget == 8333)
+    }
+
+    /// A precise fit is defended at first and then progressively less, so it yields without a cliff
+    /// — otherwise a plan change would be locked out until the hard horizon.
+    @Test func theDefenceOfAPreciseFitDecaysWithAge() {
+        let precise = writeCache(fiveHour: 90, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: precise) }
+        let s = store(cache: precise)
+        s.ingestForTesting(oneThousandNow)
+        let noisy = writeCache(fiveHour: 12, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: noisy) }
+        s.statuslineCachePath = noisy
+
+        // A tenth of the way through the horizon: 90 × 0.9 = 81 required → refused.
+        s.lastCalibratedAt = Date().addingTimeInterval(-0.1 * MetricsStore.calibrationExpiry)
+        s.recompute()
+        #expect(s.tokenBudget == 1111)
+
+        // Nine tenths through: 90 × 0.1 = 9, under the floor → the floor decides → accepted.
+        s.lastCalibratedAt = Date().addingTimeInterval(-0.9 * MetricsStore.calibrationExpiry)
+        s.recompute()
+        #expect(s.tokenBudget == 8333)
+    }
+
+    /// At ≥99% you may already be throttled and still logging turns, so `used ÷ 1.0` reads as a
+    /// cap bigger than the real one.
+    @Test func saturatedReadingsAreIgnored() {
+        let path = writeCache(fiveHour: 99, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let s = store(cache: path)
+        s.ingestForTesting(oneThousandNow)
+        #expect(s.lastCalibratedAt == nil)          // 5h refused…
+        #expect(s.weeklyCalibratedAt != nil)        // …weekly unaffected
+    }
+
+    /// A budget carried over from a build that didn't record fit percentages has unknown precision,
+    /// so it must not out-argue a real reading.
+    @Test func aFitWithNoRecordedPrecisionYieldsToAnyUsableReading() {
+        let path = writeCache(fiveHour: 12, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let s = store(cache: path)
+        s.lastCalibratedAt = Date().addingTimeInterval(-6 * 3600)   // older window, no percent
+        #expect(s.blockFitPercent == nil)
+        s.ingestForTesting(oneThousandNow)
+        #expect(s.tokenBudget == 8333)              // 1000 / 0.12
+        #expect(s.blockFitPercent == 12)
+    }
+
+    /// Nine days ago: a completed block and week, so the local anchor is non-zero and the expired
+    /// branch has something real to describe.
+    private var seededHistory: [UsageEntry] {
+        let m = "claude-sonnet-4-6"
+        return [TestSupport.entry(at: Date().addingTimeInterval(-9 * 86_400), model: m,
+                                  input: 1000, output: 1000)] + oneThousandNow
+    }
+
+    @Test func eachGaugeDescribesItsOwnBasis() {
+        let path = writeCache(fiveHour: 50, sevenDay: 25)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let s = store(cache: path)
+        s.ingestForTesting(seededHistory)
+        #expect(s.budgetBasisDescription(for: .block).contains("synced"))
+
+        s.lastCalibratedAt = Date().addingTimeInterval(-(MetricsStore.calibrationExpiry + 3600))
+        #expect(s.budgetBasisDescription(for: .block).contains("rough upper bound"))
+        #expect(s.budgetBasisDescription(for: .weekly).contains("synced"))
     }
 
     // MARK: Window alignment

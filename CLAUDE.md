@@ -82,16 +82,37 @@ cycle windows roll to empty on the clock while the user is idle, not only when a
    and its window hasn't already reset (`ServerLimit.isUsable`). This is Claude's real %, and drives
    the `live` badge plus the real reset date.
 2. Otherwise `value / budget`, where `budget` comes from `blockBudget` / `weeklyBudget`:
-   fresh calibration → `PeakEstimator` anchor over your completed windows × `(1 + peakHeadroom)` →
-   plan estimate → custom. `budgetSource` (`.auto`/`.plan`/`.custom`) is a UI facade over the
-   `autoPeakBudget` / `autoBudgetFromPlan` flags. `budgetBasisDescription` must stay honest about
-   which one is active — there are now two very different denominators behind "Auto".
+   unexpired fitted budget → `PeakEstimator` anchor over your completed windows ×
+   `(1 + peakHeadroom)` → plan estimate → custom. `budgetSource` (`.auto`/`.plan`/`.custom`) is a
+   UI facade over the `autoPeakBudget` / `autoBudgetFromPlan` flags.
+   `budgetBasisDescription(for:)` must stay honest about which one is active, **per gauge** — there
+   are two very different denominators behind "Auto" and the two gauges are often on different ones.
+
+**A fitted budget expires by age (`calibrationExpiry`, 14 days), never by window reset.** A reset
+expires the *percentage*; the limit belongs to the plan. Tying the budget to the window discarded a
+good fit 4–5× a day and showed the local anchor instead — 6.2M against a real ~1.9M.
+`blockCalibrationIsStale` / `weeklyCalibrationIsStale` survive only as the "same window?" test that
+`shouldAcceptFit` needs; don't wire them back into the budget.
+
+**Newer is not better.** `budget = used ÷ %` has error ∝ 1/%, so a window that just reset (10–12%)
+gives a far worse fit than one near its limit — the same cap read anywhere from 1.87M to 3.16M
+depending only on when it was sampled. `shouldAcceptFit` stores each fit's percentage and defends
+it, decaying that claim linearly to nothing over `calibrationExpiry`. Readings ≥
+`autoCalibrationMaxPercent` (98) are refused — throttled turns still get logged, so `used ÷ 1.0`
+overshoots.
 
 The anchor comes from **completed** windows only (the still-growing one is excluded) so the
 denominator doesn't chase the numerator. It is **not** `max`: the 5h grid accumulates completed
 windows ~15× faster than the weekly grid (137 vs 9 on real data), and max-of-n climbs with n, so a
 plain max left the two gauges calibrated ~2× apart and drifting. `PeakEstimator` takes a fixed
 quantile instead, degrading to `max` below 21 windows.
+
+Even so, **the anchor is an upper bound on your habits, not an estimate of Anthropic's cap** — it
+measured ~3× the real 5h limit. Our 5h windows are reconstructed; Claude re-anchors its own per
+session (its resets were 13:00 one day and 12:59 the next, which can't share a 5h lattice), so a
+reconstructed span straddling one of its resets holds more than one limit's worth. Not recoverable
+locally: a fixed lattice and a chained model gave 5.72M and 6.67M against the same ~1.9M truth.
+Don't try to retune it — prefer a fitted budget and treat this as the last resort.
 
 That anchor still only describes **your own habits**, never Anthropic's cap — measured against the
 live numbers it ran 5.9× high on the 5h gauge. So `applyServerCalibration` (in `recompute`)

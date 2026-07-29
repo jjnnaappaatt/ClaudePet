@@ -92,9 +92,17 @@ public final class MetricsStore {
                                                   // 22M → 57M). Strictly independent: a session-only
                                                   // fit must not make the weekly budget look synced.
                                                   // `loadConfig` migrates old single-stamp prefs.
+    public var blockFitPercent: Double?          // the server % each stored budget was back-solved
+    public var weeklyFitPercent: Double?         // from. Error scales as 1/percent — ±0.5% rounding
+                                                  // is ±0.5% of the budget at 96% but ±7% at 7% —
+                                                  // so a fit records its own precision and defends
+                                                  // itself against noisier later samples.
     public private(set) var calibrationWasAutomatic = false   // …and whether that fit came from the
                                                   // statusline cache rather than the Calibrate sheet,
-                                                  // so the UI can say which without lying.
+                                                  // so the UI can say which without lying. One flag
+                                                  // for both gauges: it can mislabel one side after a
+                                                  // hand calibration followed by an auto re-fit of the
+                                                  // other, which is rare and cosmetic.
     public var useStatuslineData = true          // drive gauges from the statusline's local usage cache when present
     public var statuslineCachePath = StatuslineUsageReader.defaultPath   // injectable for tests
     public var extraUsageEnabled: Bool { account.extraUsageEnabled }
@@ -142,6 +150,9 @@ public final class MetricsStore {
     /// budget estimate becomes visible behind it. Never persisted.
     public func clearCalibrationForTesting() {
         lastCalibratedAt = nil
+        weeklyCalibratedAt = nil        // both, or the weekly gauge keeps showing its fit and the
+        blockFitPercent = nil           // "no live data" view is only half true
+        weeklyFitPercent = nil
         calibrationWasAutomatic = false
     }
 
@@ -272,6 +283,8 @@ public final class MetricsStore {
         static let billingCycleDayOverride = "billingCycleDayOverride"
         static let lastCalibratedAt = "lastCalibratedAt"
         static let weeklyCalibratedAt = "weeklyCalibratedAt"
+        static let blockFitPercent = "blockFitPercent"
+        static let weeklyFitPercent = "weeklyFitPercent"
         static let calibrationWasAutomatic = "calibrationWasAutomatic"
         static let useStatuslineData = "useStatuslineData"
         static let weatherEffectsEnabled = "weatherEffectsEnabled"
@@ -351,6 +364,14 @@ public final class MetricsStore {
             // gauges. Copy it across rather than treating the weekly side as never calibrated.
             weeklyCalibratedAt = lastCalibratedAt
         }
+        // Absent for budgets fitted before fit percentages were recorded — left nil, which reads as
+        // "unknown precision", so the next usable sample may replace it.
+        if defaults.object(forKey: Key.blockFitPercent) != nil {
+            blockFitPercent = defaults.double(forKey: Key.blockFitPercent)
+        }
+        if defaults.object(forKey: Key.weeklyFitPercent) != nil {
+            weeklyFitPercent = defaults.double(forKey: Key.weeklyFitPercent)
+        }
         if defaults.object(forKey: Key.calibrationWasAutomatic) != nil {
             calibrationWasAutomatic = defaults.bool(forKey: Key.calibrationWasAutomatic)
         }
@@ -408,6 +429,8 @@ public final class MetricsStore {
         } else {
             defaults.removeObject(forKey: Key.weeklyCalibratedAt)
         }
+        persistOptional(blockFitPercent, forKey: Key.blockFitPercent)
+        persistOptional(weeklyFitPercent, forKey: Key.weeklyFitPercent)
         defaults.set(calibrationWasAutomatic, forKey: Key.calibrationWasAutomatic)
         defaults.set(useStatuslineData, forKey: Key.useStatuslineData)
         defaults.set(weatherEffectsEnabled, forKey: Key.weatherEffectsEnabled)
@@ -439,10 +462,15 @@ public final class MetricsStore {
         return unit == .usd ? b.costUSD : Double(blockTokens(b))
     }
 
-    public func blockBudget(unit: BudgetUnit) -> Double {
+    /// `now` only decides whether a fitted budget has aged out — injectable so tests don't depend
+    /// on the wall clock (see `CalibrationTests`).
+    public func blockBudget(unit: BudgetUnit, now: Date = Date()) -> Double {
         if autoPeakBudget {
-            // A fresh calibration is the most accurate anchor — it wins until this window resets.
-            if lastCalibratedAt != nil && !blockCalibrationIsStale() {
+            // A fitted cap is the most accurate anchor, and it does NOT expire when the window
+            // resets — what resets is the percentage, not Claude's limit, which is a property of
+            // the plan. Tying it to the window meant the 5h budget was discarded 4–5× a day and
+            // replaced by the local estimate, which measured ~3× high (6.2M against a real ~1.9M).
+            if !blockFitIsExpired(now: now), lastCalibratedAt != nil {
                 return unit == .tokens ? Double(tokenBudget) : costBudget
             }
             let peak = peakBlockBudget(unit: unit)
@@ -491,9 +519,9 @@ public final class MetricsStore {
         unit == .usd ? week.costUSD : Double(totalsTokens(week))
     }
 
-    public func weeklyBudget(unit: BudgetUnit) -> Double {
+    public func weeklyBudget(unit: BudgetUnit, now: Date = Date()) -> Double {
         if autoPeakBudget {
-            if weeklyCalibratedAt != nil && !weeklyCalibrationIsStale() {
+            if !weeklyFitIsExpired(now: now), weeklyCalibratedAt != nil {
                 return unit == .tokens ? Double(weeklyTokenBudget) : weeklyCostBudget
             }
             let peak = peakWeeklyBudget(unit: unit)
@@ -690,6 +718,10 @@ public final class MetricsStore {
             autoBudgetFromPlan = false        // calibrated budgets override the plan estimate
             lastCalibratedAt = now            // the sheet fits both gauges in one go, so both
             weeklyCalibratedAt = now          // stamps move together here
+            // An explicit user action always wins, but record what it was fitted at so the
+            // automatic path can judge later samples against it like any other fit.
+            if sessionPct > 0 { blockFitPercent = sessionPct }
+            if weeklyPct > 0 { weeklyFitPercent = weeklyPct }
             calibrationWasAutomatic = false   // typed in by hand, not synced from the statusline
             saveConfigAndRecompute()
         }
@@ -793,31 +825,40 @@ public final class MetricsStore {
         // never invalidates the other. Both units are fitted, not just the active one, so
         // flipping Tokens↔US$ doesn't show a budget from whenever that unit was last selected.
         // A unit with nothing to divide (every model unpriced → cost 0) is left alone, not zeroed.
+        // Whether a reading is good enough to replace the stored fit is `shouldAcceptFit`'s call —
+        // newer is not better here.
         //
         // Each window's usage is measured over *Claude's* interval, not `blockValue`/
         // `weeklyValue` — see `alignWindowsToServer` for the drift. Alignment fixes it going
         // forward, but this pass still holds the old boundaries, and a percentage divided into a
         // different interval is meaningless: it gave a 21.1M session budget where the answer
         // was 2.3M.
-        if let five, let end = five.resetsAt, five.utilization >= Self.autoCalibrationMinPercent {
+        if let five, let end = five.resetsAt,
+           shouldAcceptFit(newPercent: five.utilization, storedPercent: blockFitPercent,
+                           storedAt: lastCalibratedAt, sameWindow: !blockCalibrationIsStale(now: now),
+                           now: now) {
             let v = gaugeValues(from: end.addingTimeInterval(-FiveHourBlockEngine.blockDuration),
                                 to: now, entries: entries)
+            var did = false
             if v.weighted > 0 {
                 let fit = v.weighted / five.fraction
                 moved = drifted(Double(tokenBudget), fit) || moved
                 tokenBudget = Int(fit)
-                fitted = true
+                did = true
             }
             if v.cost > 0 {
                 let fit = v.cost / five.fraction
                 moved = drifted(costBudget, fit) || moved
                 costBudget = fit
-                fitted = true
+                did = true
             }
-            if fitted { lastCalibratedAt = now }
+            if did { lastCalibratedAt = now; blockFitPercent = five.utilization; fitted = true }
         }
 
-        if let seven, let end = seven.resetsAt, seven.utilization >= Self.autoCalibrationMinPercent {
+        if let seven, let end = seven.resetsAt,
+           shouldAcceptFit(newPercent: seven.utilization, storedPercent: weeklyFitPercent,
+                           storedAt: weeklyCalibratedAt, sameWindow: !weeklyCalibrationIsStale(now: now),
+                           now: now) {
             let v = gaugeValues(from: end.addingTimeInterval(-WeeklyWindowEngine.weekDuration),
                                 to: now, entries: entries)
             var did = false
@@ -833,7 +874,7 @@ public final class MetricsStore {
                 weeklyCostBudget = fit
                 did = true
             }
-            if did { weeklyCalibratedAt = now; fitted = true }
+            if did { weeklyCalibratedAt = now; weeklyFitPercent = seven.utilization; fitted = true }
         }
         guard fitted else { return false }
 
@@ -863,8 +904,47 @@ public final class MetricsStore {
         old <= 0 || abs(new - old) / old > 0.01
     }
 
+    /// How long a fitted cap stays authoritative without being refreshed. Long enough that a 5h
+    /// window reset (4–5× a day) never touches it, short enough to follow a plan change.
+    public static let calibrationExpiry: TimeInterval = 14 * 86_400
+
+    public func blockFitIsExpired(now: Date = Date()) -> Bool { expired(lastCalibratedAt, now: now) }
+    public func weeklyFitIsExpired(now: Date = Date()) -> Bool { expired(weeklyCalibratedAt, now: now) }
+
+    private func expired(_ stamp: Date?, now: Date) -> Bool {
+        guard let stamp else { return true }
+        return now.timeIntervalSince(stamp) > Self.calibrationExpiry
+    }
+
+    /// Above this the reading is saturated: you may already be throttled and still logging turns,
+    /// so `used ÷ 1.0` reads as a cap larger than the real one.
+    public static let autoCalibrationMaxPercent = 98.0
+
+    /// Should a fresh server reading replace the stored fit for this gauge?
+    ///
+    /// Not simply "is it newer". A fit's precision is set by the percentage it was divided by, so
+    /// the newest sample is routinely the *worst* one — a window that has just reset reads 10–12%,
+    /// where ±0.5% rounding is ±5% of the budget, and it was overwriting readings taken at 96%.
+    /// Within one window percentages only grow, so a later sample there is strictly better; across
+    /// windows we defend the stored fit and let that claim decay linearly to nothing over
+    /// `calibrationExpiry`, so a stale-but-precise fit still yields eventually without a cliff.
+    private func shouldAcceptFit(newPercent: Double, storedPercent: Double?, storedAt: Date?,
+                                 sameWindow: Bool, now: Date) -> Bool {
+        guard newPercent >= Self.autoCalibrationMinPercent,
+              newPercent <= Self.autoCalibrationMaxPercent else { return false }
+        guard let storedPercent, let storedAt, !expired(storedAt, now: now) else { return true }
+        if sameWindow { return true }
+        let decay = max(0, 1 - now.timeIntervalSince(storedAt) / Self.calibrationExpiry)
+        return newPercent >= max(Self.autoCalibrationMinPercent, storedPercent * decay)
+    }
+
     private var calibrationWasPersisted: Bool {
         defaults.object(forKey: Key.lastCalibratedAt) != nil
+    }
+
+    /// Optional settings are stored by presence, never by a sentinel — see `billingCycleDayOverride`.
+    private func persistOptional(_ value: Double?, forKey key: String) {
+        if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
     }
 
     /// Persist only what `applyServerCalibration` touched — no recompute, no full config write.
@@ -884,11 +964,17 @@ public final class MetricsStore {
         } else {
             defaults.removeObject(forKey: Key.weeklyCalibratedAt)
         }
+        persistOptional(blockFitPercent, forKey: Key.blockFitPercent)
+        persistOptional(weeklyFitPercent, forKey: Key.weeklyFitPercent)
         defaults.set(calibrationWasAutomatic, forKey: Key.calibrationWasAutomatic)
     }
 
-    /// True when the 5h calibration predates the current block — a reset has occurred since the
-    /// last sync, so its % basis has moved. Also true when never calibrated.
+    /// True when the 5h fit predates the current block — a reset has occurred since it was taken.
+    /// Also true when never calibrated.
+    ///
+    /// This no longer invalidates the budget (see `blockBudget`): a cap doesn't reset when the
+    /// window does. It survives as the "is this reading from the same window as the stored fit?"
+    /// test `shouldAcceptFit` needs, since percentages only climb within a window.
     public func blockCalibrationIsStale(now: Date = Date()) -> Bool {
         guard let cal = lastCalibratedAt else { return true }
         if let blockStart = activeBlock?.start, cal < blockStart { return true }
@@ -902,7 +988,7 @@ public final class MetricsStore {
         return cal < WeeklyWindowEngine.window(anchor: weeklyAnchor, now: now).start
     }
 
-    /// Either side stale — what the UI prompts a re-calibration on.
+    /// Either side's reading predates its window. Nothing depends on this any more except wording.
     public func calibrationIsStale(now: Date = Date()) -> Bool {
         blockCalibrationIsStale(now: now) || weeklyCalibrationIsStale(now: now)
     }
@@ -922,19 +1008,30 @@ public final class MetricsStore {
     /// Plain-language description of what a gauge's percentage is measured against right now — so
     /// the UI can be honest about the denominator (local anchor vs calibrated vs estimate).
     ///
-    /// Per gauge, because the two calibrations now expire on different clocks: after a 5h reset
-    /// the weekly budget can still be Claude's while the 5h one has fallen back to the local
-    /// anchor, and a single shared sentence would misdescribe one of them.
+    /// Per gauge, because the two fit and expire independently: the weekly budget can be Claude's
+    /// while the 5h one has aged out to the local anchor, and one shared sentence would
+    /// misdescribe whichever it wasn't written about.
+    ///
+    /// The fit's percentage is named because it *is* the precision: a cap back-solved at 96% is
+    /// worth ten of one back-solved at 10%.
     public func budgetBasisDescription(for window: GaugeWindow) -> String {
         let stamp = window == .block ? lastCalibratedAt : weeklyCalibratedAt
-        let stale = window == .block ? blockCalibrationIsStale() : weeklyCalibrationIsStale()
-        if let stamp, !stale {
+        let expired = window == .block ? blockFitIsExpired() : weeklyFitIsExpired()
+        let percent = window == .block ? blockFitPercent : weeklyFitPercent
+        if let stamp, !expired {
             let age = Format.relativeAge(from: stamp)
-            return calibrationWasAutomatic ? "Claude's live usage (auto-synced \(age))"
-                                           : "Claude's /usage (calibrated \(age))"
+            let at = percent.map { " at \(Int($0.rounded()))%" } ?? ""
+            return calibrationWasAutomatic ? "Claude's live usage — synced \(age)\(at)"
+                                           : "Claude's /usage — calibrated \(age)\(at)"
         }
-        if autoPeakBudget, peakBlockWork > 0 || peakWeekWork > 0 {
-            return "your own heavy sessions +\(Int((peakHeadroom * 100).rounded()))% — your usual ceiling, not Anthropic's cap"
+        if autoPeakBudget {
+            // Mirror `blockBudget`'s own fallback order — anchor, then plan. Reporting the custom
+            // budget here would name a number the gauge isn't using.
+            guard peakBlockWork > 0 || peakWeekWork > 0 else { return "a tier-scaled plan estimate" }
+            // Deliberately not "your ceiling ≈ Anthropic's cap". Measured on real data this ran
+            // ~3× above the real 5h limit, because a reconstructed window can straddle one of
+            // Claude's resets and hold more than one limit's worth.
+            return "a rough upper bound from your own history — it runs high, and is not Anthropic's cap"
         }
         return autoBudgetFromPlan ? "a tier-scaled plan estimate" : "your custom budget"
     }

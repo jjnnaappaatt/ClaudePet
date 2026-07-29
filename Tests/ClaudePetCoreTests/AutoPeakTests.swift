@@ -141,17 +141,21 @@ import Foundation
         #expect(store.weeklyBudget(unit: .tokens) == 3000)   // 1500 / 0.5
     }
 
-    @Test func staleCalibrationFallsBackToPeak() {
+    /// A fitted budget outlives the window it was measured in — only age retires it. Backdating
+    /// past a mere reset used to be enough; it isn't, because a limit doesn't reset when a window
+    /// does. See `ServerCalibrationTests.aWindowResetDoesNotDiscardTheFittedBudget`.
+    @Test func expiredCalibrationFallsBackToTheLocalAnchor() {
         let store = TestSupport.store(defaults: freshDefaults())
         store.weightTokensByModel = false
         store.ingestForTesting(seed(now: Date()))
         #expect(store.calibrateLimits(sessionPct: 50, weeklyPct: 50, unit: .tokens))
-        // Backdate both stamps before this week's reset → stale → the local anchor resumes.
-        // They're separate now precisely so a 5h rollover can't expire the weekly fit, so a test
-        // that wants both stale has to say both.
-        store.lastCalibratedAt = Date().addingTimeInterval(-10 * 86_400)
-        store.weeklyCalibratedAt = store.lastCalibratedAt
-        #expect(store.calibrationIsStale)
+        // A reset alone is not enough — age both stamps past the expiry horizon. They're separate
+        // so a 5h rollover can't retire the weekly fit, so a test wanting both gone says both.
+        let old = Date().addingTimeInterval(-(MetricsStore.calibrationExpiry + 3600))
+        store.lastCalibratedAt = old
+        store.weeklyCalibratedAt = old
+        #expect(store.blockFitIsExpired())
+        #expect(store.weeklyFitIsExpired())
         #expect(abs(store.blockBudget(unit: .tokens) - 2300) < 0.01)
         #expect(abs(store.weeklyBudget(unit: .tokens) - 2300) < 0.01)
     }

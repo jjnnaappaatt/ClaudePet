@@ -16,6 +16,14 @@ import Foundation
 /// many windows each has accumulated, and one exceptional session stops pinning the denominator
 /// for good. Below 21 windows it degrades to `max`, which is the only sensible answer when
 /// there's barely any history.
+///
+/// **This is an upper bound on the user's own habits, not an estimate of Anthropic's cap**, and it
+/// reads high — ~3× the real 5h limit when measured against Claude's live percentages (6.2M against
+/// a true ~1.9M). The reason is structural and not fixable here: our 5h windows are reconstructed,
+/// Claude re-anchors its own per session, and a reconstructed span that straddles one of its resets
+/// holds more than one limit's worth (a real window held 2.92M against a 2.3M cap). Re-bucketing
+/// doesn't help — a fixed lattice and a chained model landed at 5.72M and 6.67M. Prefer a fitted
+/// budget from the statusline whenever one exists; this is the fallback of last resort.
 enum PeakEstimator {
 
     /// Share of completed windows allowed to sit *above* the anchor.

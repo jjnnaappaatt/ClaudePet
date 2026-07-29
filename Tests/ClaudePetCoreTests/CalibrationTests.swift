@@ -66,5 +66,11 @@ import Foundation
         let now2 = now1.addingTimeInterval(7 * 86_400)
         #expect(store.weeklyCalibrationIsStale(now: now2) == true)
         #expect(store.calibrationIsStale(now: now2) == true)
+
+        // Staleness is now about the *percentage*, not the budget: it decides whether a new
+        // reading counts as same-window, and nothing else. The fitted budget is untouched.
+        #expect(store.weeklyFitIsExpired(now: now2) == false)
+        store.weeklyTokenBudget = 4_242_424
+        #expect(store.weeklyBudget(unit: .tokens, now: now2) == 4_242_424)
     }
 }

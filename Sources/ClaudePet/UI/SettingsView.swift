@@ -48,13 +48,11 @@ struct SettingsView: View {
                 case .auto:
                     LabeledContent("Session budget", value: amount(metrics.blockBudget(unit: metrics.budgetUnit)))
                     LabeledContent("Weekly budget", value: amount(metrics.weeklyBudget(unit: metrics.budgetUnit)))
-                    // Two genuinely different denominators hide behind "Auto", and the numbers
-                    // above differ by several × between them — so say which one is live.
-                    if metrics.calibrationWasAutomatic && !metrics.calibrationIsStale {
-                        caption("Synced from Claude's own 5-hour and weekly percentages, via the statusline cache — so these track Anthropic's real limits and re-fit themselves as you work. Turn off \"Use Claude's live usage\" below to fall back to the estimate from your own history.")
-                    } else {
-                        caption("Estimated from your own heavy completed 5-hour and weekly windows, +\(Int((metrics.peakHeadroom * 100).rounded()))% headroom — so the gauges fill as you approach the pace you usually work at. This tracks YOUR usage, not Anthropic's cap, and the two can be far apart. Turn on \"Use Claude's live usage\" below (or use Calibrate) to anchor them to Claude's exact %.")
-                    }
+                    // Two genuinely different denominators hide behind "Auto" and they differ by
+                    // several ×, so each budget states its own — a single shared sentence used to
+                    // call a synced weekly budget an "estimate".
+                    caption("5-hour: \(metrics.budgetBasisDescription(for: .block)).\nWeekly: \(metrics.budgetBasisDescription(for: .weekly)).")
+                    caption("A budget synced from Claude's percentages keeps its value until a better reading replaces it — a window resetting doesn't expire it, because your limit isn't what reset. Without one, the fallback is a rough upper bound built from your own heaviest completed windows, which measured ~3× above Claude's real 5-hour limit. Turn off \"Use Claude's live usage\" below to force that fallback.")
                 case .plan:
                     LabeledContent("Session budget", value: budgetText(metrics.plan.tokenBudget, metrics.plan.costBudget))
                     LabeledContent("Weekly budget", value: budgetText(metrics.plan.weeklyTokenBudget, metrics.plan.weeklyCostBudget))
@@ -91,12 +89,9 @@ struct SettingsView: View {
                     if let calibrateMsg { Text(calibrateMsg).font(.caption).foregroundStyle(.secondary) }
                 }
                 if let age = metrics.calibrationAgeDescription {
-                    // The two gauges expire on different clocks, so name whichever went stale
-                    // rather than implying both did.
-                    let stale = [metrics.blockCalibrationIsStale() ? "5-hour" : nil,
-                                 metrics.weeklyCalibrationIsStale() ? "weekly" : nil].compactMap { $0 }
-                    caption("Last calibrated \(age)." + (stale.isEmpty ? ""
-                        : " The \(stale.joined(separator: " and ")) window reset since — that gauge is back on the local estimate until it re-syncs."))
+                    // No "a window reset since — re-calibrate" nag any more: a fitted budget
+                    // outlives the window it was measured in, so nothing needs re-aligning.
+                    caption("Last calibrated \(age). Budgets hold until a reading at least as precise replaces them.")
                 } else {
                     caption("Not calibrated yet — the gauges are tier-scaled estimates until you do.")
                 }
