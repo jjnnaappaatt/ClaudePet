@@ -4,6 +4,13 @@ import ClaudePetCore
 /// "Today" header: a headline token count (cache-inclusive total by default, or work per the
 /// work/total setting), a separate cache-tokens line, and the notional cost.
 struct StatsHeaderView: View {
+    /// Put the token count and the cache count on ONE line instead of two.
+    ///
+    /// On in the dashboard, where this view sits in the summary rail — and that rail sets the whole top
+    /// row's height, which is the dashboard's type size, since nothing scrolls. Off in the widget,
+    /// where the stats column is only ~200pt wide and the two figures wouldn't fit side by side.
+    var compact = false
+
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
@@ -40,21 +47,39 @@ struct StatsHeaderView: View {
                     .fixedSize()
                     .help("Notional API-equivalent cost (estimate) — on a subscription you don't pay per token. The token counts below are exact (read from Claude's transcripts).")
             }
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Format.tokens(metrics.totalsTokens(metrics.today)))
-                    .scaledFont(17, weight: .bold, design: .rounded)
-                    .foregroundStyle(Theme.textPrimary)
-                Text(metrics.tokenBasisLabel)
-                    .scaledFont(10).foregroundStyle(Theme.textSecondary)
+            if compact {
+                HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
+                    workFigure
+                    Text("·").scaledFont(11).foregroundStyle(Theme.textSecondary.opacity(0.4))
+                    cacheFigure
+                }
+                .lineLimit(1)
+                .help(tokenCountHelp + "\n\n" + Self.cacheHelp)
+            } else {
+                workFigure.help(tokenCountHelp)
+                cacheFigure.help(Self.cacheHelp)
             }
-            .help(tokenCountHelp)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(Format.tokens(metrics.today.cacheTokens))
-                    .scaledFont(12, weight: .medium, design: .rounded)
-                    .foregroundStyle(Theme.textSecondary)
-                Text("cache").scaledFont(10).foregroundStyle(Theme.textSecondary.opacity(0.7))
-            }
-            .help("Cache tokens (reads + writes). Claude re-reads the cached conversation every turn, so this dwarfs 'work'. Cheap per token (reads 0.1×).")
         }
     }
+
+    private var workFigure: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(Format.tokens(metrics.totalsTokens(metrics.today)))
+                .scaledFont(17, weight: .bold, design: .rounded)
+                .foregroundStyle(Theme.textPrimary)
+            Text(metrics.tokenBasisLabel)
+                .scaledFont(10).foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    private var cacheFigure: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(Format.tokens(metrics.today.cacheTokens))
+                .scaledFont(12, weight: .medium, design: .rounded)
+                .foregroundStyle(Theme.textSecondary)
+            Text("cache").scaledFont(10).foregroundStyle(Theme.textSecondary.opacity(0.7))
+        }
+    }
+
+    private static let cacheHelp = "Cache tokens (reads + writes). Claude re-reads the cached conversation every turn, so this dwarfs 'work'. Cheap per token (reads 0.1×)."
 }

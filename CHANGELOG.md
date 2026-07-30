@@ -3,6 +3,14 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.7.2] — 2026-07-30
+
+### Changed
+- **Today's header is two lines in the dashboard**, with the token count and the cache count side by
+  side instead of stacked. That line back is worth ~6% on every label, so the type is now slightly
+  larger than it was in 0.7.0 *and* keeps the Subagents / All-time rows 0.7.1 added. The widget keeps
+  its three-line header — its stats column is only ~200pt wide and the two figures wouldn't fit.
+
 ## [0.7.1] — 2026-07-30
 
 ### Added

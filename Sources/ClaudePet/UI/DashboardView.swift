@@ -43,19 +43,21 @@ struct DashboardView: View {
     /// so required height is `need × height/refHeight` — which exceeds the window at *every* height if
     /// `refHeight < need`, not just at small ones. That shipped once, in 0.6.0.
     ///
-    /// Measured at 1470×923 (full screen on a 16:10 display, where height binds hardest): 520 leaves
-    /// only ~13px and 545 is comfortable. Always test with **both** datasets — real data shows one model
-    /// row here while the sample shows four, and it's the sample that makes the summary rail taller.
-    /// The rail is now the binding element in the top row, so shrinking the mascot further buys nothing;
-    /// its stats column already exceeds the sky block.
+    /// Measured at 1470×923 — full screen on a 16:10 display, where height binds hardest. Always test
+    /// with **both** datasets: real data shows one model row here while the sample shows four, and it's
+    /// the sample that makes the summary rail taller.
     ///
     /// Height binds at every realistic window size, so `refHeight` is effectively the type-size dial:
     /// the text only ever got bigger by making the layout need less room. What paid for it, in order of
     /// size: dropping the full-width footer row (folded into the summary rail), giving Week and Hourly
     /// their own columns instead of stacking them, shrinking the mascot 172 → 100, trimming the project
-    /// list 8 → 6 rows, and tightening every padding and gap.
+    /// list 8 → 6 rows, compacting the Today header from three lines to two, and tightening every
+    /// padding and gap.
+    ///
+    /// The rail is the binding element in the top row and its stats column already exceeds the sky
+    /// block, so shrinking the mascot again buys nothing — the remaining levers are all content.
     private static let refWidth: CGFloat = 780
-    private static let refHeight: CGFloat = 545
+    private static let refHeight: CGFloat = 515
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -139,7 +141,7 @@ struct DashboardView: View {
                 .frame(width: pet, height: sky, alignment: .bottom)
 
                 VStack(alignment: .leading, spacing: 7 * scale) {
-                    StatsHeaderView()
+                    StatsHeaderView(compact: true)
                     Text("Today by model")
                         .scaledFont(10, weight: .semibold).foregroundStyle(Theme.textSecondary)
                     ModelBreakdownView()
