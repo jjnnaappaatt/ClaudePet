@@ -176,8 +176,11 @@ struct DashboardView: View {
                     trailing: subagentsOn ? "\(Int((share * 100).rounded()))%" : "off",
                     help: subagentsOn
                         ? "Today's tokens from turns the Task tool ran — subagents and workflow "
-                          + "agents. Their cost is nearly all cache reads, so on a 'work' basis they "
-                          + "look small; switch the basis to 'total' to see their real size."
+                          + "agents. The % is their share of today's figure on the current basis, and "
+                          + "it moves when you change that basis: a subagent works in a short-lived "
+                          + "context, while the main conversation re-reads a large cached one every "
+                          + "turn. So subagents are usually a BIGGER share of 'work' than of "
+                          + "cache-inclusive 'total' — measured here, 15% versus 8%."
                         : "\"Include subagent usage\" is off in Settings → Appearance, so these turns "
                           + "aren't counted in any figure here.")
             statRow("All time", scale: scale,

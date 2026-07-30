@@ -3,6 +3,16 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.7.3] — 2026-07-30
+
+### Fixed
+- **Corrected a backwards claim about subagents** in the "Include subagent usage" caption and the new
+  Subagents tooltip. Both said subagent cost is "nearly all cache reads", so they "barely register
+  under Work and only show their true size under Total". Measured against real transcripts it is the
+  other way round: subagents were **15% of work but 8% of cache-inclusive total**. A subagent runs in
+  a short-lived context while the main conversation re-reads a large cached one every turn, so cache
+  tokens accumulate faster on the main thread, not on the subagents.
+
 ## [0.7.2] — 2026-07-30
 
 ### Changed
