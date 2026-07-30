@@ -3,7 +3,7 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
-## [Unreleased]
+## [0.6.0] — 2026-07-30
 
 ### Added
 - **A full-screen dashboard window.** The expand button beside the gear opens a real, resizable Mac
