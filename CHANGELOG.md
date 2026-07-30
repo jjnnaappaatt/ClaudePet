@@ -3,6 +3,15 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.8.3] — 2026-07-30
+
+### Changed
+- **The summary card's text is larger and the card is full.** Its content reached only about four-fifths
+  of the card — 23% blank at 900×800, 22% at 1470×923, 20% at 1990×1256 — because the card beside it sets
+  the row height. That slack was free: the rail now runs at its own scale, so the Today figures, the
+  total and the whole model grid grow into it and the blank falls to 6–10%. Nothing else on the dashboard
+  changes size; the layout's height and the bottom margin are identical to before.
+
 ## [0.8.2] — 2026-07-30
 
 ### Changed

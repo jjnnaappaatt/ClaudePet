@@ -333,6 +333,14 @@ because it lifts the headlines by the same factor. The dashboard sets 12; the wi
 When you change it, compute the *effective* points either side (`max(base, floor) × scale`): a floor that
 looks generous can still shrink a 10.5pt caption if `refHeight` moved at the same time.
 
+The summary rail runs at its **own** scale (`summaryBoost`), because the limits card beside it sets the
+row height and the rail's content only reached ~78% of it. Growing into that slack is free — it costs no
+type size elsewhere and doesn't move `refHeight`. The constant is a measured boundary: at 1.18 the card
+heights and the window's bottom margin match the unboosted layout exactly; at 1.20 the rail starts
+setting the row height instead and the bottom margin at 1470×923 collapses to zero. When re-measuring,
+don't use "are the two cards the same height?" as the guard — they share a row and stretch together, so
+it reads equal either way. Compare the card height against the unboosted baseline.
+
 `refHeight` must be **≥ the height the layout needs at scale 1**, and getting it wrong doesn't degrade
 gracefully — it breaks at every size. When height binds, scale is `height/refHeight`, so required
 height is `need × height/refHeight`, which exceeds the window at *any* height once `refHeight < need`.

@@ -59,6 +59,22 @@ struct DashboardView: View {
     private static let refWidth: CGFloat = 780
     private static let refHeight: CGFloat = 620
 
+    /// Extra scale for the summary rail only, filling the card the limits panel stretches it to.
+    ///
+    /// Measured: the rail's content reached only ~78% of the card at every window size (23% blank at
+    /// 900×800, 22% at 1470×923, 20% at 1990×1256), because the *right* card sets the row height. That
+    /// slack is free — growing into it costs no type size elsewhere and doesn't move `refHeight`.
+    ///
+    /// **1.18 is the boundary, not a preference.** Measured across 900×800 / 1470×923 / 1990×1256 with
+    /// real data (seven models — the tallest case): at 1.18 the card heights and the window's bottom
+    /// margin are identical to not boosting at all, and the blank drops to 6–10%. At 1.20 the rail
+    /// becomes the card that *sets* the row height, and the bottom margin at 1470×923 goes 3px → 0.
+    ///
+    /// Don't raise it without re-measuring, and don't trust "are the two cards equal?" as the guard —
+    /// they share a row and stretch together, so that reads equal either way. The signal is whether the
+    /// **card height changed from the unboosted baseline**.
+    private static let summaryBoost: CGFloat = 1.18
+
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
     ///
@@ -85,11 +101,16 @@ struct DashboardView: View {
                 HStack(alignment: .top, spacing: 10 * scale) {
                     // Not 50/50. The summary column is a narrow rail; the limits panel holds three
                     // full-width gauges. Split evenly, the left card ran ~40% empty at full screen.
-                    card { summaryPanel(scale: scale) }
+                    // The rail runs at its OWN scale. Its content filled only ~78% of the card, because
+                    // the limits card beside it sets the height — so the remaining fifth was free to
+                    // grow into, costing no type size anywhere else on the page.
+                    let railScale = scale * Self.summaryBoost
+                    card { summaryPanel(scale: railScale) }
                         .frame(width: Self.summaryCardWidth(inner: geo.size.width - 24 * scale,
                                                            gap: 10 * scale, scale: scale),
                                height: nil)
                         .frame(maxHeight: .infinity)
+                        .environment(\.widgetScale, railScale)
                     card { limitsPanel(scale: scale) }
                         .frame(maxHeight: .infinity)
                 }
