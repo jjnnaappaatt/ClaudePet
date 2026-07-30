@@ -40,12 +40,14 @@ struct StatsModelBreakdownView: View {
             }
 
             VStack(alignment: .leading, spacing: 5 * scale) {
-                HStack(spacing: 6 * scale) {
-                    Text("Total tokens").scaledFont(10, weight: .semibold)
+                // A hero figure, sized like the cost and token counts above it — this is the headline
+                // number of the panel, not a caption for the list beneath.
+                HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
+                    Text("Total tokens").scaledFont(11, weight: .semibold)
                         .foregroundStyle(Theme.textSecondary)
                     Spacer()
                     Text(Format.tokens(total))
-                        .scaledFont(13, weight: .bold, design: .rounded)
+                        .scaledFont(21, weight: .bold, design: .rounded)
                         .foregroundStyle(Theme.textPrimary)
                 }
                 .help(headlineHelp(total: total))

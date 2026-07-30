@@ -3,6 +3,27 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.9.0] — 2026-07-30
+
+### Added
+- **The billing cycle is a calendar.** One shaded cell per day, denser where you worked harder, in the
+  style of Claude Code's `/stats` grid. Same data as the bar strip it replaces, so the cells still add
+  up to the Cycle figure exactly; today is outlined and days still to come are empty. The week layout
+  follows your locale's first weekday.
+
+### Changed
+- **The lower half is rearranged**: the calendar owns the whole left column, with This week and Today
+  by hour side by side to its right and By project full-width beneath them. A calendar's aspect ratio
+  is fixed by its shape, so it needed two rows' worth of height — squeezed into one, the cells
+  flattened into stripes.
+- **Gauge bars ramp through the Claude palette** instead of jumping to system orange and red at 70%
+  and 90%. Light coral with headroom, deepening to an ember at the limit, interpolated so there's no
+  colour cliff where one token flips the whole bar.
+- **Bigger limits card**: its text is ~20% larger and the bars are thicker.
+- **"Total tokens" is now a hero figure**, sized like the cost and token counts above it.
+- The summary rail grew to match — the taller limits card beside it hands the rail slack, and filling
+  that costs nothing elsewhere.
+
 ## [0.8.4] — 2026-07-30
 
 ### Fixed

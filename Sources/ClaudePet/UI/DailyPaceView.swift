@@ -9,6 +9,10 @@ import ClaudePetCore
 /// so this row and the chart's highlighted bar always agree. On reset day that means only the part
 /// since the reset, which the tooltip says.
 struct DailyPaceView: View {
+    /// Bar thickness. 7 suits the widget's compact card; the dashboard passes a fatter bar, where the
+    /// same 7pt reads as a hairline next to figures three times the size.
+    var barThickness: CGFloat = 7
+
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
@@ -47,14 +51,17 @@ struct DailyPaceView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.12))
-                    // Full bar == a usual day, so the fill always agrees with the "today N%"
-                    // beside it. Past a usual day it pins full and turns coral; the caption's %
-                    // is what says by how much.
-                    Capsule().fill(overAverage ? Theme.claudeCoral : Theme.highlight)
+                    // Full bar == a usual day, so the fill always agrees with the "today N%" beside it.
+                    // Past a usual day it pins full; the ramp is what says how far past — the caption's
+                    // % gives the number. Same palette ramp as the two gauges above, so "hotter" means
+                    // the same thing on all three bars.
+                    // `fraction` pins at 1 once today passes a usual day, so `overAverage` is what
+                    // carries "past it" into the ramp's top stop.
+                    Capsule().fill(Theme.gaugeColor(overAverage ? 1 : fraction))
                         .frame(width: max(3, geo.size.width * fraction))
                 }
             }
-            .frame(height: 7 * scale)
+            .frame(height: barThickness * scale)
 
             HStack(spacing: 4) {
                 if hasHistory {

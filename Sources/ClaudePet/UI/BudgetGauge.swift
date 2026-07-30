@@ -4,18 +4,17 @@ import ClaudePetCore
 /// The 5-hour block gauge: progress toward the user's budget (tokens or US$),
 /// plus burn rate and a LIVE reset countdown. Approximation of the rolling-window limit.
 struct BudgetGauge: View {
+    /// Bar thickness. 7 suits the widget's compact card; the dashboard passes a fatter bar, where the
+    /// same 7pt reads as a hairline next to figures three times the size.
+    var barThickness: CGFloat = 7
+
     @Environment(MetricsStore.self) private var metrics
 
     private var unit: BudgetUnit { metrics.budgetUnit }
     private var fraction: Double { metrics.blockFraction(unit: unit) }
 
-    private var barColor: Color {
-        switch fraction {
-        case ..<0.7: return Theme.claudeCoral
-        case ..<0.9: return .orange
-        default:     return .red
-        }
-    }
+    /// Ramps through the Claude palette with usage — see `Theme.gaugeColor`.
+    private var barColor: Color { Theme.gaugeColor(fraction) }
 
     private func amount(_ value: Double) -> String {
         unit == .tokens ? Format.tokens(Int(value)) : Format.currency(value)
@@ -66,7 +65,7 @@ struct BudgetGauge: View {
                     Capsule().fill(barColor).frame(width: max(3, geo.size.width * fraction))
                 }
             }
-            .frame(height: 7 * scaleHeight)
+            .frame(height: barThickness * scaleHeight)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {

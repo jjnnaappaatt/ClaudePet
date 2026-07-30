@@ -341,6 +341,20 @@ setting the row height instead and the bottom margin at 1470×923 collapses to z
 don't use "are the two cards the same height?" as the guard — they share a row and stretch together, so
 it reads equal either way. Compare the card height against the unboosted baseline.
 
+**A calendar can't fill an arbitrary rectangle.** Its aspect ratio is fixed by its shape, so square
+cells are capped by whichever axis is scarcer — `CycleCalendarView` sizes them from both and centres
+the grid. Given a single row (~150pt tall) the cells maxed out at ~22pt and the grid used a third of
+even a narrow card; that's why the calendar spans the whole left column of the lower half and the three
+smaller panels (wide and short — the opposite shape) stack to its right. Three cards down that right
+column needed more height than the two rows they replaced and pushed the page past the window at every
+size, so keep it at two.
+
+**Boosts that are free vs boosts that cost.** `summaryBoost` and `headerBoost` grow content into space
+some *other* view already forced open, so they change no height and cost nothing. `limitsBoost` and
+`barThickness` grow the card that SETS the top row's height, so they push `refHeight` up and shrink type
+everywhere — measure the whole page, not the card. When one of the free ones is at its ceiling, raising
+a costly one hands it new slack: the 1.2 limits boost is what let `summaryBoost` go 1.18 → 1.30.
+
 **`refHeight` can never give the layout bottom margin.** It scales with the window: when height binds,
 `required = need × h/refHeight`, so tuning it to "just fits" sets `need ≈ refHeight` and the margin is
 ~zero at *every* height-bound size. That shipped in 0.8.3 — the bottom card sat exactly on the window

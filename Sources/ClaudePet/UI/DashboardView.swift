@@ -57,7 +57,7 @@ struct DashboardView: View {
     /// The rail is the binding element in the top row and its stats column already exceeds the sky
     /// block, so shrinking the mascot again buys nothing — the remaining levers are all content.
     private static let refWidth: CGFloat = 780
-    private static let refHeight: CGFloat = 636
+    private static let refHeight: CGFloat = 700
 
     /// Extra scale for the summary rail only, filling the card the limits panel stretches it to.
     ///
@@ -73,7 +73,7 @@ struct DashboardView: View {
     /// Don't raise it without re-measuring, and don't trust "are the two cards equal?" as the guard —
     /// they share a row and stretch together, so that reads equal either way. The signal is whether the
     /// **card height changed from the unboosted baseline**.
-    private static let summaryBoost: CGFloat = 1.18
+    private static let summaryBoost: CGFloat = 1.30
 
     /// Extra scale for the Today header alone, on top of the rail's. Its row is as tall as the mascot's
     /// sky block, and two lines of text reached only about 60% of that, leaving the blank under
@@ -81,6 +81,15 @@ struct DashboardView: View {
     /// row's height. Bounded by **width**, not height: both lines have to stay on one line each in a
     /// column ~200pt wide at 900×800. Measured at the minimum size before raising.
     private static let headerBoost: CGFloat = 1.6
+
+    /// Extra scale for the limits card, and a fatter gauge bar to match.
+    ///
+    /// **Unlike every other boost here, this one is NOT free.** The limits card is the taller of the two
+    /// in the top row, so it *sets* that row's height — growing it grows the row, which grows the
+    /// layout's required height, which forces `refHeight` up and costs type size on every other panel.
+    /// Measure the whole page after changing it, not just this card.
+    private static let limitsBoost: CGFloat = 1.2
+    private static let barThickness: CGFloat = 9
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -120,22 +129,39 @@ struct DashboardView: View {
                         .environment(\.widgetScale, railScale)
                     card { limitsPanel(scale: scale) }
                         .frame(maxHeight: .infinity)
+                        .environment(\.widgetScale, scale * Self.limitsBoost)
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
-                // The only row that stretches. Spare height goes to the cycle chart's bars, so the
-                // other cards stay snug around their content instead of framing empty space.
-                card { CycleDailyChart() }
-                    .frame(maxHeight: .infinity)
-
-                // Week and hourly get their own columns rather than stacking in one card. Stacked,
-                // they made this row as tall as two charts; side by side the row is only as tall as
-                // the tallest single panel, and that saving goes straight into the type size.
+                // The calendar owns the whole left side of the lower half, not just one row of it.
+                //
+                // Measured: a calendar's aspect ratio is fixed by its shape, so square cells are capped
+                // by whichever axis is scarcer. Given a single row (~150pt tall) the cells maxed out at
+                // ~22pt and the grid occupied a third of even a narrow card, leaving the rest dead. Two
+                // rows' worth of height roughly doubles the cell size and lets the grid actually fill
+                // its card. The three smaller panels stack down the right, where each is naturally wide
+                // and short — the opposite shape, so they suit the leftover column.
                 HStack(alignment: .top, spacing: 10 * scale) {
-                    card { ProjectBreakdownView() }
-                    card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
-                    card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
+                    card { CycleCalendarView() }
+                        .frame(width: (geo.size.width - 24 * scale - 10 * scale) * 0.36)
+                        .frame(maxHeight: .infinity)
+
+                    // TWO rows on the right, not three stacked. Three cards down this column needed more
+                    // height than the two-row layout it replaced, which pushed the layout past the
+                    // window at every size — the calendar has to gain its height from the column beside
+                    // it, not from the page.
+                    VStack(spacing: 9 * scale) {
+                        HStack(alignment: .top, spacing: 10 * scale) {
+                            card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
+                                .frame(maxHeight: .infinity)
+                            card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
+                                .frame(maxHeight: .infinity)
+                        }
+                        .frame(maxHeight: .infinity)
+                        card { ProjectBreakdownView() }
+                    }
                 }
+                .frame(maxHeight: .infinity)
             }
             .padding(12 * scale)
             .environment(\.widgetScale, scale)
@@ -261,11 +287,11 @@ struct DashboardView: View {
     /// rail had none, and in a two-card row only the taller card sets the height.
     private func limitsPanel(scale: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
-            BudgetGauge()
+            BudgetGauge(barThickness: Self.barThickness)
             divider
-            WeeklyLimitBar()
+            WeeklyLimitBar(barThickness: Self.barThickness)
             divider
-            DailyPaceView()
+            DailyPaceView(barThickness: Self.barThickness)
             divider
             subagentRow(scale: scale)
             Spacer(minLength: 0)

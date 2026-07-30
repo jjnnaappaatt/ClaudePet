@@ -4,18 +4,17 @@ import ClaudePetCore
 /// Weekly (7-day, all models) usage bar — mirrors the Claude app's "Weekly limits".
 /// Local estimate: the real cap is server-side, so the budget is editable/calibratable.
 struct WeeklyLimitBar: View {
+    /// Bar thickness. 7 suits the widget's compact card; the dashboard passes a fatter bar, where the
+    /// same 7pt reads as a hairline next to figures three times the size.
+    var barThickness: CGFloat = 7
+
     @Environment(MetricsStore.self) private var metrics
 
     private var unit: BudgetUnit { metrics.budgetUnit }
     private var fraction: Double { metrics.weeklyFraction(unit: unit) }
 
-    private var barColor: Color {
-        switch fraction {
-        case ..<0.7: return Theme.highlight
-        case ..<0.9: return .orange
-        default:     return .red
-        }
-    }
+    /// Ramps through the Claude palette with usage — see `Theme.gaugeColor`.
+    private var barColor: Color { Theme.gaugeColor(fraction) }
 
     private func amount(_ v: Double) -> String {
         unit == .tokens ? Format.tokens(Int(v)) : Format.currency(v)
@@ -66,7 +65,7 @@ struct WeeklyLimitBar: View {
                     Capsule().fill(barColor).frame(width: max(3, geo.size.width * fraction))
                 }
             }
-            .frame(height: 7 * scale)
+            .frame(height: barThickness * scale)
 
             HStack(spacing: 4) {
                 if metrics.serverDriven7d {

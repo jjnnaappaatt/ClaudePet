@@ -44,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 metrics.loadSampleForPreview()
             }
+            applyUtilOverride()      // so gauge colours/states can be forced here too, not just in the widget
             var size = CGSize(width: 1728, height: 1117)
             if let raw = ProcessInfo.processInfo.environment["CLAUDEPET_DASHSIZE"] {
                 let parts = raw.lowercased().split(separator: "x").compactMap { Double($0) }
@@ -90,21 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let b = TokenBasis(rawValue: basis) {
                 metrics.tokenBasis = b         // ditto — lets a snapshot show work vs total side by side
             }
-            // Debug-only: force weather/gauges by faking the statusline utilization. Accepts a single
-            // value ("61", drives 5h) or "five,seven" ("61,25") for both gauges.
-            if let u = ProcessInfo.processInfo.environment["CLAUDEPET_UTIL"] {
-                let parts = u.split(separator: ",").compactMap { Double($0) }
-                let five = parts.first ?? 0
-                let seven = parts.count > 1 ? parts[1] : 0
-                let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                let reset = f.string(from: Date().addingTimeInterval(2 * 3600))
-                let json = "{\"five_hour\":{\"utilization\":\(five),\"resets_at\":\"\(reset)\"},\"seven_day\":{\"utilization\":\(seven),\"resets_at\":\"\(reset)\"}}"
-                let path = NSTemporaryDirectory() + "cp-snap-util.json"
-                try? json.write(toFile: path, atomically: true, encoding: .utf8)
-                metrics.useStatuslineData = true
-                metrics.statuslineCachePath = path
-                metrics.recompute()
-            }
+            applyUtilOverride()
             Snapshot.render(ContentView().environment(metrics).environment(panelVisibility), to: snapPath)
             NSApp.terminate(nil)
             return
@@ -269,6 +256,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    /// Debug-only: force the gauges (and so the weather, mood, and bar colours) by faking the
+    /// statusline utilization. Accepts one value ("61", drives 5h) or "five,seven" ("96,88").
+    ///
+    /// Shared by the widget and dashboard snapshot paths — it lived only in the widget's, which meant
+    /// `CLAUDEPET_UTIL` was silently ignored when checking the dashboard and two renders that should
+    /// have differed came out identical.
+    private func applyUtilOverride() {
+        guard let u = ProcessInfo.processInfo.environment["CLAUDEPET_UTIL"] else { return }
+        let parts = u.split(separator: ",").compactMap { Double($0) }
+        let five = parts.first ?? 0
+        let seven = parts.count > 1 ? parts[1] : 0
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let reset = f.string(from: Date().addingTimeInterval(2 * 3600))
+        let json = "{\"five_hour\":{\"utilization\":\(five),\"resets_at\":\"\(reset)\"},\"seven_day\":{\"utilization\":\(seven),\"resets_at\":\"\(reset)\"}}"
+        let path = NSTemporaryDirectory() + "cp-snap-util.json"
+        try? json.write(toFile: path, atomically: true, encoding: .utf8)
+        metrics.useStatuslineData = true
+        metrics.statuslineCachePath = path
+        metrics.recompute()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
