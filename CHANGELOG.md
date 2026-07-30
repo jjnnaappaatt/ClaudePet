@@ -3,6 +3,36 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.8.0] — 2026-07-30
+
+### Added
+- **Claude Code's own "Total tokens", and the per-model breakdown behind it**, in the top-left card —
+  each model's share with its input/output split, matching the `/stats` Models tab. These are **read
+  from `~/.claude/stats-cache.json`**, Claude Code's own local cache, because the figure cannot be
+  recomputed from the transcripts: measured against one complete day where `/stats` read 3,063,775,
+  counting every logged line gave +7.2%, excluding subagent lines −3.3%, and deduplicating by message id
+  ×0.36. Nothing lands on it. Still local-files-only — no network, no token.
+- That cache lags up to a day, so today's usage is added on top when it stops exactly at yesterday, and
+  never when it already covers today. Today's slice uses ClaudePet's own accounting (~±7% off Claude
+  Code's), which the tooltip states rather than glossing.
+
+### Changed
+- **Subagents moved to the top-right card**, beside the three usage bars it's a share of. The
+  week / cycle / billing lines moved there too — that card had slack, the left rail had none.
+- **The small grey labels are bigger**: the hour axis +42%, "work/day" +17%, "resets in" +5%, "Week" and
+  "Cycle" unchanged. The type ramp was drawn for a 300pt widget card, so the dashboard now floors font
+  sizes before scaling instead of relying on the global scale, which lifts headlines equally.
+- The all-time row and "Today by model" are gone from that card — the new panel supersedes both. Without
+  a `/stats` cache (older Claude Code) they come back automatically.
+- **Headline figures are ~17% smaller.** Nothing scrolls, and seven new lines had to come from somewhere.
+  Verified: `ScrollView` renders blank through `ImageRenderer` just as `Form` does, so scrolling isn't
+  available as an escape.
+
+### Fixed
+- **The live delta never fired on a non-Gregorian locale.** `stats-cache.json` dates are Gregorian
+  strings; compared against `Calendar.current` under the Thai Buddhist calendar, today's year reads 2569
+  rather than 2026, so the cache always looked stale and the total silently omitted today.
+
 ## [0.7.3] — 2026-07-30
 
 ### Fixed

@@ -57,7 +57,7 @@ struct DashboardView: View {
     /// The rail is the binding element in the top row and its stats column already exceeds the sky
     /// block, so shrinking the mascot again buys nothing — the remaining levers are all content.
     private static let refWidth: CGFloat = 780
-    private static let refHeight: CGFloat = 515
+    private static let refHeight: CGFloat = 620
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -104,15 +104,20 @@ struct DashboardView: View {
             }
             .padding(12 * scale)
             .environment(\.widgetScale, scale)
+            // Lift the bottom of the type ramp: the 7-9.5pt captions ("work/day", "resets in", the hour
+            // axis) were drawn for a 300pt widget card and read too small blown up. Raising the global
+            // scale can't fix that - it lifts the headlines equally. Widget keeps the unfloored ramp.
+            .environment(\.minScaledFont, 12)
             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         }
         .background(Theme.windowBackground)
     }
 
-    /// 38% of the row, but never so narrow that the mascot and the stats column collide.
+    /// 44% of the row — wider than before, because the rail now carries the per-model In/Out lines.
+    /// The limits card is mostly full-width bars and gives the width up cheaply.
     private static func summaryCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat) -> CGFloat {
         let available = max(0, inner - gap)
-        return min(available * 0.5, max(available * 0.38, 400 * scale))
+        return min(available * 0.5, max(available * 0.44, 400 * scale))
     }
 
     // MARK: - Panels
@@ -142,53 +147,53 @@ struct DashboardView: View {
 
                 VStack(alignment: .leading, spacing: 7 * scale) {
                     StatsHeaderView(compact: true)
-                    Text("Today by model")
-                        .scaledFont(10, weight: .semibold).foregroundStyle(Theme.textSecondary)
-                    ModelBreakdownView()
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
 
+            // Claude Code's own lifetime figures. "Today by model" used to sit here; it was a second
+            // model list directly above this one, and dropping it is most of what paid for these rows.
+            //
+            // With no `/stats` cache — an older Claude Code, or one that has never computed stats — the
+            // rail would otherwise be a mascot above empty space, so fall back to what used to be here.
             divider
-            todayDetail(scale: scale)
+            if metrics.statsCache != nil {
+                StatsModelBreakdownView()
+            } else {
+                Text("Today by model")
+                    .scaledFont(10, weight: .semibold).foregroundStyle(Theme.textSecondary)
+                ModelBreakdownView()
+                statRow("All time", scale: scale,
+                        value: Format.tokens(metrics.totalsTokens(metrics.allTime)),
+                        trailing: Format.currency(metrics.allTime.costUSD),
+                        help: "Every turn in your transcripts. Claude Code's own /stats total would show "
+                              + "here instead, but its cache (~/.claude/stats-cache.json) wasn't found.")
+            }
 
-            // The week / cycle / billing totals. These used to own a full-width footer strip and its
-            // own row; here they fill the rail instead, which is what the mascot card was short of.
             Spacer(minLength: 0)
-            divider
-            WeekAllTimeView(showsExpandButton: false)
-            BillingLineView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// Two figures that appear nowhere else on the dashboard, filling the gap the rail opens on a
-    /// quiet day. Both are chosen because they are **always** present: the model list above is one row
-    /// on an Opus-only day and four on a mixed one, so anything sized to it leaves a hole exactly when
-    /// there's least to look at.
-    private func todayDetail(scale: CGFloat) -> some View {
-        let subagentsOn = metrics.includeSubagents
+    /// Today's subagent slice, under the three bars it's a share of. (The old "All time" row beside it
+    /// is gone — `StatsModelBreakdownView` shows Claude Code's own lifetime total instead, which is the
+    /// number `/stats` prints.)
+    private func subagentRow(scale: CGFloat) -> some View {
+        let on = metrics.includeSubagents
         let share = metrics.sidechainShare(metrics.today)
-        return VStack(alignment: .leading, spacing: 5 * scale) {
-            statRow("Subagents", scale: scale,
-                    value: subagentsOn ? Format.tokens(metrics.sidechainTokens(metrics.today)) : "—",
-                    trailing: subagentsOn ? "\(Int((share * 100).rounded()))%" : "off",
-                    help: subagentsOn
-                        ? "Today's tokens from turns the Task tool ran — subagents and workflow "
-                          + "agents. The % is their share of today's figure on the current basis, and "
-                          + "it moves when you change that basis: a subagent works in a short-lived "
-                          + "context, while the main conversation re-reads a large cached one every "
-                          + "turn. So subagents are usually a BIGGER share of 'work' than of "
-                          + "cache-inclusive 'total' — measured here, 15% versus 8%."
-                        : "\"Include subagent usage\" is off in Settings → Appearance, so these turns "
-                          + "aren't counted in any figure here.")
-            statRow("All time", scale: scale,
-                    value: Format.tokens(metrics.totalsTokens(metrics.allTime)),
-                    trailing: Format.currency(metrics.allTime.costUSD),
-                    help: "Every turn in your transcripts, as far back as they go — not just this "
-                          + "cycle. The cost is the notional API-equivalent estimate.")
-        }
+        return statRow("Subagents today", scale: scale,
+                       value: on ? Format.tokens(metrics.sidechainTokens(metrics.today)) : "—",
+                       trailing: on ? "\(Int((share * 100).rounded()))%" : "off",
+                       help: on
+                           ? "Today's tokens from turns the Task tool ran — subagents and workflow "
+                             + "agents. The % is their share of today's figure on the current basis, and "
+                             + "it moves when you change that basis: a subagent works in a short-lived "
+                             + "context, while the main conversation re-reads a large cached one every "
+                             + "turn. So subagents are usually a BIGGER share of 'work' than of "
+                             + "cache-inclusive 'total' — measured here, 15% versus 8%."
+                           : "\"Include subagent usage\" is off in Settings → Appearance, so these turns "
+                             + "aren't counted in any figure here.")
     }
 
     private func statRow(_ label: String, scale: CGFloat, value: String, trailing: String,
@@ -205,14 +210,24 @@ struct DashboardView: View {
         .help(help)
     }
 
+    /// The three usage bars, then the subagent share, then the week / cycle / billing totals.
+    ///
+    /// Subagents moved here from the rail by request — it belongs beside the bars it's a share of. The
+    /// billing lines followed for a different reason: this card had ~90pt of slack at scale 1 while the
+    /// rail had none, and in a two-card row only the taller card sets the height.
     private func limitsPanel(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 12 * scale) {
+        VStack(alignment: .leading, spacing: 10 * scale) {
             BudgetGauge()
             divider
             WeeklyLimitBar()
             divider
             DailyPaceView()
+            divider
+            subagentRow(scale: scale)
             Spacer(minLength: 0)
+            divider
+            WeekAllTimeView(showsExpandButton: false)
+            BillingLineView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

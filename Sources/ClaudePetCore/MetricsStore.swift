@@ -108,6 +108,11 @@ public final class MetricsStore {
                                                   // other, which is rare and cosmetic.
     public var useStatuslineData = true          // drive gauges from the statusline's local usage cache when present
     public var statuslineCachePath = StatuslineUsageReader.defaultPath   // injectable for tests
+    /// Claude Code's own `/stats` cache. Injectable, and — exactly like `statuslineCachePath` — it
+    /// defaults to the REAL file, so any test touching these figures must go through
+    /// `TestSupport.store(defaults:)` or it reads the developer's own usage and passes by machine.
+    public var statsCachePath = StatsCacheReader.defaultPath
+    public private(set) var statsCache: StatsCache?
     public var extraUsageEnabled: Bool { account.extraUsageEnabled }
 
     /// Anchor for the fixed weekly-limit grid: the configured reset weekday + time of day,
@@ -251,6 +256,9 @@ public final class MetricsStore {
         // Real server-side 5h/7d numbers, read from the statusline's local cache (no token,
         // no network — ClaudePet only reads the file the user's statusline already wrote).
         serverUsage = useStatuslineData ? StatuslineUsageReader.read(path: statuslineCachePath) : nil
+        // Cheap (22 KB) and it only changes when Claude Code recomputes, so a plain re-read per
+        // recompute is fine — no need for the mtime/size cache `UsageScanner` needs for 100 MB files.
+        statsCache = StatsCacheReader.read(path: statsCachePath)
         // Must run before the mood/weather edges below, which read the gauge fractions this moves.
         applyServerCalibration(now: now, entries: entries)
         lastUpdated = now
@@ -1044,6 +1052,31 @@ public final class MetricsStore {
     /// The 5h gauge's basis — kept for callers that predate the split.
     public var budgetBasisDescription: String { budgetBasisDescription(for: .block) }
 
+    // MARK: - Claude Code's /stats figures
+
+    /// `/stats`' "Total tokens", with today's usage added when the cache stops at yesterday.
+    ///
+    /// The delta is ClaudePet's own count, which is NOT the same accounting — measured on one complete
+    /// day it ran within about ±7% of `/stats`. It's added only when the cache ends exactly yesterday:
+    /// if the cache already covers today, adding it would double-count; if it's older than that, whole
+    /// days are missing and inventing them would be worse than showing a dated figure.
+    public func statsTotalTokens(now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let c = statsCache else { return nil }
+        guard c.endsYesterday(now, calendar: calendar) else { return c.totalWorkTokens }
+        return c.totalWorkTokens + today.workTokens
+    }
+
+    /// Whether the figure above includes an estimated slice for today, so the UI can say so.
+    public func statsIncludesToday(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        statsCache?.endsYesterday(now, calendar: calendar) ?? false
+    }
+
+    /// "29 Jul" — the last day Claude Code folded into its cache.
+    public var statsAsOfDescription: String? {
+        guard let d = statsCache?.lastComputedDate() else { return nil }
+        return d.formatted(.dateTime.day().month(.abbreviated))
+    }
+
     // MARK: - Live server usage (from the statusline cache)
 
     /// How recently the statusline must have written its cache for us to treat it as "live".
@@ -1213,6 +1246,26 @@ public final class MetricsStore {
             HourTotal(hour: h, workTokens: hourWork[h], totalTokens: hourWork[h] * 200,
                       costUSD: Double(hourWork[h]) / 7000)
         }
+        // A representative `/stats` cache, dated yesterday so the preview also exercises the "add
+        // today's delta" path. Real per-model figures, so the shares are plausible.
+        var g = Calendar(identifier: .gregorian)
+        g.timeZone = .current
+        let yesterday = g.date(byAdding: .day, value: -1, to: now) ?? now
+        statsCache = StatsCache(
+            models: [
+                StatsModelTotal(model: "claude-opus-4-8", inputTokens: 22_078_886, outputTokens: 89_435_705,
+                                cacheReadTokens: 19_088_345_916, cacheWriteTokens: 421_818_449),
+                StatsModelTotal(model: "claude-sonnet-4-6", inputTokens: 87_802, outputTokens: 10_064_185,
+                                cacheReadTokens: 944_789_056, cacheWriteTokens: 39_159_434),
+                StatsModelTotal(model: "claude-opus-5", inputTokens: 134_000, outputTokens: 8_339_741,
+                                cacheReadTokens: 12_000_000, cacheWriteTokens: 900_000),
+                StatsModelTotal(model: "claude-fable-5", inputTokens: 905_133, outputTokens: 2_882_970,
+                                cacheReadTokens: 790_424_067, cacheWriteTokens: 18_166_381),
+                StatsModelTotal(model: "claude-haiku-4-5-20251001", inputTokens: 517_600, outputTokens: 1_931_406,
+                                cacheReadTokens: 462_062_039, cacheWriteTokens: 40_672_724),
+            ],
+            lastComputedDay: g.dateComponents([.year, .month, .day], from: yesterday),
+            totalSessions: 208, asOf: now)
         lastUpdated = now
     }
 }

@@ -6,21 +6,37 @@ private struct WidgetScaleKey: EnvironmentKey {
     static let defaultValue: CGFloat = 1
 }
 
+/// Floor for `scaledFont` sizes, applied BEFORE the scale multiply.
+///
+/// The type ramp was drawn for a 300–520pt widget card, where 7–9.5pt captions read fine next to a 17pt
+/// figure. Blown up on a dashboard the same ramp leaves the grey labels ("work/day", "resets in", the
+/// hour axis) disproportionately small — raising the global scale doesn't help, because it lifts the
+/// headlines by the same factor. This compresses the bottom of the ramp instead. 0 = no floor (widget).
+private struct MinScaledFontKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
 extension EnvironmentValues {
     var widgetScale: CGFloat {
         get { self[WidgetScaleKey.self] }
         set { self[WidgetScaleKey.self] = newValue }
     }
+
+    var minScaledFont: CGFloat {
+        get { self[MinScaledFontKey.self] }
+        set { self[MinScaledFontKey.self] = newValue }
+    }
 }
 
 private struct ScaledFont: ViewModifier {
     @Environment(\.widgetScale) private var scale
+    @Environment(\.minScaledFont) private var floor
     let size: CGFloat
     let weight: Font.Weight
     let design: Font.Design
 
     func body(content: Content) -> some View {
-        content.font(.system(size: size * scale, weight: weight, design: design))
+        content.font(.system(size: max(size, floor) * scale, weight: weight, design: design))
     }
 }
 

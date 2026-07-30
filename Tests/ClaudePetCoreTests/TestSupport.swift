@@ -11,12 +11,17 @@ enum TestSupport {
     /// passing or failing by time of day (it was masked only because the 5h window happened to be
     /// past its reset). Suites that *want* server data assign their own path after construction.
     static let noStatuslineCache = "/nonexistent/claudepet-tests/statusline-usage-cache.json"
+    /// Same hazard for Claude Code's `/stats` cache: `statsCachePath` defaults to the real
+    /// `~/.claude/stats-cache.json`, so a test asserting on those figures would read the developer's own
+    /// lifetime usage.
+    static let noStatsCache = "/nonexistent/claudepet-tests/stats-cache.json"
 
-    /// Store wired away from the real statusline cache. Use this instead of `MetricsStore(defaults:)`.
+    /// Store wired away from BOTH real caches. Use this instead of `MetricsStore(defaults:)`.
     @MainActor
     static func store(defaults: UserDefaults) -> MetricsStore {
         let s = MetricsStore(defaults: defaults)
         s.statuslineCachePath = noStatuslineCache
+        s.statsCachePath = noStatsCache
         return s
     }
 

@@ -49,6 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let parts = raw.lowercased().split(separator: "x").compactMap { Double($0) }
                 if parts.count == 2 { size = CGSize(width: parts[0], height: parts[1]) }
             }
+            // The /stats figures can't be eyeballed from the PNG alone (is 140.5M the bare cache or the
+            // cache plus today?), so state them.
+            let statsLine = "stats: total=\(metrics.statsTotalTokens().map(String.init) ?? "nil") "
+                + "cacheTotal=\(metrics.statsCache?.totalWorkTokens.description ?? "nil") "
+                + "includesToday=\(metrics.statsIncludesToday()) "
+                + "asOf=\(metrics.statsAsOfDescription ?? "nil") todayWork=\(metrics.today.workTokens)\n"
+            FileHandle.standardError.write(Data(statsLine.utf8))
+
             Snapshot.render(DashboardView()
                                 .environment(metrics)
                                 .frame(width: size.width, height: size.height),

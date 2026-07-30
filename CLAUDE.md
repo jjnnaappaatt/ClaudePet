@@ -63,7 +63,7 @@ the snapshot vars it runs in the normal app flow rather than rendering and exiti
 From `CONTRIBUTING.md` — these are why the app is trustworthy, not style preferences:
 
 1. **Local files only.** Reads `~/.claude/projects/**/*.jsonl`, `~/.claude.json`, and optionally
-   `/tmp/claude/statusline-usage-cache.json`. Never reads the OAuth token, never makes a network
+   `/tmp/claude/statusline-usage-cache.json`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
    request. A feature needing data that isn't already local is out of scope.
 2. **Original art only.** The mascot is code-drawn in `MascotArt.swift` / `PixelMatrixRenderer.swift`
    as an homage to Clawd. Don't bundle third-party art.
@@ -234,6 +234,32 @@ across a folder per session.
 Two directories can resolve to the same path (one session opened in the root, another in a
 subdirectory); they're one project, so `Aggregator` merges them after resolving.
 
+### Claude Code's /stats figures
+
+`/stats`' "Total tokens" is **read from `~/.claude/stats-cache.json`, never derived** — see `StatsCache`.
+It is `Σ(inputTokens + outputTokens)` over `modelUsage`, with **cache tokens excluded**.
+
+Don't try to recompute it. Measured against one complete day where `/stats` read 3,063,775: every logged
+line gives **+7.2%**, lines excluding subagents **−3.3%**, dedup by `message.id` **×0.36** globally and
+**×0.46** per file. Nothing lands on it. (ClaudePet's own all-time work was 181.9M against `/stats`'
+143.1M — a 27% gap — which is why the panel is labelled as `/stats`' figure and sits apart from every
+other token count on the dashboard.)
+
+Two traps in that file:
+
+- **`costUSD` is present and always 0.** `PricingTable` remains the source for every `$`.
+- **`lastComputedDate` is a bare `"2026-07-29"` — Gregorian, no zone.** Store it as y/m/d
+  **components**, and compare on a **Gregorian** calendar carrying the caller's time zone. Turning it
+  into a `Date` at parse time forces a zone choice; comparing against `Calendar.current` breaks outright
+  on a non-Gregorian locale — under the Thai Buddhist calendar today's `year` is **2569**, so `2026`
+  never matched and the live delta could not fire at all on that machine. It reads as a stale cache, not
+  as an error, and only showed up when the raw components were printed from a real run.
+
+The cache lags up to a day, so `statsTotalTokens` adds today's own count **only** when the cache ends
+exactly yesterday (`endsYesterday`) — `covers` guards the double-count, and a cache two or more days
+behind shows the dated figure alone rather than inventing the missing days. That delta is ClaudePet's
+accounting, ~±7% off `/stats`', and the tooltip says so.
+
 ### Cycle breakdowns
 
 `cycleDaily` and `cycleByProject` use the **identical** in-cycle predicate as the `cycle` total, so
@@ -294,6 +320,18 @@ the layout (the mascot's sky, bar heights) multiplies by scale, so a width-only 
 window need *more* height — and full screen on a 16:10 display is wide and **short** (1470×923 here),
 so it clipped the billing footer while having horizontal room to spare. Check any layout change at
 that ratio, not just at the minimum size.
+
+**`ScrollView` renders blank through `ImageRenderer`, exactly like `Form`** — verified with a control
+(the same rows in a plain clipped `VStack` drew 982 sampled bright pixels; inside a `ScrollView`, 0). So
+the dashboard cannot scroll and stay snapshot-verifiable, and the no-scroll constraint below is real
+rather than assumed. Don't re-litigate it without re-running that control.
+
+`\.minScaledFont` (in `WidgetScale.swift`) floors font sizes **before** the scale multiply, compressing
+the bottom of the type ramp. The ramp was drawn for a 300–520pt widget card, so blown up on the
+dashboard the 7–9.5pt grey labels read far too small — and raising the global scale can't fix that,
+because it lifts the headlines by the same factor. The dashboard sets 12; the widget leaves it at 0.
+When you change it, compute the *effective* points either side (`max(base, floor) × scale`): a floor that
+looks generous can still shrink a 10.5pt caption if `refHeight` moved at the same time.
 
 `refHeight` must be **≥ the height the layout needs at scale 1**, and getting it wrong doesn't degrade
 gracefully — it breaks at every size. When height binds, scale is `height/refHeight`, so required
