@@ -57,7 +57,7 @@ struct DashboardView: View {
     /// The rail is the binding element in the top row and its stats column already exceeds the sky
     /// block, so shrinking the mascot again buys nothing — the remaining levers are all content.
     private static let refWidth: CGFloat = 780
-    private static let refHeight: CGFloat = 620
+    private static let refHeight: CGFloat = 636
 
     /// Extra scale for the summary rail only, filling the card the limits panel stretches it to.
     ///
@@ -74,6 +74,13 @@ struct DashboardView: View {
     /// they share a row and stretch together, so that reads equal either way. The signal is whether the
     /// **card height changed from the unboosted baseline**.
     private static let summaryBoost: CGFloat = 1.18
+
+    /// Extra scale for the Today header alone, on top of the rail's. Its row is as tall as the mascot's
+    /// sky block, and two lines of text reached only about 60% of that, leaving the blank under
+    /// "3.6M work · 1B cache". Free for the same reason as `summaryBoost` — the mascot governs that
+    /// row's height. Bounded by **width**, not height: both lines have to stay on one line each in a
+    /// column ~200pt wide at 900×800. Measured at the minimum size before raising.
+    private static let headerBoost: CGFloat = 1.6
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -178,7 +185,13 @@ struct DashboardView: View {
                 // down, opening a hole under the Today header. Let this row be as tall as the mascot;
                 // the slack belongs to the Spacer at the bottom of the card.
                 VStack(alignment: .leading, spacing: 7 * scale) {
+                    // Today's figures run larger still. The mascot's sky block sets this row's height,
+                    // and two lines of header filled only ~60% of it — so growing them is free, exactly
+                    // like the rail boost. Unlike everywhere else in this layout, the limit here is
+                    // WIDTH: both lines must stay unwrapped in a column that is only ~200pt wide at the
+                    // minimum window size.
                     StatsHeaderView(compact: true)
+                        .environment(\.widgetScale, scale * Self.headerBoost)
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
@@ -274,7 +287,7 @@ struct DashboardView: View {
     /// The widget's card treatment, reused per region so the dashboard reads as the same product.
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .padding(11)
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .widgetCard()
     }

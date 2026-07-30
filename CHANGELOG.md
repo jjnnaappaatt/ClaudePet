@@ -3,6 +3,23 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.8.4] — 2026-07-30
+
+### Fixed
+- **The bottom row no longer clips.** At 1470×923 — full screen on a 16:10 display — the "By project"
+  card's bottom edge sat exactly on the window edge. The cause was structural rather than a bad number:
+  `refHeight` had been tuned by finding where the layout *just* fits, which makes the layout's required
+  height equal to it, and therefore leaves ~zero margin at **every** window size where height is the
+  binding axis. Fixed by trimming the cards' unscaled padding, which is the only lever that returns
+  absolute pixels, plus a small `refHeight` increase. Margin is now 13–26px across 900×800 to 2560×1440.
+
+### Changed
+- **Today's figures are much larger.** That row is as tall as the mascot beside it, and two lines of text
+  reached only about 60% of it. Growing them is free — the mascot governs the row's height — so the
+  headline cost, the token count and the cache figure now fill it. Verified at the minimum window size,
+  where the column is narrowest, that both lines still fit without wrapping or truncating.
+- Dashboard type elsewhere is ~2.6% smaller, the cost of the bottom margin above.
+
 ## [0.8.3] — 2026-07-30
 
 ### Changed

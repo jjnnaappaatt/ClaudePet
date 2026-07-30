@@ -341,6 +341,14 @@ setting the row height instead and the bottom margin at 1470×923 collapses to z
 don't use "are the two cards the same height?" as the guard — they share a row and stretch together, so
 it reads equal either way. Compare the card height against the unboosted baseline.
 
+**`refHeight` can never give the layout bottom margin.** It scales with the window: when height binds,
+`required = need × h/refHeight`, so tuning it to "just fits" sets `need ≈ refHeight` and the margin is
+~zero at *every* height-bound size. That shipped in 0.8.3 — the bottom card sat exactly on the window
+edge at 1470×923. Absolute margin comes only from the **unscaled** parts: the cards' `.padding(8)`
+returns the same pixels at any scale, which is why trimming it 11 → 8 bought 18px for free while a
+`refHeight` bump costs type size. Reach for the unscaled lever first, and measure the bottom-most *card*
+pixel against the window edge rather than trusting that text is visible.
+
 `refHeight` must be **≥ the height the layout needs at scale 1**, and getting it wrong doesn't degrade
 gracefully — it breaks at every size. When height binds, scale is `height/refHeight`, so required
 height is `need × height/refHeight`, which exceeds the window at *any* height once `refHeight < need`.
