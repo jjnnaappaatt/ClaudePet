@@ -5,6 +5,9 @@ import ClaudePetCore
 /// Pairs with the day-level `WeeklyBarChart`; uses the selected gauge unit and highlights the
 /// current hour. All data is the already-scanned local `todayHourly` series (no token, no network).
 struct TodayHourlyChart: View {
+    /// Let the bars grow into whatever height the container gives them — see `WeeklyBarChart`.
+    var fillsHeight = false
+
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
@@ -32,14 +35,13 @@ struct TodayHourlyChart: View {
                 Text(amount(value(from: metrics.today)))
                     .scaledFont(9.5).foregroundStyle(Theme.textSecondary.opacity(0.6))
             }
-            HStack(alignment: .bottom, spacing: 1.5 * scale) {
-                ForEach(hours) { hour in
-                    let isNow = hour.hour == currentHour
-                    RoundedRectangle(cornerRadius: 1, style: .continuous)
-                        .fill(isNow ? Theme.claudeCoral : Theme.claudeCoral.opacity(0.40))
-                        .frame(height: max(1, CGFloat(value(hour) / maxV) * barMax))
-                        .frame(maxWidth: .infinity)
+            if fillsHeight {
+                GeometryReader { g in
+                    bars(hours, maxV: maxV, currentHour: currentHour, barArea: max(8, g.size.height))
                 }
+                .frame(minHeight: barMax)
+            } else {
+                bars(hours, maxV: maxV, currentHour: currentHour, barArea: barMax)
             }
             HStack(spacing: 0) {
                 Text("12a"); Spacer(); Text("6a"); Spacer(); Text("12p"); Spacer(); Text("6p")
@@ -50,6 +52,21 @@ struct TodayHourlyChart: View {
                 .foregroundStyle(Theme.textSecondary.opacity(0.6))
         }
         .help("Today's usage by local hour — when in the day you've been working. Local data only.")
+    }
+
+    /// `barArea` is the height the tallest bar gets — fixed in the widget, the card's spare height in
+    /// the dashboard.
+    private func bars(_ hours: [HourTotal], maxV: Double, currentHour: Int,
+                      barArea: CGFloat) -> some View {
+        HStack(alignment: .bottom, spacing: 1.5 * scale) {
+            ForEach(hours) { hour in
+                let isNow = hour.hour == currentHour
+                RoundedRectangle(cornerRadius: 1, style: .continuous)
+                    .fill(isNow ? Theme.claudeCoral : Theme.claudeCoral.opacity(0.40))
+                    .frame(height: max(1, CGFloat(value(hour) / maxV) * barArea))
+                    .frame(maxWidth: .infinity)
+            }
+        }
     }
 
     /// Today's total in the gauge's unit, matching the header / daily-pace figure.

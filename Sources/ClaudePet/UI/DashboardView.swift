@@ -43,13 +43,17 @@ struct DashboardView: View {
     /// so required height is `need × height/refHeight` — which exceeds the window at *every* height if
     /// `refHeight < need`, not just at small ones. That shipped once, in 0.6.0.
     ///
-    /// Measured at 1470×923 (full screen on a 16:10 display, where height binds hardest): 560 fits
-    /// with only a hair of margin, so 580 is the value. Test with **both** datasets — real data here
-    /// shows one model row, while the sample shows four, and it's the sample that makes the mascot card
-    /// taller. Height binds at every realistic window size, so `refHeight` is effectively the
-    /// type-size dial: the text got bigger by making the layout need less room, nothing else.
+    /// Measured at 1470×923 (full screen on a 16:10 display, where height binds hardest): 500 clips and
+    /// 520 fits with a margin. Always test with **both** datasets — real data shows one model row here
+    /// while the sample shows four, and it's the sample that makes the summary rail taller.
+    ///
+    /// Height binds at every realistic window size, so `refHeight` is effectively the type-size dial:
+    /// the text only ever got bigger by making the layout need less room. What paid for it, in order of
+    /// size: dropping the full-width footer row (folded into the summary rail), giving Week and Hourly
+    /// their own columns instead of stacking them, shrinking the mascot 172 → 100, trimming the project
+    /// list 8 → 6 rows, and tightening every padding and gap.
     private static let refWidth: CGFloat = 780
-    private static let refHeight: CGFloat = 580
+    private static let refHeight: CGFloat = 520
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -67,14 +71,16 @@ struct DashboardView: View {
             let scale = Self.scale(for: geo.size)
             // Every one of these gaps and paddings is vertical budget, and vertical budget IS type
             // size here — see `refHeight`. They're deliberately tight so the text can be large.
+            // THREE rows, not four. The billing footer used to own a full-width strip of its own;
+            // folding it into the summary column removed that row and its gap, and filled the space
+            // the mascot card was wasting — the two problems turned out to be each other's solution.
             VStack(spacing: 9 * scale) {
                 HStack(alignment: .top, spacing: 10 * scale) {
-                    // Not 50/50. The pet panel needs the mascot's width plus a short stats column;
-                    // the limits panel holds three full-width gauges. Split evenly, the left card ran
-                    // ~40% empty at full screen, which reads as unfinished rather than spacious.
-                    card { petPanel(scale: scale) }
-                        .frame(width: Self.petCardWidth(inner: geo.size.width - 24 * scale,
-                                                        gap: 10 * scale, scale: scale))
+                    // Not 50/50. The summary column is a narrow rail; the limits panel holds three
+                    // full-width gauges. Split evenly, the left card ran ~40% empty at full screen.
+                    card { summaryPanel(scale: scale) }
+                        .frame(width: Self.summaryCardWidth(inner: geo.size.width - 24 * scale,
+                                                           gap: 10 * scale, scale: scale))
                     card { limitsPanel(scale: scale) }
                 }
 
@@ -83,12 +89,14 @@ struct DashboardView: View {
                 card { CycleDailyChart() }
                     .frame(maxHeight: .infinity)
 
+                // Week and hourly get their own columns rather than stacking in one card. Stacked,
+                // they made this row as tall as two charts; side by side the row is only as tall as
+                // the tallest single panel, and that saving goes straight into the type size.
                 HStack(alignment: .top, spacing: 10 * scale) {
                     card { ProjectBreakdownView() }
-                    card { activityPanel(scale: scale) }
+                    card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
+                    card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
                 }
-
-                card { footer(scale: scale) }
             }
             .padding(12 * scale)
             .environment(\.widgetScale, scale)
@@ -98,42 +106,54 @@ struct DashboardView: View {
     }
 
     /// 38% of the row, but never so narrow that the mascot and the stats column collide.
-    private static func petCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat) -> CGFloat {
+    private static func summaryCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat) -> CGFloat {
         let available = max(0, inner - gap)
         return min(available * 0.5, max(available * 0.38, 400 * scale))
     }
 
     // MARK: - Panels
 
-    /// The mascot with sky overhead, beside today's headline figures.
+    /// The left rail: who you are and what you've spent — mascot, today's headline, today's models,
+    /// then the week / cycle / billing totals that used to sit in a footer strip of their own.
     ///
-    /// Deliberately far smaller than the space would allow. The sky block was the single biggest fixed
-    /// height in the layout, and since nothing scrolls, every point of it is a point the type can't
-    /// have. It went 172 → 122 → 100, and the text is ~32% larger for it. The pet is decoration; the
-    /// numbers are the product.
-    private func petPanel(scale: CGFloat) -> some View {
+    /// The mascot is deliberately far smaller than the space would allow. Its sky block was the single
+    /// biggest fixed height in the layout, and since nothing scrolls, every point of it is a point the
+    /// type can't have. It went 172 → 122 → 100. The pet is decoration; the numbers are the product.
+    private func summaryPanel(scale: CGFloat) -> some View {
         let pet = 84 * scale
         let sky = 100 * scale          // taller than the pet → open sky above it, as in the widget
-        return HStack(alignment: .top, spacing: 14 * scale) {
-            ZStack(alignment: .bottom) {
-                if metrics.weatherEffectsEnabled {
-                    WeatherView(width: pet, height: sky, engine: weatherEngine)
+        return VStack(alignment: .leading, spacing: 8 * scale) {
+            // Mascot and today's figures sit SIDE BY SIDE, and the model list goes in the right column
+            // beside the pet rather than beneath it. Stacking them read more cleanly but made the rail
+            // ~40pt taller at scale 1, and this rail sets the whole top row's height — which is type
+            // size. Beside the pet, the list is free until it outgrows the sky block.
+            HStack(alignment: .top, spacing: 14 * scale) {
+                ZStack(alignment: .bottom) {
+                    if metrics.weatherEffectsEnabled {
+                        WeatherView(width: pet, height: sky, engine: weatherEngine)
+                    }
+                    MascotView(size: pet)
                 }
-                MascotView(size: pet)
-            }
-            .frame(width: pet, height: sky, alignment: .bottom)
+                .frame(width: pet, height: sky, alignment: .bottom)
 
-            VStack(alignment: .leading, spacing: 10 * scale) {
-                StatsHeaderView()
-                Spacer(minLength: 0)
-                // Labelled, so the gap the tall mascot opens above it reads as a section break
-                // rather than as empty space nobody filled.
-                Text("Today by model")
-                    .scaledFont(10, weight: .semibold).foregroundStyle(Theme.textSecondary)
-                ModelBreakdownView()
+                VStack(alignment: .leading, spacing: 7 * scale) {
+                    StatsHeaderView()
+                    Text("Today by model")
+                        .scaledFont(10, weight: .semibold).foregroundStyle(Theme.textSecondary)
+                    ModelBreakdownView()
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            // The week / cycle / billing totals. These used to own a full-width footer strip and its
+            // own row; here they fill the rail instead, which is what the mascot card was short of.
+            Spacer(minLength: 0)
+            divider
+            WeekAllTimeView(showsExpandButton: false)
+            BillingLineView()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func limitsPanel(scale: CGFloat) -> some View {
@@ -148,21 +168,10 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func activityPanel(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 10 * scale) {
-            WeeklyBarChart()
-            divider
-            TodayHourlyChart()
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private func footer(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 6 * scale) {
-            WeekAllTimeView(showsExpandButton: false)
-            BillingLineView()
-        }
+    /// One chart per card in the bottom row. No trailing `Spacer` — the charts are built with
+    /// `fillsHeight`, so they grow into the card themselves rather than sitting on top of a void.
+    private func chartPanel<Content: View>(_ chart: Content) -> some View {
+        chart.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Chrome

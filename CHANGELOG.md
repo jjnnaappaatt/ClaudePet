@@ -3,6 +3,18 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.7.0] — 2026-07-30
+
+### Changed
+- **Three-column dashboard, and no more footer strip.** "This week" and "Today by hour" now have a
+  column each instead of stacking in one card, and the week / cycle / billing totals moved out of
+  their full-width footer row into the summary card at the top left — which is exactly the space that
+  card was wasting. Three rows instead of four.
+- **Dashboard text is larger again, ~12% at full screen** (~48% over 0.6.0). Nothing scrolls, so type
+  size is bounded by what has to fit vertically; losing a whole row is what paid for this one.
+- The week and hourly charts now grow their bars into the height available, as the cycle chart already
+  did, so the three bottom columns fill rather than leaving voids under the shorter two.
+
 ## [0.6.2] — 2026-07-30
 
 ### Changed
