@@ -34,7 +34,7 @@ struct CycleDailyChart: View {
         let now = Date()
         let cal = Calendar.current
         let maxV = max(days.map(value).max() ?? 1, 1)
-        let barMax = 54 * scale
+        let barMax = 42 * scale        // floor only — the bars stretch past this to fill the card
 
         VStack(alignment: .leading, spacing: 5 * scale) {
             HStack(spacing: 6 * scale) {

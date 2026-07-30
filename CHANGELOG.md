@@ -3,6 +3,15 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.6.2] — 2026-07-30
+
+### Changed
+- **Dashboard text is larger again — about 17% on top of 0.6.1, ~32% over 0.6.0.** Nothing on the
+  dashboard scrolls, so type size is bounded by what has to fit vertically; the only way to enlarge it
+  is to make the layout need less room. So: the mascot shrank again, card padding and the gaps between
+  cards tightened, and the project list now shows 6 rows instead of 8. Nothing was dropped — the tail
+  is still totalled on the "+N more" line. Very large displays also get a higher ceiling.
+
 ## [0.6.1] — 2026-07-30
 
 ### Changed

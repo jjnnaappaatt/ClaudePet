@@ -13,7 +13,11 @@ struct ProjectBreakdownView: View {
 
     /// Cap the list so one busy month can't produce an unbounded wall of rows; the remainder is
     /// shown as an explicit "+N more" total rather than silently dropped.
-    private static let maxRows = 8
+    ///
+    /// 6 rather than 8 by choice: nothing on the dashboard scrolls, so these two rows were costing
+    /// every label on the page ~5% of its size (see `DashboardView.refHeight`). The tail is still
+    /// accounted for on the "+N more" line, so no usage disappears.
+    private static let maxRows = 6
 
     private func value(_ p: ProjectTotal) -> Double {
         metrics.budgetUnit == .usd ? p.costUSD : Double(metrics.tokens(work: p.workTokens, total: p.totalTokens))

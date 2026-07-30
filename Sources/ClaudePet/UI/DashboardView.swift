@@ -24,14 +24,13 @@ struct DashboardView: View {
     @State private var weatherEngine = WeatherEngine()   // ambient sky only; never event-driven here
 
     /// Matches `DashboardWindowController.contentMinSize`. The whole layout — footer included — is
-    /// verified to fit here via `CLAUDEPET_DASHBOARD` + `CLAUDEPET_DASHSIZE=900x700`, which is why
+    /// verified to fit here via `CLAUDEPET_DASHBOARD` + `CLAUDEPET_DASHSIZE=900x800`, which is why
     /// the view needs no `ScrollView` (and a `ScrollView` would risk the same `ImageRenderer`
     /// blankness that stops `SettingsView` from being snapshot-checkable).
     ///
-    /// The height was measured, not guessed — twice, because guessing was wrong twice. 620 cut the
-    /// billing footer off entirely; 740 fit the sample's 4-project list but still clipped the footer
-    /// on real data, where the list runs to 8 rows plus an overflow line. It fits at 790, so 800
-    /// leaves a little margin. Re-measure with `CLAUDEPET_REAL=1` if you add a row.
+    /// Measured, not guessed — guessing was wrong twice. 620 cut the billing footer off entirely, and
+    /// 740 fit the sample's short project list while still clipping on real data. Re-measure with
+    /// `CLAUDEPET_REAL=1` if you add a row.
     static let minWidth: CGFloat = 900
     static let minHeight: CGFloat = 800
 
@@ -42,12 +41,15 @@ struct DashboardView: View {
     /// `refHeight` must be **≥ the height the layout actually needs at scale 1**, and getting this
     /// wrong doesn't degrade, it breaks: when height is the binding axis, scale is `height/refHeight`,
     /// so required height is `need × height/refHeight` — which exceeds the window at *every* height if
-    /// `refHeight < need`. Set to 640 it clipped the footer at 1470×923 no matter how the window was
-    /// sized. Measured: 660 puts the last footer line flush against the edge, so 680 is the value with
-    /// a margin. In practice height binds at every realistic window size, which is why lowering
-    /// `refWidth` further buys nothing.
-    private static let refWidth: CGFloat = 860
-    private static let refHeight: CGFloat = 680
+    /// `refHeight < need`, not just at small ones. That shipped once, in 0.6.0.
+    ///
+    /// Measured at 1470×923 (full screen on a 16:10 display, where height binds hardest): 560 fits
+    /// with only a hair of margin, so 580 is the value. Test with **both** datasets — real data here
+    /// shows one model row, while the sample shows four, and it's the sample that makes the mascot card
+    /// taller. Height binds at every realistic window size, so `refHeight` is effectively the
+    /// type-size dial: the text got bigger by making the layout need less room, nothing else.
+    private static let refWidth: CGFloat = 780
+    private static let refHeight: CGFloat = 580
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -63,14 +65,16 @@ struct DashboardView: View {
     var body: some View {
         GeometryReader { geo in
             let scale = Self.scale(for: geo.size)
-            VStack(spacing: 12 * scale) {
-                HStack(alignment: .top, spacing: 12 * scale) {
+            // Every one of these gaps and paddings is vertical budget, and vertical budget IS type
+            // size here — see `refHeight`. They're deliberately tight so the text can be large.
+            VStack(spacing: 9 * scale) {
+                HStack(alignment: .top, spacing: 10 * scale) {
                     // Not 50/50. The pet panel needs the mascot's width plus a short stats column;
                     // the limits panel holds three full-width gauges. Split evenly, the left card ran
                     // ~40% empty at full screen, which reads as unfinished rather than spacious.
                     card { petPanel(scale: scale) }
-                        .frame(width: Self.petCardWidth(inner: geo.size.width - 32 * scale,
-                                                        gap: 12 * scale, scale: scale))
+                        .frame(width: Self.petCardWidth(inner: geo.size.width - 24 * scale,
+                                                        gap: 10 * scale, scale: scale))
                     card { limitsPanel(scale: scale) }
                 }
 
@@ -79,14 +83,14 @@ struct DashboardView: View {
                 card { CycleDailyChart() }
                     .frame(maxHeight: .infinity)
 
-                HStack(alignment: .top, spacing: 12 * scale) {
+                HStack(alignment: .top, spacing: 10 * scale) {
                     card { ProjectBreakdownView() }
                     card { activityPanel(scale: scale) }
                 }
 
                 card { footer(scale: scale) }
             }
-            .padding(16 * scale)
+            .padding(12 * scale)
             .environment(\.widgetScale, scale)
             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
         }
@@ -103,14 +107,14 @@ struct DashboardView: View {
 
     /// The mascot with sky overhead, beside today's headline figures.
     ///
-    /// Deliberately not as large as the space would allow. The sky block is the single biggest fixed
+    /// Deliberately far smaller than the space would allow. The sky block was the single biggest fixed
     /// height in the layout, and since nothing scrolls, every point of it is a point the type can't
-    /// have — dropping it from 172 to 122 is most of what took the text up ~12%. The pet is
-    /// decoration; the numbers are the product.
+    /// have. It went 172 → 122 → 100, and the text is ~32% larger for it. The pet is decoration; the
+    /// numbers are the product.
     private func petPanel(scale: CGFloat) -> some View {
-        let pet = 100 * scale
-        let sky = 122 * scale          // taller than the pet → open sky above it, as in the widget
-        return HStack(alignment: .top, spacing: 16 * scale) {
+        let pet = 84 * scale
+        let sky = 100 * scale          // taller than the pet → open sky above it, as in the widget
+        return HStack(alignment: .top, spacing: 14 * scale) {
             ZStack(alignment: .bottom) {
                 if metrics.weatherEffectsEnabled {
                     WeatherView(width: pet, height: sky, engine: weatherEngine)
@@ -166,7 +170,7 @@ struct DashboardView: View {
     /// The widget's card treatment, reused per region so the dashboard reads as the same product.
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .padding(14)
+            .padding(11)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .widgetCard()
     }
