@@ -13,10 +13,10 @@ struct StatsModelBreakdownView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
-    /// Three, not more: each model needs two lines here, and nothing on the dashboard scrolls (verified:
-    /// `ScrollView` renders blank through `ImageRenderer`, like `Form`). A fourth model would cost every
-    /// label on the page ~4%.
-    private static let maxRows = 3
+    /// Six, in two columns of three. Each model needs two lines, and nothing on the dashboard scrolls
+    /// (verified: `ScrollView` renders blank through `ImageRenderer`, like `Form`), so a single column
+    /// could only afford three. Pairing them buys twice the models for the same height.
+    private static let maxModels = 6
 
     private let dotColor: [ModelFamily: Color] = [
         .fable: Color(red: 0.72, green: 0.55, blue: 0.95),
@@ -28,8 +28,14 @@ struct StatsModelBreakdownView: View {
 
     var body: some View {
         if let cache = metrics.statsCache, let total = metrics.statsTotalTokens() {
-            let shown = Array(cache.models.prefix(Self.maxRows))
-            let rest = cache.models.dropFirst(Self.maxRows)
+            let shown = Array(cache.models.prefix(Self.maxModels))
+            let rest = cache.models.dropFirst(Self.maxModels)
+            // Chunk into pairs so the grid stays a plain VStack of HStacks — `LazyVGrid` would give the
+            // same picture, but lazy containers are the family that renders blank through
+            // `ImageRenderer`, and this view has to stay snapshot-verifiable.
+            let pairs = stride(from: 0, to: shown.count, by: 2).map {
+                Array(shown[$0 ..< min($0 + 2, shown.count)])
+            }
 
             VStack(alignment: .leading, spacing: 5 * scale) {
                 HStack(spacing: 6 * scale) {
@@ -42,8 +48,16 @@ struct StatsModelBreakdownView: View {
                 }
                 .help(headlineHelp(total: total))
 
-                ForEach(shown) { m in
-                    modelRow(m, share: cache.share(m))
+                ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+                    HStack(alignment: .top, spacing: 14 * scale) {
+                        ForEach(pair) { m in
+                            modelRow(m, share: cache.share(m))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        // Keeps a lone final model in the left column instead of letting it stretch
+                        // across the full width and break the grid.
+                        if pair.count == 1 { Color.clear.frame(maxWidth: .infinity) }
+                    }
                 }
                 if !rest.isEmpty {
                     HStack {

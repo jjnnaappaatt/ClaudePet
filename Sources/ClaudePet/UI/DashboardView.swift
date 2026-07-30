@@ -113,11 +113,11 @@ struct DashboardView: View {
         .background(Theme.windowBackground)
     }
 
-    /// 44% of the row — wider than before, because the rail now carries the per-model In/Out lines.
-    /// The limits card is mostly full-width bars and gives the width up cheaply.
+    /// 52% of the row. The rail carries a two-column model grid with In/Out under each name, so it needs
+    /// real width; the limits card is full-width bars and text that reflow happily in what's left.
     private static func summaryCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat) -> CGFloat {
         let available = max(0, inner - gap)
-        return min(available * 0.5, max(available * 0.44, 400 * scale))
+        return min(available * 0.62, max(available * 0.52, 400 * scale))
     }
 
     // MARK: - Panels
@@ -129,8 +129,8 @@ struct DashboardView: View {
     /// biggest fixed height in the layout, and since nothing scrolls, every point of it is a point the
     /// type can't have. It went 172 → 122 → 100. The pet is decoration; the numbers are the product.
     private func summaryPanel(scale: CGFloat) -> some View {
-        let pet = 84 * scale
-        let sky = 92 * scale          // taller than the pet → open sky above it, as in the widget
+        let pet = 66 * scale
+        let sky = 74 * scale          // taller than the pet → open sky above it, as in the widget
         return VStack(alignment: .leading, spacing: 8 * scale) {
             // Mascot and today's figures sit SIDE BY SIDE, and the model list goes in the right column
             // beside the pet rather than beneath it. Stacking them read more cleanly but made the rail

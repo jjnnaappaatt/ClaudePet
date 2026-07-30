@@ -3,6 +3,16 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.8.1] — 2026-07-30
+
+### Changed
+- **The model list is two columns**, so the top-left card shows six models instead of three — for the
+  same height, and with no change to the type size. The card is wider (52% of the row) to carry the
+  In/Out line under each name; the limits card beside it is bars and text, which reflow happily in what's
+  left.
+- **Closed the gap under the mascot.** Once "Today by model" moved out of that card, the pet's sky block
+  was the taller side of the row again rather than the stats beside it, so the block came down to suit.
+
 ## [0.8.0] — 2026-07-30
 
 ### Added
