@@ -3,6 +3,19 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.7.1] — 2026-07-30
+
+### Added
+- **Subagents and All time in the summary card.** Two figures that appeared nowhere else: today's
+  subagent (Task-tool) tokens with their share of the day, and your all-time total with its notional
+  cost. They fill the gap that opened in that card on a quiet day — and they were picked precisely
+  because they're always there, where the model list above is one row on a single-model day and four on
+  a mixed one, so anything sized to it leaves a hole exactly when there's least to look at.
+
+### Changed
+- Dashboard type is ~5% smaller than 0.7.0 (still ~40% above 0.6.0). Nothing scrolls, so the two new
+  rows had to come out of the vertical budget; filling the card was the better trade.
+
 ## [0.7.0] — 2026-07-30
 
 ### Changed

@@ -43,9 +43,11 @@ struct DashboardView: View {
     /// so required height is `need × height/refHeight` — which exceeds the window at *every* height if
     /// `refHeight < need`, not just at small ones. That shipped once, in 0.6.0.
     ///
-    /// Measured at 1470×923 (full screen on a 16:10 display, where height binds hardest): 500 clips and
-    /// 520 fits with a margin. Always test with **both** datasets — real data shows one model row here
-    /// while the sample shows four, and it's the sample that makes the summary rail taller.
+    /// Measured at 1470×923 (full screen on a 16:10 display, where height binds hardest): 520 leaves
+    /// only ~13px and 545 is comfortable. Always test with **both** datasets — real data shows one model
+    /// row here while the sample shows four, and it's the sample that makes the summary rail taller.
+    /// The rail is now the binding element in the top row, so shrinking the mascot further buys nothing;
+    /// its stats column already exceeds the sky block.
     ///
     /// Height binds at every realistic window size, so `refHeight` is effectively the type-size dial:
     /// the text only ever got bigger by making the layout need less room. What paid for it, in order of
@@ -53,7 +55,7 @@ struct DashboardView: View {
     /// their own columns instead of stacking them, shrinking the mascot 172 → 100, trimming the project
     /// list 8 → 6 rows, and tightening every padding and gap.
     private static let refWidth: CGFloat = 780
-    private static let refHeight: CGFloat = 520
+    private static let refHeight: CGFloat = 545
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -121,7 +123,7 @@ struct DashboardView: View {
     /// type can't have. It went 172 → 122 → 100. The pet is decoration; the numbers are the product.
     private func summaryPanel(scale: CGFloat) -> some View {
         let pet = 84 * scale
-        let sky = 100 * scale          // taller than the pet → open sky above it, as in the widget
+        let sky = 92 * scale          // taller than the pet → open sky above it, as in the widget
         return VStack(alignment: .leading, spacing: 8 * scale) {
             // Mascot and today's figures sit SIDE BY SIDE, and the model list goes in the right column
             // beside the pet rather than beneath it. Stacking them read more cleanly but made the rail
@@ -146,6 +148,9 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
 
+            divider
+            todayDetail(scale: scale)
+
             // The week / cycle / billing totals. These used to own a full-width footer strip and its
             // own row; here they fill the rail instead, which is what the mascot card was short of.
             Spacer(minLength: 0)
@@ -154,6 +159,45 @@ struct DashboardView: View {
             BillingLineView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Two figures that appear nowhere else on the dashboard, filling the gap the rail opens on a
+    /// quiet day. Both are chosen because they are **always** present: the model list above is one row
+    /// on an Opus-only day and four on a mixed one, so anything sized to it leaves a hole exactly when
+    /// there's least to look at.
+    private func todayDetail(scale: CGFloat) -> some View {
+        let subagentsOn = metrics.includeSubagents
+        let share = metrics.sidechainShare(metrics.today)
+        return VStack(alignment: .leading, spacing: 5 * scale) {
+            statRow("Subagents", scale: scale,
+                    value: subagentsOn ? Format.tokens(metrics.sidechainTokens(metrics.today)) : "—",
+                    trailing: subagentsOn ? "\(Int((share * 100).rounded()))%" : "off",
+                    help: subagentsOn
+                        ? "Today's tokens from turns the Task tool ran — subagents and workflow "
+                          + "agents. Their cost is nearly all cache reads, so on a 'work' basis they "
+                          + "look small; switch the basis to 'total' to see their real size."
+                        : "\"Include subagent usage\" is off in Settings → Appearance, so these turns "
+                          + "aren't counted in any figure here.")
+            statRow("All time", scale: scale,
+                    value: Format.tokens(metrics.totalsTokens(metrics.allTime)),
+                    trailing: Format.currency(metrics.allTime.costUSD),
+                    help: "Every turn in your transcripts, as far back as they go — not just this "
+                          + "cycle. The cost is the notional API-equivalent estimate.")
+        }
+    }
+
+    private func statRow(_ label: String, scale: CGFloat, value: String, trailing: String,
+                         help: String) -> some View {
+        HStack(spacing: 6 * scale) {
+            Text(label).scaledFont(10.5, weight: .medium).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 4 * scale)
+            Text(value).scaledFont(10.5, design: .rounded).foregroundStyle(Theme.textPrimary)
+            Text(trailing).scaledFont(10, weight: .semibold, design: .rounded)
+                .foregroundStyle(Theme.claudeCoral.opacity(0.9))
+                .frame(width: 52 * scale, alignment: .trailing)
+        }
+        .lineLimit(1)
+        .help(help)
     }
 
     private func limitsPanel(scale: CGFloat) -> some View {
