@@ -13,10 +13,12 @@ struct StatsModelBreakdownView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
-    /// Six, in two columns of three. Each model needs two lines, and nothing on the dashboard scrolls
-    /// (verified: `ScrollView` renders blank through `ImageRenderer`, like `Form`), so a single column
-    /// could only afford three. Pairing them buys twice the models for the same height.
-    private static let maxModels = 6
+    /// Eight, in two columns of four — enough that every model a real account has used fits, so the
+    /// "+N more" line normally doesn't appear at all. Each model needs two lines and nothing on the
+    /// dashboard scrolls (verified: `ScrollView` renders blank through `ImageRenderer`, like `Form`), so
+    /// a single column could only afford three; pairing them is what makes eight affordable. The fourth
+    /// row is paid for by the summary card now matching the taller limits card beside it.
+    private static let maxModels = 8
 
     private let dotColor: [ModelFamily: Color] = [
         .fable: Color(red: 0.72, green: 0.55, blue: 0.95),

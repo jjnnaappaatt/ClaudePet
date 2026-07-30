@@ -79,14 +79,21 @@ struct DashboardView: View {
             // folding it into the summary column removed that row and its gap, and filled the space
             // the mascot card was wasting — the two problems turned out to be each other's solution.
             VStack(spacing: 9 * scale) {
+                // Both cards take the height of the taller one. Left to their natural sizes the summary
+                // card ended well short of the limits card, leaving a band of dead canvas beside it —
+                // the row reads as one band, so the cards have to agree on where its bottom edge is.
                 HStack(alignment: .top, spacing: 10 * scale) {
                     // Not 50/50. The summary column is a narrow rail; the limits panel holds three
                     // full-width gauges. Split evenly, the left card ran ~40% empty at full screen.
                     card { summaryPanel(scale: scale) }
                         .frame(width: Self.summaryCardWidth(inner: geo.size.width - 24 * scale,
-                                                           gap: 10 * scale, scale: scale))
+                                                           gap: 10 * scale, scale: scale),
+                               height: nil)
+                        .frame(maxHeight: .infinity)
                     card { limitsPanel(scale: scale) }
+                        .frame(maxHeight: .infinity)
                 }
+                .fixedSize(horizontal: false, vertical: true)
 
                 // The only row that stretches. Spare height goes to the cycle chart's bars, so the
                 // other cards stay snug around their content instead of framing empty space.
@@ -145,11 +152,14 @@ struct DashboardView: View {
                 }
                 .frame(width: pet, height: sky, alignment: .bottom)
 
+                // No `maxHeight: .infinity` here. With the card now stretching to match the limits card
+                // beside it, a greedy right column swallowed all the slack and pushed the model grid
+                // down, opening a hole under the Today header. Let this row be as tall as the mascot;
+                // the slack belongs to the Spacer at the bottom of the card.
                 VStack(alignment: .leading, spacing: 7 * scale) {
                     StatsHeaderView(compact: true)
-                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
             // Claude Code's own lifetime figures. "Today by model" used to sit here; it was a second

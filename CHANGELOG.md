@@ -3,6 +3,19 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.8.2] — 2026-07-30
+
+### Changed
+- **The two top cards are the same height**, so the band they form has one bottom edge. Left to their
+  natural sizes the summary card ended well short of the limits card, leaving a strip of dead canvas
+  beside it.
+- **Every model is listed** — the height that equalising freed pays for the fourth grid row, so the
+  "+N more" line no longer appears on a normal account.
+
+### Fixed
+- The mascot row no longer opens a hole beneath the Today header. Its right column was greedy for
+  height, so once the card started stretching it swallowed the slack instead of the model grid.
+
 ## [0.8.1] — 2026-07-30
 
 ### Changed
