@@ -3,6 +3,32 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [Unreleased]
+
+### Added
+- **A full-screen dashboard window.** The expand button beside the gear opens a real, resizable Mac
+  window — green button and ⌃⌘F take it to its own full-screen Space, and closing it returns the app
+  to being dockless. It shows everything the widget does with room to breathe, plus two things the
+  widget has no space for: the whole billing cycle day by day, and a per-project breakdown. The
+  widget is untouched and stays where it is (it hides itself while the dashboard is full screen, so
+  it can't float on top of it).
+- **Usage by project.** Which repos actually burned the cycle's tokens. The name comes from the
+  working directory each transcript line records, so it's exact — the `~/.claude/projects` folder
+  name can't supply it, because that encoding replaces every non-alphanumeric character with `-`
+  (`/Users/you/Desktop/LiDAR + HPE` is stored as `-Users-you-Desktop-LiDAR---HPE`) and isn't
+  reversible. Grouping is by the transcript's own project folder rather than by that per-turn
+  directory: on real data the raw directories took **120 distinct values across 11 projects**,
+  because every workflow worktree and every incidental subdirectory gets its own. Subagent turns
+  count toward the project that launched them.
+- Both new breakdowns are computed with the same in-cycle test as the Cycle figure itself, so the
+  day bars and the project rows each sum to it exactly rather than approximately.
+
+### Fixed
+- The Cycle total no longer counts turns stamped after the cycle has ended. It was bounded only at
+  the start, so a clock-skewed timestamp inflated the headline while belonging to no day bucket.
+- Closing Settings while another window is open no longer drops the Dock icon and menu bar out from
+  under it.
+
 ## [0.5.1] — 2026-07-29
 
 ### Fixed

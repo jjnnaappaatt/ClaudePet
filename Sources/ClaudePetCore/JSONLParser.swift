@@ -8,7 +8,11 @@ public enum JSONLParser {
 
     /// Decode a single JSONL line. Returns nil for non-usage lines
     /// (user/file-history/permission-mode/synthetic, or undecodable).
-    public static func entry(fromLineData data: Data) -> UsageEntry? {
+    ///
+    /// `projectDir` is the `~/.claude/projects/<dir>` folder the line came from. A single line can't
+    /// know it, so the caller supplies it — it's the exact per-project grouping key, where the line's
+    /// own `cwd` is only the per-turn directory. See `ProjectKey`.
+    public static func entry(fromLineData data: Data, projectDir: String = "") -> UsageEntry? {
         guard let record = try? decoder.decode(LogRecord.self, from: data) else { return nil }
         guard record.type == "assistant",
               let message = record.message,
@@ -44,20 +48,22 @@ public enum JSONLParser {
             cacheReadTokens: usage.cache_read_input_tokens ?? 0,
             cacheWrite5mTokens: cw5m,
             cacheWrite1hTokens: cw1h,
-            isSidechain: record.isSidechain ?? false
+            isSidechain: record.isSidechain ?? false,
+            project: record.cwd ?? "",
+            projectDir: projectDir
         )
     }
 
     /// Convenience for tests / fixtures.
-    public static func entry(fromLine line: String) -> UsageEntry? {
-        entry(fromLineData: Data(line.utf8))
+    public static func entry(fromLine line: String, projectDir: String = "") -> UsageEntry? {
+        entry(fromLineData: Data(line.utf8), projectDir: projectDir)
     }
 
     /// Parse one file into usage entries, streaming it in fixed chunks so peak memory is
     /// ~one chunk plus the longest line — never the whole file. (Transcripts reach 100 MB+;
     /// `Data(contentsOf:)` would spike RSS that much on every re-read.) Bad lines are
     /// skipped; a read error is thrown.
-    public static func entries(inFileAt url: URL) throws -> [UsageEntry] {
+    public static func entries(inFileAt url: URL, projectDir: String = "") throws -> [UsageEntry] {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 
@@ -74,7 +80,7 @@ public enum JSONLParser {
                 guard let lastNewline = buffer.lastIndex(of: 0x0A) else { return }
                 let complete = buffer.subdata(in: buffer.startIndex..<lastNewline)
                 for slice in complete.split(separator: 0x0A, omittingEmptySubsequences: true) {
-                    if let entry = entry(fromLineData: Data(slice)) {
+                    if let entry = entry(fromLineData: Data(slice), projectDir: projectDir) {
                         result.append(entry)
                     }
                 }
@@ -82,7 +88,7 @@ public enum JSONLParser {
             }
         }
         // A final line with no trailing newline.
-        if !buffer.isEmpty, let entry = entry(fromLineData: buffer) {
+        if !buffer.isEmpty, let entry = entry(fromLineData: buffer, projectDir: projectDir) {
             result.append(entry)
         }
         return result

@@ -40,8 +40,10 @@ public actor UsageScanner {
             // prior good parse intact and un-evicted; the next scan retries the read.
             // (Explicit `invoking:` label — a trailing closure here would be parsed as the
             // guard's else-body.)
-            guard let entries = autoreleasepool(invoking: { try? JSONLParser.entries(inFileAt: url) })
-            else { continue }
+            let dir = Self.projectDir(of: url, under: root)
+            guard let entries = autoreleasepool(invoking: {
+                try? JSONLParser.entries(inFileAt: url, projectDir: dir)
+            }) else { continue }
             cache[url] = CachedFile(mtime: mtime, size: size, entries: entries)
         }
         // Forget files that disappeared.
@@ -54,7 +56,9 @@ public actor UsageScanner {
 
     public static func scanOnce(root: URL = UsageScanner.defaultRoot,
                                 deduplicated: Bool = true) -> [UsageEntry] {
-        let all = jsonlFiles(under: root).flatMap { (try? JSONLParser.entries(inFileAt: $0)) ?? [] }
+        let all = jsonlFiles(under: root).flatMap {
+            (try? JSONLParser.entries(inFileAt: $0, projectDir: projectDir(of: $0, under: root))) ?? []
+        }
         return merge(all, deduplicated: deduplicated)
     }
 
@@ -78,6 +82,20 @@ public actor UsageScanner {
             out.append(url)
         }
         return out
+    }
+
+    /// The single path component directly under `root` — i.e. `~/.claude/projects/<this>/…`.
+    ///
+    /// It has to be the component under the root rather than the file's own parent directory: a
+    /// session's own transcript sits at `<project>/<session>.jsonl`, but its subagents sit deeper, at
+    /// `<project>/<session>/subagents/agent-*.jsonl`. Taking the parent would scatter one project
+    /// across a directory per session. Returns "" for a file that isn't under `root` at all.
+    static func projectDir(of url: URL, under root: URL) -> String {
+        let rootParts = root.standardizedFileURL.pathComponents
+        let parts = url.standardizedFileURL.pathComponents
+        guard parts.count > rootParts.count, Array(parts.prefix(rootParts.count)) == rootParts
+        else { return "" }
+        return parts[rootParts.count]
     }
 
     static func stat(_ url: URL) -> (Date, Int) {

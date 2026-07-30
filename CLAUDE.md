@@ -35,6 +35,22 @@ CLAUDEPET_NOLIVE=1 ...              # ignore the statusline + drop the calibrati
                                     # local-history budget estimate is what you're looking at
 ```
 
+```bash
+CLAUDEPET_DASHBOARD=/tmp/d.png ...                  # the dashboard window's view
+CLAUDEPET_DASHBOARD=/tmp/d.png CLAUDEPET_DASHSIZE=900x800 CLAUDEPET_REAL=1 ...   # at its minimum
+```
+
+`DashboardView` is layout-driven, so unlike the widget it has no intrinsic size — the snapshot path
+wraps it in an explicit `.frame`, and `CLAUDEPET_DASHSIZE` sets that. Always re-check the **minimum**
+size with `CLAUDEPET_REAL=1`: the sample data's short project list hides overflow that real data
+(8 rows plus a "+N more" line) exposes. Guessing the minimum was wrong twice — 620 cut the billing
+footer off entirely, 740 fit the sample and still clipped on real data.
+
+`CLAUDEPET_OPENDASHBOARD` is the dashboard's equivalent of `CLAUDEPET_OPENSETTINGS`: it drives the
+real expand-button flow and reports the things that fail *silently* rather than erroring — whether
+the window can go full screen, whether ⌃⌘F is actually wired, whether `contentMinSize` stuck, and
+whether the widget gets out of the way and comes back.
+
 Other paths: `CLAUDEPET_SETTINGS` (Settings view), `CLAUDEPET_MASCOT` (all mascot frames),
 `CLAUDEPET_ICON` (1024px icon master), `CLAUDEPET_HEARTBEAT` (writes metrics JSON per recompute —
 today's tokens plus both Auto budgets and `budgetBasisDescription`, the only way to check those
@@ -192,6 +208,49 @@ queued, and drained once by `ContentView`; nothing fires on the first pass after
 — they're mutated inside `TimelineView` draw closures, and observation there would cause re-render
 loops. Same reason the edge-detection state in `MetricsStore` is `@ObservationIgnored`.
 
+### Per-project attribution
+
+`UsageEntry` carries two different things and they are **not** interchangeable:
+
+- `project` — the turn's own `cwd`. Present on **every** assistant line (audited: 12,244 with, 0
+  without), and the only exact source of a project's real *name*.
+- `projectDir` — the `~/.claude/projects/<dir>` folder the transcript lives in, supplied by
+  `UsageScanner` (the parser can't know it from a line). This is the **grouping key**.
+
+Group by `projectDir`, never by `cwd`: `cwd` is per-turn, so on real data it took **120 distinct
+values across 11 projects** — every `.claude/worktrees/wf_…` from a workflow agent (~90 of them) and
+every incidental subdirectory (`node_modules/lucide-react/dist/esm/icons`) counts as its own. A list
+grouped by `cwd` reads "+92 more".
+
+Then name each group by **re-encoding**, in `ProjectKey.resolveRoot`. The folder name is
+`[^A-Za-z0-9] → -` applied to the session's original cwd, which is lossy and not invertible — but a
+candidate can be *checked* by re-encoding it and comparing. That resolved 11 of 11 real projects
+exactly, and the obvious alternatives don't: picking the most frequent `cwd` labels `-Users-napat` as
+"ClaudePet" and `-Users-napat-Desktop-AAI` as "aai_next_dashboard", because in those projects most
+turns ran in a subdirectory. `projectDir` is the component **under** the root, not the file's parent —
+subagent transcripts sit at `<project>/<session>/subagents/`, so the parent would scatter one project
+across a folder per session.
+
+Two directories can resolve to the same path (one session opened in the root, another in a
+subdirectory); they're one project, so `Aggregator` merges them after resolving.
+
+### Cycle breakdowns
+
+`cycleDaily` and `cycleByProject` use the **identical** in-cycle predicate as the `cycle` total, so
+each sums to it exactly — the dashboard shows all three together and a chart that didn't add up to
+the headline above it would read as a bug. That predicate is half-open at *both* ends; it used to be
+unbounded above, which let a clock-skewed turn inflate `cycle` while belonging to no bucket.
+
+`cycleDaily` has one bucket per calendar date the cycle touches, and deliberately does **not** copy
+`weekDaily`'s `% 7` fold — that trick exists because a week must be exactly 7 *weekday* slots,
+whereas these bars are labelled by date, so a short partial first/last bar is honest. The loop is
+`while d < cw.end`: with `billingCycleDayOverride` set the bounds land exactly on midnight, and `<=`
+adds a spurious empty trailing bar (a mid-day cycle boundary hides this — test both).
+
+`Aggregator`'s row order is a deterministic default keyed on `totalTokens`. A view showing `work` or
+`$` must **re-sort by the figure it prints**, or the list looks unsorted — under `work` the default
+order put 4M above 8.2M on screen.
+
 ### App layer
 
 `FloatingPanel` (an `NSPanel` subclass) hosts SwiftUI. Its header documents load-bearing AppKit facts
@@ -203,6 +262,45 @@ arrangement**, clamping back on-screen if a monitor is unplugged. Dockless agent
 
 Widget scaling multiplies font sizes via the `widgetScale` environment key rather than
 `.scaleEffect`, so text stays crisp.
+
+`DashboardWindowController` hosts `DashboardView` in a second, real window. Facts verified by spike,
+each of which fails *silently* if undone:
+
+- Flipping `.accessory` → `.regular` **does** give the app a main menu, but SwiftUI's **View menu is
+  completely empty** (it only populates one for a scene it owns, and this app's only scene is
+  `Settings`). So the green button works while ⌃⌘F is dead — which traps the user once the title bar
+  is hidden. `AppPolicy.installFullScreenMenuItem` adds the item; `target` stays nil so it routes
+  through the responder chain like AppKit's own.
+- `.resizable` in the style mask is what creates the green button at all; `toggleFullScreen` is a
+  no-op without it. `.fullScreenPrimary` gets the separate Space.
+- Use `contentView` + a style mask set **at init**, not `NSWindow(contentViewController:)`. Also set
+  the minimum in **SwiftUI** (`.frame(minWidth:minHeight:)`), not only `contentMinSize`: `NSHostingView`
+  drives the window's limits from its root view, and `DashboardView`'s root is a `GeometryReader` with
+  no intrinsic size, so a window-level `contentMinSize` alone read back as **0×0** and the window
+  could be dragged smaller than the layout fits at.
+- Both real windows revert the policy through `AppPolicy.revertToAccessory(unless:)`. Reverting
+  unconditionally meant closing one window yanked the Dock icon and menu bar from the other.
+- The dashboard owns its **own** `PanelVisibility` (the mascot's animation gate is optional in the
+  environment). Sharing the widget's would freeze the dashboard's pet whenever the widget got covered.
+- It must **not** drain `metrics.pendingWeatherEvents` — `ContentView` is the single drain point, and a
+  second consumer would swallow celebrations meant for the other window. The ambient sky still works;
+  `WeatherView` reads `weatherCondition` directly.
+- No `Form`/`.formStyle(.grouped)` and no `ScrollView` in the dashboard: `Form` is why
+  `CLAUDEPET_SETTINGS` renders blank through `ImageRenderer`, and the dashboard has to stay
+  snapshot-verifiable. That's why its minimum size is measured rather than papered over by scrolling.
+
+`DashboardView.scale(for:)` takes the **min of both axes**, never width alone. Every fixed height in
+the layout (the mascot's sky, bar heights) multiplies by scale, so a width-only scale made a wider
+window need *more* height — and full screen on a 16:10 display is wide and **short** (1470×923 here),
+so it clipped the billing footer while having horizontal room to spare. Check any layout change at
+that ratio, not just at the minimum size.
+
+Exactly one row stretches — the cycle chart, whose bars fill the height they're given. The others stay
+snug around their content. Stretching every row instead just moved the slack inside the cards (~180pt
+of dead air beside the mascot), which reads as unfinished; growing the one panel worth looking at
+large is what actually uses a big display. Related: the top row is split ~38/62, not evenly, because
+the mascot card holds a pet plus a short stats column while the limits card holds three full-width
+gauges.
 
 ## Conventions
 

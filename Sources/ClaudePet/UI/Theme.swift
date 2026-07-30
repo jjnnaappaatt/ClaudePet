@@ -10,6 +10,9 @@ enum Theme {
     static let cardTop    = Color(red: 0.17, green: 0.17, blue: 0.19)
     static let cardBottom = Color(red: 0.10, green: 0.10, blue: 0.11)
     static let cardStroke = Color.white.opacity(0.08)
+    /// Canvas behind the dashboard window's cards — a shade darker than `cardBottom` so the cards
+    /// read as raised. The widget has no equivalent: it *is* a single card on the desktop.
+    static let windowBackground = Color(red: 0.07, green: 0.07, blue: 0.08)
     static let textPrimary    = Color.white
     static let textSecondary  = Color.white.opacity(0.62)
 

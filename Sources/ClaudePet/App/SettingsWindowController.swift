@@ -23,10 +23,11 @@ final class SettingsWindowController {
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
             win.titlebarAppearsTransparent = false
-            // Back to dockless agent once Settings closes.
+            // Back to dockless agent once Settings closes — unless the dashboard is still open, in
+            // which case yanking the Dock icon and menu bar out from under it would break ⌃⌘F.
             NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
                                                    object: win, queue: .main) { _ in
-                MainActor.assumeIsolated { _ = NSApp.setActivationPolicy(.accessory) }
+                MainActor.assumeIsolated { AppPolicy.revertToAccessory(unless: win) }
             }
             window = win
         }

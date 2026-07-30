@@ -26,10 +26,17 @@ enum TestSupport {
                       model: String = "claude-opus-4-8",
                       input: Int = 0, output: Int = 0,
                       cacheRead: Int = 0, cw5m: Int = 0, cw1h: Int = 0,
-                      sidechain: Bool = false) -> UsageEntry {
+                      sidechain: Bool = false,
+                      project: String = "",
+                      projectDir: String? = nil) -> UsageEntry {
         UsageEntry(messageID: id, timestamp: date, model: model,
                    family: ModelFamily(modelID: model),
                    inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead,
-                   cacheWrite5mTokens: cw5m, cacheWrite1hTokens: cw1h, isSidechain: sidechain)
+                   cacheWrite5mTokens: cw5m, cacheWrite1hTokens: cw1h, isSidechain: sidechain,
+                   // Default the directory to the cwd's own encoding — i.e. a session that ran in
+                   // its project root, which is the ordinary case. Pass `projectDir` explicitly to
+                   // model a turn in a subdirectory or a worktree.
+                   project: project,
+                   projectDir: projectDir ?? (project.isEmpty ? "" : ProjectKey.encode(project)))
     }
 }

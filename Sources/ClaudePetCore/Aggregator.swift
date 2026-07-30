@@ -38,6 +38,21 @@ public struct ModelTotal: Sendable, Equatable, Identifiable {
     public var id: String { family.rawValue }
 }
 
+/// One project's slice of a window. `path` is the real absolute `cwd` recorded on the turn, so the
+/// name is exact — the `~/.claude/projects` directory name would be a lossy encoding of it.
+public struct ProjectTotal: Sendable, Equatable, Identifiable {
+    public let path: String          // "" when the transcript recorded no cwd
+    public var workTokens: Int = 0
+    public var totalTokens: Int = 0
+    public var costUSD: Double = 0
+    public var id: String { path }
+
+    /// The directory's own name ("ClaudePet", "Support Project", "LiDAR + HPE").
+    public var displayName: String {
+        path.isEmpty ? "—" : URL(fileURLWithPath: path).lastPathComponent
+    }
+}
+
 public struct DayTotal: Sendable, Equatable, Identifiable {
     public let date: Date            // start of local day
     public var workTokens: Int = 0
@@ -70,6 +85,10 @@ public struct Aggregates: Sendable, Equatable {
     public var weekDaily: [DayTotal] = []      // last 7 local days incl. today (all models)
     public var todayHourly: [HourTotal] = []   // today's usage in 24 local-hour buckets (all models)
     public var unknownModels: Set<String> = []
+    /// One bucket per calendar date the billing cycle touches, and the same window split by
+    /// project. Both use the identical in-cycle predicate as `cycle`, so each sums exactly to it.
+    public var cycleDaily: [DayTotal] = []
+    public var cycleByProject: [ProjectTotal] = []
 }
 
 /// Rolls deduplicated entries into today / week / all-time totals plus a
@@ -79,7 +98,7 @@ public enum Aggregator {
                                pricing: PricingTable,
                                now: Date = Date(),
                                calendar: Calendar = .current,
-                               cycleStart: Date? = nil,
+                               cycleWindow: (start: Date, end: Date)? = nil,
                                weekWindow: (start: Date, end: Date)? = nil) -> Aggregates {
         var agg = Aggregates()
 
@@ -129,12 +148,54 @@ public enum Aggregator {
             }
         }
 
+        // Billing-cycle day grid: one bucket per calendar DATE the cycle touches, oldest → newest.
+        // The cycle boundary is a mid-day instant (the subscription anniversary, e.g. 03:03 UTC), so
+        // the first and last dates are partial. This deliberately does NOT copy `weekDaily`'s `% 7`
+        // fold: that exists because a week must be exactly 7 *weekday* slots, whereas these bars are
+        // labelled by date — so a short first/last bar is honest, where a folded one would be a lie.
+        var cycleBuckets: [Date: DayTotal] = [:]
+        var cycleOrder: [Date] = []
+        if let cw = cycleWindow {
+            var d = calendar.startOfDay(for: cw.start)
+            while d < cw.end {
+                cycleBuckets[d] = DayTotal(date: d)
+                cycleOrder.append(d)
+                d = calendar.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86_400)
+            }
+        }
+        // Keyed by the transcript's project DIRECTORY, not by `cwd`: cwd varies per turn across
+        // subdirectories and workflow worktrees, which on real data split 11 projects into 120 rows.
+        // The cwd frequencies ride along so the directory can be resolved back to a real path
+        // afterwards — see `ProjectKey.resolveRoot`.
+        struct ProjectAcc { var work = 0; var total = 0; var cost = 0.0; var cwds: [String: Int] = [:] }
+        var projectAcc: [String: ProjectAcc] = [:]
+
         for e in entries {
             let cost = pricing.cost(for: e)
             let weight = pricing.weight(for: e.family)
             agg.allTime.add(e, cost: cost, weight: weight)
 
-            if let cs = cycleStart, e.timestamp >= cs { agg.cycle.add(e, cost: cost, weight: weight) }
+            // ONE predicate for `cycle`, `cycleDaily` and `cycleByProject`: the dashboard shows the
+            // three together, so a bar chart or a project list that didn't add up to the headline
+            // figure would read as a bug. It's also bounded above now — an entry stamped past the
+            // cycle end (clock skew) used to inflate `cycle` while belonging to no bucket.
+            if let cw = cycleWindow, e.timestamp >= cw.start, e.timestamp < cw.end {
+                agg.cycle.add(e, cost: cost, weight: weight)
+
+                let day = calendar.startOfDay(for: e.timestamp)
+                if cycleBuckets[day] != nil {
+                    cycleBuckets[day]!.workTokens += e.workTokens
+                    cycleBuckets[day]!.totalTokens += e.totalTokens
+                    cycleBuckets[day]!.costUSD += cost
+                }
+
+                var acc = projectAcc[e.projectDir] ?? ProjectAcc()
+                acc.work += e.workTokens
+                acc.total += e.totalTokens
+                acc.cost += cost
+                if !e.project.isEmpty { acc.cwds[e.project, default: 0] += 1 }
+                projectAcc[e.projectDir] = acc
+            }
 
             // Weekly LIMIT total: the fixed 7-day reset window if provided (matches the
             // Claude app's resetting weekly limit), else the rolling-7-day fallback.
@@ -190,6 +251,26 @@ public enum Aggregator {
         }
         agg.weekDaily = dayOrder.map { dayBuckets[$0] ?? DayTotal(date: $0) }
         agg.todayHourly = hourBuckets
+        agg.cycleDaily = cycleOrder.map { cycleBuckets[$0] ?? DayTotal(date: $0) }
+        // Resolve each directory to its real path, then merge: two directories CAN resolve to the
+        // same project (a session started in the root and another in a subdirectory), and they are
+        // genuinely the same project, so they belong in one row.
+        var byPath: [String: ProjectTotal] = [:]
+        for (dir, acc) in projectAcc {
+            let path = ProjectKey.resolveRoot(dir: dir, cwdCounts: acc.cwds)
+            var pt = byPath[path] ?? ProjectTotal(path: path)
+            pt.workTokens += acc.work
+            pt.totalTokens += acc.total
+            pt.costUSD += acc.cost
+            byPath[path] = pt
+        }
+        // Heaviest project first; the "no cwd recorded" bucket always last so it can't head the list.
+        // This is a deterministic default order, not the display order — a view showing `work` or `$`
+        // must re-sort by the figure it actually prints (see `ProjectBreakdownView`).
+        agg.cycleByProject = byPath.values.sorted {
+            if $0.path.isEmpty != $1.path.isEmpty { return !$0.path.isEmpty }
+            return $0.totalTokens > $1.totalTokens
+        }
         return agg
     }
 }

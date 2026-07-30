@@ -4,12 +4,19 @@ import Foundation
 
 /// A single line of a `~/.claude/projects/**/*.jsonl` transcript.
 /// Only `type == "assistant"` lines carry token usage; `timestamp`/`requestId`/
-/// `isSidechain` are TOP-LEVEL (not under `message`).
+/// `isSidechain`/`cwd` are TOP-LEVEL (not under `message`).
 struct LogRecord: Decodable {
     let type: String?
     let timestamp: String?
     let requestId: String?
     let isSidechain: Bool?
+    /// The project directory the turn ran in, as a real absolute path — this is the ONLY reliable
+    /// source of project identity. The containing `~/.claude/projects/<dir>` name is a lossy encoding
+    /// (every non-alphanumeric becomes `-`, so `/Users/x/Desktop/LiDAR + HPE` →
+    /// `-Users-x-Desktop-LiDAR---HPE`) and cannot be decoded back. Audited across 400 transcripts:
+    /// 12,244 assistant lines carried `cwd`, 0 did not — so no fallback machinery is needed. The
+    /// only files lacking it are `subagents/workflows/**/journal.jsonl`, which carry no usage at all.
+    let cwd: String?
     let message: RawMessage?
 }
 
@@ -98,6 +105,16 @@ public struct UsageEntry: Sendable, Equatable, Identifiable {
     public let cacheWrite5mTokens: Int
     public let cacheWrite1hTokens: Int
     public let isSidechain: Bool
+    /// The turn's own working directory (`cwd`), or "" when the line didn't carry one. This is the
+    /// only exact source of a project's real *name*, but it is NOT the grouping key — it varies per
+    /// turn across subdirectories and workflow worktrees (120 values for 11 projects on real data).
+    public let project: String
+    /// The `~/.claude/projects/<dir>` folder this transcript lives under — the exact grouping key,
+    /// since Claude Code derives it from the session's original cwd. See `ProjectKey`.
+    ///
+    /// These two stay LAST, with defaulted init parameters, so every existing call site keeps
+    /// compiling — same reasoning as `Totals`' sidechain fields.
+    public let projectDir: String
 
     public var id: String { messageID }
 
@@ -111,7 +128,8 @@ public struct UsageEntry: Sendable, Equatable, Identifiable {
 
     public init(messageID: String, timestamp: Date, model: String, family: ModelFamily,
                 inputTokens: Int, outputTokens: Int, cacheReadTokens: Int,
-                cacheWrite5mTokens: Int, cacheWrite1hTokens: Int, isSidechain: Bool) {
+                cacheWrite5mTokens: Int, cacheWrite1hTokens: Int, isSidechain: Bool,
+                project: String = "", projectDir: String = "") {
         self.messageID = messageID
         self.timestamp = timestamp
         self.model = model
@@ -122,6 +140,8 @@ public struct UsageEntry: Sendable, Equatable, Identifiable {
         self.cacheWrite5mTokens = cacheWrite5mTokens
         self.cacheWrite1hTokens = cacheWrite1hTokens
         self.isSidechain = isSidechain
+        self.project = project
+        self.projectDir = projectDir
     }
 }
 

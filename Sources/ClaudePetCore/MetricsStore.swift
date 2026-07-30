@@ -17,6 +17,9 @@ public final class MetricsStore {
     public var todayByModel: [ModelTotal] = []
     public var weekDaily: [DayTotal] = []
     public var todayHourly: [HourTotal] = []      // today's usage in 24 local-hour buckets
+    public var cycleDaily: [DayTotal] = []        // one bucket per calendar date the billing cycle
+    public var cycleByProject: [ProjectTotal] = []  // touches, and that same window split by project
+                                                 // — each sums exactly to `cycle` (dashboard only)
     public var unknownModels: Set<String> = []
     public var activeBlock: UsageBlock?
     public var weekReset: Date?                   // end of the current fixed weekly window
@@ -223,7 +226,7 @@ public final class MetricsStore {
         }
         let weekWin = WeeklyWindowEngine.window(anchor: weeklyAnchor, now: now)
         let agg = Aggregator.compute(entries: entries, pricing: pricing, now: now,
-                                     cycleStart: cycleBounds.start, weekWindow: weekWin)
+                                     cycleWindow: cycleBounds, weekWindow: weekWin)
         today = agg.today
         week = agg.week                              // now the fixed weekly-reset window total
         weekReset = weekWin.end
@@ -234,6 +237,8 @@ public final class MetricsStore {
         todayByModel = agg.todayByModel
         weekDaily = agg.weekDaily
         todayHourly = agg.todayHourly
+        cycleDaily = agg.cycleDaily
+        cycleByProject = agg.cycleByProject
         unknownModels = agg.unknownModels
         activeBlock = FiveHourBlockEngine.activeSession(from: entries, pricing: pricing, now: now,
                                                         resetOffset: sessionResetOffset)
@@ -1151,9 +1156,38 @@ public final class MetricsStore {
         today = Totals(workTokens: 142_000, totalTokens: 41_200_000, costUSD: 4.21)
         week = Totals(workTokens: 1_200_000, totalTokens: 300_000_000, costUSD: 38, weightedTokens: 1_650_000)
         allTime = Totals(workTokens: 14_000_000, totalTokens: 3_400_000_000, costUSD: 402)
-        cycle = Totals(workTokens: 5_400_000, totalTokens: 1_300_000_000, costUSD: 180)
         cycleStart = now.addingTimeInterval(-18 * 86_400)   // ~18 days into the cycle
         cycleReset = now.addingTimeInterval(12 * 86_400)    // ~12d until the cycle resets
+        // 31 dates spanning that cycle, the last 12 still in the future (and so empty) — exactly
+        // the shape the real aggregator produces. `cycle` is then summed FROM these rather than
+        // written by hand, so sample data honours the same "bars add up to the headline" invariant
+        // the dashboard claims.
+        let cycleWork = (0..<31).map { i -> Int in
+            guard i <= 18 else { return 0 }                     // future dates: nothing logged yet
+            return i % 7 >= 5 ? 40_000 + i * 900 : 150_000 + i * 4_000   // weekends lighter
+        }
+        cycleDaily = cycleWork.enumerated().map { i, w in
+            DayTotal(date: now.addingTimeInterval(Double(i - 18) * 86_400),
+                     workTokens: w, totalTokens: w * 220, costUSD: Double(w) / 6800)
+        }
+        cycle = Totals(workTokens: cycleDaily.reduce(0) { $0 + $1.workTokens },
+                       totalTokens: cycleDaily.reduce(0) { $0 + $1.totalTokens },
+                       costUSD: cycleDaily.reduce(0) { $0 + $1.costUSD })
+        // Split that same total across plausible projects; the last one absorbs the rounding
+        // remainder so the list sums to `cycle` to the token, as the real one does.
+        var remWork = cycle.workTokens, remTotal = cycle.totalTokens, remCost = cycle.costUSD
+        let shares: [(String, Double)] = [("/Users/you/ClaudePet", 0.46),
+                                          ("/Users/you/Desktop/AAI", 0.27),
+                                          ("/Users/you/Desktop/LiDAR + HPE", 0.18),
+                                          ("/Users/you/pookie-gym", 0.09)]
+        cycleByProject = shares.enumerated().map { i, share in
+            let isLast = i == shares.count - 1
+            let w = isLast ? remWork : Int(Double(cycle.workTokens) * share.1)
+            let t = isLast ? remTotal : Int(Double(cycle.totalTokens) * share.1)
+            let c = isLast ? remCost : cycle.costUSD * share.1
+            remWork -= w; remTotal -= t; remCost -= c
+            return ProjectTotal(path: share.0, workTokens: w, totalTokens: t, costUSD: c)
+        }
         monthlyPrice = 100; creditSpent = 13.47; creditLimit = 60; creditBalance = 5.60
         todayByModel = [
             ModelTotal(family: .fable,  workTokens: 22_000, totalTokens: 9_000_000,  costUSD: 2.80),

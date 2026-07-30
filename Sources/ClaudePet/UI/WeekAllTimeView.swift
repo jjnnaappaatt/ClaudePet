@@ -4,6 +4,10 @@ import ClaudePetCore
 
 /// Compact week + all-time line with a Settings (gear) button.
 struct WeekAllTimeView: View {
+    /// Off in the dashboard, which is already the expanded view — offering to expand it again there
+    /// would be a button that does nothing visible.
+    var showsExpandButton = true
+
     @Environment(MetricsStore.self) private var metrics
 
     var body: some View {
@@ -20,6 +24,19 @@ struct WeekAllTimeView: View {
                 }
             }
             Spacer()
+            if showsExpandButton {
+                Button {
+                    // Open the full dashboard in a real, resizable, full-screen-capable window.
+                    NotificationCenter.default.post(name: .openClaudePetDashboard, object: nil)
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .scaledFont(10.5)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open the full dashboard — a resizable window with the whole billing cycle "
+                      + "day by day and a per-project breakdown. Supports full screen.")
+            }
             Button {
                 // Open Settings in a real key-capable window (text fields need keyboard focus).
                 NotificationCenter.default.post(name: .openClaudePetSettings, object: nil)

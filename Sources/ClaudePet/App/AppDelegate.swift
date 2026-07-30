@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let panelVisibility = PanelVisibility()
     let resizeController = ResizeController()
     private lazy var settingsWC = SettingsWindowController(metrics: metrics)
+    private lazy var dashboardWC = DashboardWindowController(metrics: metrics)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Debug-only: render the 1024px app-icon master (transparent margins).
@@ -29,6 +30,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Debug-only: render the Settings view.
         if let settingsPath = ProcessInfo.processInfo.environment["CLAUDEPET_SETTINGS"] {
             Snapshot.render(SettingsView().environment(metrics), to: settingsPath)
+            NSApp.terminate(nil)
+            return
+        }
+
+        // Debug-only: render the dashboard. Unlike the other snapshots this one needs an explicit
+        // size — `ImageRenderer` renders at the view's intrinsic size, and `DashboardView` is
+        // layout-driven (it takes its size from the window), so with no frame there'd be nothing to
+        // lay out against. `CLAUDEPET_DASHSIZE=WxH` overrides the default; check the minimum too.
+        if let dashPath = ProcessInfo.processInfo.environment["CLAUDEPET_DASHBOARD"] {
+            if ProcessInfo.processInfo.environment["CLAUDEPET_REAL"] != nil {
+                metrics.loadFromDisk()
+            } else {
+                metrics.loadSampleForPreview()
+            }
+            var size = CGSize(width: 1728, height: 1117)
+            if let raw = ProcessInfo.processInfo.environment["CLAUDEPET_DASHSIZE"] {
+                let parts = raw.lowercased().split(separator: "x").compactMap { Double($0) }
+                if parts.count == 2 { size = CGSize(width: parts[0], height: parts[1]) }
+            }
+            Snapshot.render(DashboardView()
+                                .environment(metrics)
+                                .frame(width: size.width, height: size.height),
+                            to: dashPath, scale: 1)
             NSApp.terminate(nil)
             return
         }
@@ -113,6 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.settingsWC.show() }
         }
 
+        // Open the expanded dashboard when the widget's expand button is tapped. It needs the panel
+        // so it can hide the widget while full screen (else "Show on all Spaces" floats the widget
+        // over its own dashboard).
+        dashboardWC.widgetPanel = wc.panel
+        NotificationCenter.default.addObserver(forName: .openClaudePetDashboard,
+                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.dashboardWC.show() }
+        }
+
         // Pause the mascot when the panel is fully occluded (bitfield: use .contains).
         occlusionObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification,
@@ -156,6 +189,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         metrics.start()
+
+        // Debug: simulate the REAL flow for the dashboard — accessory app already running, then the
+        // expand button is tapped. Reports the things that silently break instead of erroring:
+        // whether the window can actually go full screen, whether ⌃⌘F is wired (SwiftUI ships an
+        // EMPTY View menu, so it isn't unless we add the item), and whether the widget gets out of
+        // the way and comes back.
+        if ProcessInfo.processInfo.environment["CLAUDEPET_OPENDASHBOARD"] != nil {
+            func log(_ s: String) { FileHandle.standardError.write(Data("diag: \(s)\n".utf8)) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                NotificationCenter.default.post(name: .openClaudePetDashboard, object: nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    guard let win = NSApp.windows.first(where: { $0.title == "ClaudePet" }) else {
+                        log("FAIL: no dashboard window"); NSApp.terminate(nil); return
+                    }
+                    let sm = win.styleMask
+                    log("policy=\(NSApp.activationPolicy().rawValue) key=\(win.isKeyWindow) "
+                        + "titled=\(sm.contains(.titled)) resizable=\(sm.contains(.resizable)) "
+                        + "fullScreenPrimary=\(win.collectionBehavior.contains(.fullScreenPrimary)) "
+                        + "contentMinSize=\(Int(win.contentMinSize.width))x\(Int(win.contentMinSize.height)) "
+                        + "minSize=\(Int(win.minSize.width))x\(Int(win.minSize.height))")
+                    let fs = NSApp.mainMenu?.items.first { $0.title == "View" }?.submenu?.items
+                        .first { $0.action == #selector(NSWindow.toggleFullScreen(_:)) }
+                    log("fullScreenMenuItem=\(fs.map { "\"\($0.title)\" ⌃⌘\($0.keyEquivalent)" } ?? "MISSING")")
+                    log("widgetVisibleBefore=\(wc.panel.isVisible)")
+
+                    let nc = NotificationCenter.default
+                    nc.addObserver(forName: NSWindow.didEnterFullScreenNotification,
+                                   object: win, queue: .main) { _ in
+                        MainActor.assumeIsolated {
+                            log("entered fullScreen=\(win.styleMask.contains(.fullScreen)) "
+                                + "size=\(Int(win.frame.width))x\(Int(win.frame.height)) "
+                                + "widgetHidden=\(!wc.panel.isVisible)")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                win.toggleFullScreen(nil)
+                            }
+                        }
+                    }
+                    nc.addObserver(forName: NSWindow.didExitFullScreenNotification,
+                                   object: win, queue: .main) { _ in
+                        MainActor.assumeIsolated {
+                            log("exited widgetRestored=\(wc.panel.isVisible)")
+                            win.close()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                log("afterClose policy=\(NSApp.activationPolicy().rawValue) "
+                                    + "(0 = regular, 1 = dockless accessory)")
+                                NSApp.terminate(nil)
+                            }
+                        }
+                    }
+                    win.toggleFullScreen(nil)
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                log("TIMEOUT"); NSApp.terminate(nil)
+            }
+        }
 
         // Debug: simulate the REAL flow — app already running as accessory, then open
         // Settings (as if the gear was clicked) and report activation/key/responder state.
