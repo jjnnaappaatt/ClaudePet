@@ -35,9 +35,19 @@ struct DashboardView: View {
     static let minWidth: CGFloat = 900
     static let minHeight: CGFloat = 800
 
-    /// Vertical space the layout occupies at scale 1.0, measured. The divisor below carries ~5%
-    /// headroom over it.
-    private static let layoutHeight: CGFloat = 760
+    /// Reference size the layout occupies at scale 1.0. These set the type size: everything scales off
+    /// `min(width/refWidth, height/refHeight)`, so the ONLY way to enlarge the text is to make the
+    /// layout need less room — hence the mascot being much smaller here than in the widget.
+    ///
+    /// `refHeight` must be **≥ the height the layout actually needs at scale 1**, and getting this
+    /// wrong doesn't degrade, it breaks: when height is the binding axis, scale is `height/refHeight`,
+    /// so required height is `need × height/refHeight` — which exceeds the window at *every* height if
+    /// `refHeight < need`. Set to 640 it clipped the footer at 1470×923 no matter how the window was
+    /// sized. Measured: 660 puts the last footer line flush against the edge, so 680 is the value with
+    /// a margin. In practice height binds at every realistic window size, which is why lowering
+    /// `refWidth` further buys nothing.
+    private static let refWidth: CGFloat = 860
+    private static let refHeight: CGFloat = 680
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -47,7 +57,7 @@ struct DashboardView: View {
     /// window clipped the billing footer despite having horizontal room to spare. That isn't an edge
     /// case: it is exactly the shape native full screen produces on a 16:10 display (1470×923 here).
     static func scale(for size: CGSize) -> CGFloat {
-        min(1.85, max(1.0, min(size.width / 1000, size.height / layoutHeight)))
+        min(2.4, max(1.0, min(size.width / refWidth, size.height / refHeight)))
     }
 
     var body: some View {
@@ -91,10 +101,15 @@ struct DashboardView: View {
 
     // MARK: - Panels
 
-    /// A big mascot with sky overhead — the widget's pet at 2.5× — beside today's headline figures.
+    /// The mascot with sky overhead, beside today's headline figures.
+    ///
+    /// Deliberately not as large as the space would allow. The sky block is the single biggest fixed
+    /// height in the layout, and since nothing scrolls, every point of it is a point the type can't
+    /// have — dropping it from 172 to 122 is most of what took the text up ~12%. The pet is
+    /// decoration; the numbers are the product.
     private func petPanel(scale: CGFloat) -> some View {
-        let pet = 132 * scale
-        let sky = 172 * scale          // taller than the pet → open sky above it, as in the widget
+        let pet = 100 * scale
+        let sky = 122 * scale          // taller than the pet → open sky above it, as in the widget
         return HStack(alignment: .top, spacing: 16 * scale) {
             ZStack(alignment: .bottom) {
                 if metrics.weatherEffectsEnabled {

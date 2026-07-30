@@ -3,6 +3,22 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.6.1] — 2026-07-30
+
+### Changed
+- **True black theme.** The cards were a mid-grey gradient, which on a large dark display washed
+  everything out — grey on grey, with the coral fighting both. Canvas is now pure black and the cards
+  near-black, so the coral and the white figures carry the contrast instead of the background. Card
+  borders and secondary text were lifted to stay legible against it. Applies to the widget too.
+- **Larger text in the dashboard, ~12%.** Nothing scrolls, so type size is capped by what has to fit
+  vertically — and the biggest single consumer was the decorative mascot. Shrinking it is what paid
+  for the text. The scale ceiling also rose, so very large displays get proportionally bigger type.
+
+### Fixed
+- The billing footer no longer clips at full screen on a 16:10 display. The reference height the type
+  scale divides by was below what the layout actually needs, which clips at *every* window height
+  rather than just small ones.
+
 ## [0.6.0] — 2026-07-30
 
 ### Added

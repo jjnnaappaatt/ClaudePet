@@ -295,6 +295,14 @@ window need *more* height — and full screen on a 16:10 display is wide and **s
 so it clipped the billing footer while having horizontal room to spare. Check any layout change at
 that ratio, not just at the minimum size.
 
+`refHeight` must be **≥ the height the layout needs at scale 1**, and getting it wrong doesn't degrade
+gracefully — it breaks at every size. When height binds, scale is `height/refHeight`, so required
+height is `need × height/refHeight`, which exceeds the window at *any* height once `refHeight < need`.
+Since height binds at every realistic window size, `refHeight` is also the **type-size dial**: text
+can only grow if the layout needs less room. That's the whole reason the dashboard's mascot is 122pt
+of sky rather than the widget's proportions — and if the text still needs to be bigger, the next
+lever is `ProjectBreakdownView.maxRows`, not the scale clamp.
+
 Exactly one row stretches — the cycle chart, whose bars fill the height they're given. The others stay
 snug around their content. Stretching every row instead just moved the slack inside the cards (~180pt
 of dead air beside the mascot), which reads as unfinished; growing the one panel worth looking at
