@@ -72,32 +72,54 @@ struct CycleCalendarView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
                 .frame(minHeight: 46 * scale)
+                legend(maxV: maxV)
             }
         }
         .help(help)
     }
 
+    /// Headline-sized, like the Today figures — this card owns the whole left column, so a caption-sized
+    /// title read as a footnote on it.
     private var header: some View {
-        HStack(spacing: 6 * scale) {
-            Text("This billing cycle").scaledFont(11, weight: .semibold)
-                .foregroundStyle(Theme.textSecondary)
+        HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
+            Text("This billing cycle").scaledFont(15, weight: .semibold)
+                .foregroundStyle(Theme.textPrimary)
             if let start = metrics.cycleStart, let end = metrics.cycleReset {
                 Text(start.formatted(.dateTime.month(.abbreviated).day())
                      + " – " + end.formatted(.dateTime.month(.abbreviated).day()))
                     .scaledFont(9).foregroundStyle(Theme.textSecondary.opacity(0.6))
+                    .lineLimit(1)
             }
-            Spacer()
+            Spacer(minLength: 4 * scale)
             // The cycle TOTAL, so it names the basis rather than sitting beside a "/day" caption —
             // "90.3M work/day" would read as a rate.
             Text(amount(metrics.budgetUnit == .usd
                         ? metrics.cycle.costUSD
                         : Double(metrics.totalsTokens(metrics.cycle))))
-                .scaledFont(11, weight: .semibold, design: .rounded)
+                .scaledFont(19, weight: .bold, design: .rounded)
                 .foregroundStyle(Theme.textPrimary)
             if metrics.budgetUnit == .tokens {
                 Text(metrics.tokenBasisLabel)
                     .scaledFont(9).foregroundStyle(Theme.textSecondary.opacity(0.6))
             }
+        }
+    }
+
+    /// What the shading means. A density grid is unreadable without it — every other panel here states
+    /// its own units, and this one was asking the reader to infer them.
+    private func legend(maxV: Double) -> some View {
+        HStack(spacing: 5 * scale) {
+            Text("less").scaledFont(8).foregroundStyle(Theme.textSecondary.opacity(0.55))
+            ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { step in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Theme.claudeCoral.opacity(step == 0 ? 0.06 : 0.16 + 0.74 * step))
+                    .frame(width: 9 * scale, height: 9 * scale)
+            }
+            Text("more").scaledFont(8).foregroundStyle(Theme.textSecondary.opacity(0.55))
+            Spacer()
+            Text("up to \(amount(maxV))/day")
+                .scaledFont(8).foregroundStyle(Theme.textSecondary.opacity(0.55))
+                .lineLimit(1)
         }
     }
 

@@ -3,6 +3,16 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.9.1] — 2026-07-30
+
+### Changed
+- **Dollar figures keep their digits below $10,000.** `$1,001` was printing as "$1k", so the headline
+  cost read the same for days while the real number climbed past $1,900. Abbreviation now starts at
+  $10k, where it stops hiding anything that matters. Applies to the widget too.
+- **A legend under the calendar** says what the shading means, and names the heaviest day's figure — a
+  density grid can't be read without one, and every other panel already states its units.
+- **"This billing cycle" is a headline**, sized with its total to match the card it now heads.
+
 ## [0.9.0] — 2026-07-30
 
 ### Added

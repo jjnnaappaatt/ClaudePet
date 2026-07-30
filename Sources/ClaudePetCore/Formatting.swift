@@ -13,11 +13,28 @@ public enum Format {
         }
     }
 
-    /// $0.06, $4.21, $402, $1.2k
+    /// $0.06, $4.21, $402, $1,001, $12.5k
+    ///
+    /// Abbreviation starts at $10k, not $1k. At the old threshold `$1,001` printed as "$1k" — three
+    /// digits discarded from a number that fits perfectly well in full, and the headline sat unchanged
+    /// at "$1k" for days while the real figure climbed. Above $10k the abbreviation earns its keep.
     public static func currency(_ usd: Double) -> String {
-        if usd >= 1000 { return "$" + trim(usd / 1000) + "k" }
+        if usd >= 10_000 { return "$" + trim(usd / 1000) + "k" }
+        if usd >= 1000 { return "$" + grouped(usd) }
         if usd >= 100 { return "$" + String(format: "%.0f", usd) }
         return "$" + String(format: "%.2f", usd)
+    }
+
+    /// 1001 -> "1,001", using the user's own grouping separator.
+    private static let grouping: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = 0
+        return f
+    }()
+
+    private static func grouped(_ v: Double) -> String {
+        grouping.string(from: NSNumber(value: v.rounded())) ?? String(format: "%.0f", v)
     }
 
     /// 0 -> "0m", 6720 -> "1h 52m"
