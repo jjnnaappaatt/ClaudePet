@@ -3,6 +3,33 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.10.1] — 2026-07-31
+
+### Changed
+- **The gauge bars now use the terminal statusline's colours.** Same six stops — pale yellow, gold,
+  Claude clay, orange-red, official red — so the two readouts of the same limits speak the same
+  language. The track keeps the statusline's shape (the fill's own shadow) but its floor is re-solved:
+  the terminal's is tuned to Ghostty's `rgb(40,44,52)` and this card is `rgb(14,14,16)`, so copying it
+  verbatim made the track compete with the fill. Verified from rendered pixels against the
+  statusline's own invariants — track 1.6–2.1:1 against the card, fill ≥1.55:1 above the track.
+- **The billing-cycle calendar is tight, with square cells.** Its column is now sized from the row
+  height rather than being a fixed share of the window, because with square cells its width *is* a
+  function of its height — the fraction that fitted at the minimum window size stranded 91px a side at
+  full screen. The width it gives up goes to This week and Today by hour. Its header stacks onto two
+  lines, which is what let the card get narrow at all.
+- **Card headers read as headings**, not captions — larger and full-contrast.
+- **The pet is bigger** in the full-screen layout, grown into height the Today header already forced
+  open, so it costs no type size elsewhere.
+- **The top-left card is wider and the top-right narrower**, faded in with window width so the model
+  grid doesn't truncate at the minimum size.
+- **The widget's text is larger throughout.** It ran with no floor on its type ramp, leaving its
+  7–9.5pt captions the smallest type in the product on the surface furthest from the eye.
+
+### Removed
+- **Duplicated figures in the two chart cards.** This week's total is already printed twice elsewhere
+  on the same screen, and Today by hour's is the Today gauge's own number. The hour chart now shows
+  its peak hour in that slot instead — the one thing it knows that nothing else does.
+
 ## [0.10.0] — 2026-07-31
 
 ### Added

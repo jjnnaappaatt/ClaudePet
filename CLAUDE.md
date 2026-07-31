@@ -321,92 +321,14 @@ Two traps in the shared UI layer, both measured, both easy to reintroduce:
   sites had drifted this way, five of them to 2.3:1. Use `textPrimary` / `textSecondary` /
   `textTertiary` / `textFaint`, which carry their measured ratios in comments. Check contrast by
   sampling the **rendered pixels** — source review is what let this through in the first place.
-- **A calendar can't fill an arbitrary rectangle.** Square cells take the *scarcer* axis, so a grid in
-  a wide, short card sizes off height and strands a third of the card empty; sized off width alone in
-  a short row it degenerates into 4pt stripes. `CycleCalendarView` takes width from the card, height
-  from the row, and caps the ratio.
-
-`DashboardView`'s per-card scale boosts buy **height** and are paid for in **width**. Each one is
-tuned at 1470×923 and then faded in with the window's width surplus (`boost(_:for:)`), because at the
-900pt minimum the same numbers overflow the row. And whichever card is *taller* sets its row's height,
-so a boost is free on one side and lands straight on `refHeight` on the other — moving a panel between
-cards flips which is which.
-
-`DashboardWindowController` hosts `DashboardView` in a second, real window. Facts verified by spike,
-each of which fails *silently* if undone:
-
-- Flipping `.accessory` → `.regular` **does** give the app a main menu, but SwiftUI's **View menu is
-  completely empty** (it only populates one for a scene it owns, and this app's only scene is
-  `Settings`). So the green button works while ⌃⌘F is dead — which traps the user once the title bar
-  is hidden. `AppPolicy.installFullScreenMenuItem` adds the item; `target` stays nil so it routes
-  through the responder chain like AppKit's own.
-- `.resizable` in the style mask is what creates the green button at all; `toggleFullScreen` is a
-  no-op without it. `.fullScreenPrimary` gets the separate Space.
-- Use `contentView` + a style mask set **at init**, not `NSWindow(contentViewController:)`. Also set
-  the minimum in **SwiftUI** (`.frame(minWidth:minHeight:)`), not only `contentMinSize`: `NSHostingView`
-  drives the window's limits from its root view, and `DashboardView`'s root is a `GeometryReader` with
-  no intrinsic size, so a window-level `contentMinSize` alone read back as **0×0** and the window
-  could be dragged smaller than the layout fits at.
-- Both real windows revert the policy through `AppPolicy.revertToAccessory(unless:)`. Reverting
-  unconditionally meant closing one window yanked the Dock icon and menu bar from the other.
-- The dashboard owns its **own** `PanelVisibility` (the mascot's animation gate is optional in the
-  environment). Sharing the widget's would freeze the dashboard's pet whenever the widget got covered.
-- It must **not** drain `metrics.pendingWeatherEvents` — `ContentView` is the single drain point, and a
-  second consumer would swallow celebrations meant for the other window. The ambient sky still works;
-  `WeatherView` reads `weatherCondition` directly.
-- No `Form`/`.formStyle(.grouped)` and no `ScrollView` in the dashboard: `Form` is why
-  `CLAUDEPET_SETTINGS` renders blank through `ImageRenderer`, and the dashboard has to stay
-  snapshot-verifiable. That's why its minimum size is measured rather than papered over by scrolling.
-
-`DashboardView.scale(for:)` takes the **min of both axes**, never width alone. Every fixed height in
-the layout (the mascot's sky, bar heights) multiplies by scale, so a width-only scale made a wider
-window need *more* height — and full screen on a 16:10 display is wide and **short** (1470×923 here),
-so it clipped the billing footer while having horizontal room to spare. Check any layout change at
-that ratio, not just at the minimum size.
-
-**`ScrollView` renders blank through `ImageRenderer`, exactly like `Form`** — verified with a control
-(the same rows in a plain clipped `VStack` drew 982 sampled bright pixels; inside a `ScrollView`, 0). So
-the dashboard cannot scroll and stay snapshot-verifiable, and the no-scroll constraint below is real
-rather than assumed. Don't re-litigate it without re-running that control.
-
-`\.minScaledFont` (in `WidgetScale.swift`) floors font sizes **before** the scale multiply, compressing
-the bottom of the type ramp. The ramp was drawn for a 300–520pt widget card, so blown up on the
-dashboard the 7–9.5pt grey labels read far too small — and raising the global scale can't fix that,
-because it lifts the headlines by the same factor. The dashboard sets 12; the widget leaves it at 0.
-When you change it, compute the *effective* points either side (`max(base, floor) × scale`): a floor that
-looks generous can still shrink a 10.5pt caption if `refHeight` moved at the same time.
-
-Each card runs at its **own** scale — `usageBoost` (left: mascot, Today, gauges), `totalsBoost` (right:
-`/stats` totals, model grid, billing), `headerBoost` (the Today figures alone) and `lowerBoost` (the four
-lower cards). Whichever card is *taller* sets its row's height, so the same number is free on one side
-and lands straight on `refHeight` on the other — and moving a panel between cards **flips which is
-which**. That already happened once: before the top panels swapped sides the costly one was on the
-right at 1.2, and it is now `usageBoost` on the left. `totalsBoost` = 1.50 is a measured boundary (at
-1.55 the right card becomes the taller one and the row grows 482 → 498px at 1470×923). When
-re-measuring, don't use "are the two cards the same height?" as the guard — they share a row and stretch
-together, so it reads equal either way. Compare against the unboosted baseline.
-
-Boosts buy **height** and are paid for in **width**. `DashboardView.boost(_:for:)` fades every one of
-them in with the window's width surplus over `minWidth`, reaching full strength at 1.5× it: all four
-were measured at 1470×923, and applied at the 900pt minimum they overflowed the top row — the gap
-between its two cards collapsed to nothing and the model grid truncated to "In 22…".
-
-**A calendar can't fill an arbitrary rectangle.** Its aspect ratio is fixed by its shape, so *square*
-cells are capped by whichever axis is scarcer — which at 1470×923 left 84px dead on each side, a third
-of the card. `CycleCalendarView` now takes width from the card and height from the row, capping the
-ratio at 2.6:1; that brings the dead space to single digits everywhere except a wide-but-short window,
-where six rows genuinely cannot fill a wide card without becoming stripes. The lower half is **three**
-columns (charts stacked in a narrow one, then the calendar with width priority, then By project) —
-which is also cheaper than the two-row version it replaced, because independent columns take the
-tallest single height rather than a sum.
-
-**`refHeight` can never give the layout bottom margin.** It scales with the window: when height binds,
-`required = need × h/refHeight`, so tuning it to "just fits" sets `need ≈ refHeight` and the margin is
-~zero at *every* height-bound size. That shipped in 0.8.3 — the bottom card sat exactly on the window
-edge at 1470×923. Absolute margin comes only from the **unscaled** parts: the cards' `.padding(8)`
-returns the same pixels at any scale, which is why trimming it 11 → 8 bought 18px for free while a
-`refHeight` bump costs type size. Reach for the unscaled lever first, and measure the bottom-most *card*
-pixel against the window edge rather than trusting that text is visible.
+- **A calendar can't fill an arbitrary rectangle.** Its aspect ratio is fixed by its shape, so square
+cells are capped by whichever axis is scarcer — always height here. Two attempts failed before the
+right one: square cells in a fixed-fraction column left 84px dead a side, and letting cells go wide
+(a 2.6:1 cap) filled the card but stopped reading as a calendar. The cells are square and the **column
+is sized from the row height** instead (see `CycleCalendarView.naturalWidth`), which is also why the
+lower row is wrapped in its own `GeometryReader` — the column split can't be computed until that row's
+height is known. Its header stacks onto two lines for the same reason: on one line it needed ~420pt and
+*it*, not the grid, set the card's minimum width.
 
 `refHeight` must be **≥ the height the layout needs at scale 1**, and getting it wrong doesn't degrade
 gracefully — it breaks at every size. When height binds, scale is `height/refHeight`, so required

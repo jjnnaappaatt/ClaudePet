@@ -58,10 +58,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 + "asOf=\(metrics.statsAsOfDescription ?? "nil") todayWork=\(metrics.today.workTokens)\n"
             FileHandle.standardError.write(Data(statsLine.utf8))
 
+            // Scale 1 by default so the PNG's pixels map 1:1 to the layout's points — every
+            // measurement script here reads coordinates straight off the render, and a 2x image would
+            // silently double every figure they report. `CLAUDEPET_DASHSCALE=2` opts into a retina
+            // capture for documentation, where crispness matters and nothing is being measured.
+            let dashScale: CGFloat = ProcessInfo.processInfo.environment["CLAUDEPET_DASHSCALE"]
+                .flatMap { Double($0) }.map { CGFloat($0) } ?? 1
             Snapshot.render(DashboardView()
                                 .environment(metrics)
                                 .frame(width: size.width, height: size.height),
-                            to: dashPath, scale: 1)
+                            to: dashPath, scale: dashScale)
             NSApp.terminate(nil)
             return
         }

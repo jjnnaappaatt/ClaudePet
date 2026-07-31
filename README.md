@@ -8,21 +8,39 @@ The pet's design is an original code-drawn homage to **Clawd**, the Claude Code 
 (Anthropic) — no artwork assets are copied or bundled.
 
 <p align="center">
-  <img src="docs/widget-compact.png" width="250" alt="Tall single-column widget">
+  <img src="docs/dashboard.png" width="820" alt="ClaudePet dashboard — limits, models, billing cycle calendar and per-project usage">
+</p>
+
+<p align="center">
+  <img src="docs/widget-compact.png" width="230" alt="Tall single-column widget">
   &nbsp;&nbsp;
-  <img src="docs/widget-large.png" width="440" alt="Wide two-column widget">
+  <img src="docs/widget-large.png" width="430" alt="Wide two-column widget">
 </p>
 
 ## What it shows
+
+**On the desktop widget**
 
 - **Today** — work tokens (input + output), total billable tokens (incl. cache), and notional cost.
 - **5-hour session** — a gauge toward your limit (live from Claude's real numbers when available),
   burn rate, and a reset countdown.
 - **Weekly (all models)** — your 7-day usage with its own reset countdown.
-- **By model** — Opus / Sonnet / Haiku split with tokens + cost (unpriced models flagged).
-- **This week** — a per-day bar chart, plus Week & cycle totals and a billing line.
-- An **ambient pixel mascot** whose mood tracks how close you are to a limit — happy with
-  headroom, worried near a cap, asleep when you're away.
+- **Today's pace** against your usual day, **by model**, **this week** per day, and **today by hour**.
+- Week & cycle totals with a billing line.
+
+**In the dashboard** (the ⤢ button, or a real full-screen window)
+
+- Claude Code's own lifetime **`/stats` total**, with each model's share and in/out split.
+- **This billing cycle as a calendar** — one shaded cell per day, denser where you worked harder.
+- **By project** — which projects burned the cycle's tokens, resolved from each turn's own working
+  directory rather than guessed from folder names.
+
+**The pet reads two numbers at once**
+
+Its **face and sky follow your 5-hour session**; the **ground it stands on follows your week**. So a
+calm pet on cracked earth means *plenty of session left, almost no week* — and a storm over lush
+grass means the opposite. Nine moods, eight skies and five states of ground; it sleeps when you're
+away. Hover it and it says exactly what it's showing.
 
 ## Install (macOS 14+)
 
@@ -43,6 +61,7 @@ its position. Enable **Launch at login** in Settings to keep it around.
 - **Drag** the pet to reposition. Hover to reveal resize handles.
 - Click the **⚙ gear** for Settings.
 - Two layouts (Settings → Appearance): **tall** single-column and **wide** two-column.
+- Click **⤢** to open the **dashboard** — a real resizable window that goes full screen (⌃⌘F).
 - Hover the gauges/numbers for tooltips explaining each value.
 
 ## Live data — link to your Claude account
@@ -91,10 +110,14 @@ Trash. Preferences live in `~/Library/Preferences/com.napat.ClaudePet.plist`.
 ## Design system
 
 The widget's look is mirrored as a small, self-contained HTML component library in
-[`frontend/`](frontend/) — colours, typography, the mascot's six moods, the gauges, and both
-widget layouts. Open any file in a browser to preview it, or import the whole set into
+[`frontend/`](frontend/) — colours, typography, the mascot, the gauges, and both widget layouts.
+Open any file in a browser to preview it, or import the whole set into
 [claude.ai/design](https://claude.ai/design) with the `/design-sync` skill. Details in
 [`frontend/README.md`](frontend/README.md).
+
+> **Note:** the mirror is generated, and currently lags the app — it predates the dashboard, the
+> ground layer, the three newest moods and the current gauge palette. Treat the app as the source of
+> truth until it's regenerated.
 
 <p align="center">
   <img src="docs/frontend-preview.png" width="520" alt="ClaudePet design system — mascot moods">

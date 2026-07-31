@@ -61,6 +61,11 @@ struct ContentView: View {
         .frame(width: (vertical ? Self.verticalWidth : Self.baseWidth) * scale, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
         .environment(\.widgetScale, scale)
+        // The widget used to run with no floor at all, which left its 7-9.5pt captions — the hour
+        // axis, "work/day", the weekday letters — as the smallest type anywhere in the product, on
+        // the surface that sits furthest from the eye. 10.5 lifts only the bottom of the ramp: every
+        // headline is already above it, so nothing reflows and the panel keeps its width.
+        .environment(\.minScaledFont, 10.5)
     }
 
     /// Wide two-column card: mascot/today + models + chart on the left, gauges + totals right.

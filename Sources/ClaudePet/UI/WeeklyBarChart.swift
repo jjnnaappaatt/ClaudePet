@@ -28,13 +28,6 @@ struct WeeklyBarChart: View {
         return metrics.tokenBasis == .total ? "total/day" : "work/day"
     }
 
-    /// The weekly-window total the bars sum to — the same figure the weekly gauge is a fraction of.
-    private var total: String {
-        metrics.budgetUnit == .usd
-            ? Format.currency(metrics.week.costUSD)
-            : Format.tokens(metrics.totalsTokens(metrics.week))
-    }
-
     private var chartHelp: String {
         let basis = metrics.budgetUnit == .usd ? "Cost" : "\(metrics.tokenBasisLabel.capitalized) tokens"
         return """
@@ -49,16 +42,13 @@ struct WeeklyBarChart: View {
         let days = metrics.weekDaily
         let now = Date()
         let maxV = max(days.map(value).max() ?? 1, 1)
-        let barMax = 30 * scale
+        let barMax = (fillsHeight ? 30 : 40) * scale
 
         VStack(alignment: .leading, spacing: 4 * scale) {
             // Same header shape as `TodayHourlyChart` in the dashboard: title, unit caption, then the
             // window's own total as a hero figure. Two chart cards sitting in one column looked
             // unbalanced when only one of them carried a number.
-            ViewThatFits(in: .horizontal) {
-                header(withCaption: true)
-                header(withCaption: false)
-            }
+            header()
             if fillsHeight {
                 GeometryReader { g in
                     bars(days, maxV: maxV, now: now,
@@ -72,25 +62,19 @@ struct WeeklyBarChart: View {
         .help(chartHelp)
     }
 
-    /// Drops the unit caption rather than truncating it when the column is narrow — see
-    /// `TodayHourlyChart`, which does the same and for the same reason.
-    private func header(withCaption: Bool) -> some View {
+    /// No total on the right. It used to carry the window's own figure, but that is the same number
+    /// the weekly gauge prints as "13.6M work used this week" and the footer prints as "Week 13.6M" —
+    /// three copies of one value on one screen. The unit caption stays, because the bars are unreadable
+    /// without knowing whether they are dollars or tokens.
+    private func header() -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
-            Text("This week").scaledFont(fillsHeight ? 11 : 10, weight: .semibold)
-                .foregroundStyle(Theme.textSecondary)
+            Text("This week").scaledFont(fillsHeight ? 13.5 : 12, weight: .semibold)
+                .foregroundStyle(fillsHeight ? Theme.textPrimary : Theme.textSecondary)
                 .fixedSize()
-            if withCaption {
-                Text(caption)
-                    .scaledFont(fillsHeight ? 9 : 8.5).foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1).fixedSize()
-            }
-            Spacer(minLength: 4 * scale)
-            if fillsHeight {
-                Text(total)
-                    .scaledFont(21, weight: .bold, design: .rounded)
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize()
-            }
+            Text(caption)
+                .scaledFont(fillsHeight ? 10 : 10.5).foregroundStyle(Theme.textTertiary)
+                .lineLimit(1).fixedSize()
+            Spacer(minLength: 0)
         }
     }
 

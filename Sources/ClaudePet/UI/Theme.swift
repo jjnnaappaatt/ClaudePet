@@ -34,36 +34,34 @@ enum Theme {
     /// The floor. Nothing readable may go below this; it is for separators and de-emphasised marks.
     static let textFaint      = Color.white.opacity(0.45)    // 4.5:1 — exactly the AA floor
 
-    /// The gauge ramp: the app's own coral family, pale peach with headroom deepening to ember at the
-    /// limit — **not** a traffic light, and deliberately not Claude's colours either.
+    /// The gauge ramp, **ported from the terminal statusline** (`~/.claude/statusline.sh`) so the two
+    /// readouts of the same limits say the same thing in the same colours.
     ///
-    /// Claude's own Usage panel was measured pixel by pixel before this was written: `#4177D0` on a
-    /// bar reading 8%, `#F0B544` on one reading 80%, each **flat** across the whole fill (zero
-    /// variation over 780px) and switched at a threshold. Adopting it was tried and rejected — blue
-    /// and amber are near complementary, so a continuous ramp between them passes through
-    /// `rgb(152,150,138)`, a dead grey, and needs light bridge stops to avoid mud. Staying in one hue
-    /// family has no such problem. Recorded here so the experiment isn't repeated from scratch.
+    /// These six stops are a **contract**, not a starting point — they were tuned over many rounds
+    /// against real usage, and the `statusline` skill records the reasoning. Don't nudge one to fix a
+    /// local complaint; the invariants below are what they buy, and the app has no better claim on the
+    /// palette than the statusline does. Gold `rgb(240,181,68)`, clay `rgb(204,124,94)` and red
+    /// `rgb(192,71,66)` are sampled from Claude Code's own Usage panel; clay is the logo colour.
     ///
-    /// **The nine stops are the point, not padding.** Three stops interpolated in RGB is continuous in
-    /// value but not in *rate*: measured in OKLab, its lightness moved 1.51× faster in some parts of
-    /// the bar than others, with a visible kink where `claudeCoral` sat. These nine are sampled at
-    /// equal **perceptual** arc length along the coral path, which brings that to 1.12× — near
-    /// uniform. The ends are also pushed out to `#F8D3C0` and `#9E2A1F`, giving **75%** more
-    /// perceptual travel (OKLab L 0.893 → 0.467, against the old 0.788 → 0.543), because the old ramp
-    /// was nearly monochrome and the gradient could barely be seen at all.
+    /// Four properties hold across 0…100 (re-check them if a stop ever moves):
+    /// - **Brightness falls monotonically.** A ramp that peaks mid-range makes low and mid usage render
+    ///   nearly the same colour — 16% and 50% once differed by `(4, −12, −6)` and were indistinguishable.
+    /// - **Redness (R−G) rises**, 35 → 121.
+    /// - **No adjacent-percentage jump above 6 units** — measured max 2.85.
+    /// - **Every stop is a warm hue**, so interpolation never passes through a desaturated grey. Blue
+    ///   was in this ramp once and was removed for exactly that: blue and gold are near complementary
+    ///   and blend through `rgb(152,150,138)`, dead grey. A coral-only ramp shipped here this morning
+    ///   for the same reason; this one keeps the hue travel *and* avoids the mud.
     ///
-    /// Re-derive rather than hand-edit: nudging one stop re-introduces exactly the uneven rate this
-    /// exists to remove.
+    /// The 90 and 100 stops are the same colour deliberately: the ramp finishes at official red at 90
+    /// and holds, which is also where the statusline's critical threshold fires.
     private static let rampStops: [(p: Double, r: Double, g: Double, b: Double)] = [
-        (0.000, 0.973, 0.827, 0.753),   // #F8D3C0
-        (0.125, 0.964, 0.739, 0.642),   // #F6BDA4
-        (0.250, 0.950, 0.650, 0.531),   // #F2A687  ≈ highlight
-        (0.375, 0.907, 0.566, 0.442),   // #E79071
-        (0.500, 0.859, 0.481, 0.356),   // #DB7B5B  ≈ claudeCoral
-        (0.625, 0.820, 0.390, 0.283),   // #D16348
-        (0.750, 0.779, 0.290, 0.212),   // #C74A36
-        (0.875, 0.715, 0.207, 0.155),   // #B63528  ≈ ember
-        (1.000, 0.620, 0.165, 0.122),   // #9E2A1F
+        (0.00, 250.0 / 255, 215.0 / 255, 130.0 / 255),   // pale yellow
+        (0.30, 240.0 / 255, 181.0 / 255,  68.0 / 255),   // official gold
+        (0.50, 204.0 / 255, 124.0 / 255,  94.0 / 255),   // Claude clay (the logo)
+        (0.80, 214.0 / 255,  96.0 / 255,  72.0 / 255),   // orange-red
+        (0.90, 192.0 / 255,  71.0 / 255,  66.0 / 255),   // official red
+        (1.00, 192.0 / 255,  71.0 / 255,  66.0 / 255),   // held — see above
     ]
 
     /// The ramp sampled at one point, as raw components. Single source of the interpolation — both
@@ -101,69 +99,37 @@ enum Theme {
         return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
     }
 
-    /// The unfilled remainder of a gauge, as a dark tint of **the fill's own hue** — a deep coral
-    /// under a coral bar, darkening with it.
+    /// The unfilled remainder of a gauge: **the fill's own shadow**, so the bar reads as one object
+    /// rather than a bright thing sitting on an unrelated brown.
     ///
-    /// The idea is borrowed from Claude's Usage panel — the colours are not. Measured there, the
-    /// track is always a dark step of the fill's own hue (blue fill on `#0B1F40`, amber on `#2E1B04`)
-    /// and that is what makes "how full" legible at a glance: their amber-on-brown is 8.9:1
-    /// fill-vs-track, where our old flat white-12% track managed 4.5:1. Their two tracks sit at HSL
-    /// lightness 0.147 and 0.098, so a single 0.12 stands in for both — applied here to *our* coral
-    /// ramp, which gives a dark coral under a coral bar.
+    /// Same shape as the statusline's — `fill × 12% + floor` — but the floor is re-solved, because
+    /// theirs is tuned to **Ghostty's `rgb(40,44,52)`** and our card is `rgb(14,14,16)`. Copying
+    /// `(76,62,56)` verbatim onto a background that much darker pushes the track to 2.3–2.8:1, where it
+    /// stops reading as an empty track and starts competing with the fill. `(49,40,36)` is what puts
+    /// the same *relationships* back on our background:
     ///
-    /// Tinted at **every** value including zero. Falling back to a neutral grey below ~0 looked
+    /// |                     | statusline, on Ghostty | here, on our card |
+    /// |---------------------|------------------------|-------------------|
+    /// | track vs background | 1.66–2.06:1            | 1.60–2.09:1       |
+    /// | fill vs track       | ≥ 1.69:1               | ≥ 2.42:1          |
+    ///
+    /// Both sit inside the statusline's own invariants (track 1.6–2.1:1, fill ≥1.55:1 above it). The
+    /// fill/track margin comes out better than the terminal's simply because a darker background leaves
+    /// more room at the red end, where `rgb(192,71,66)` is itself only 2.81:1 above Ghostty's grey.
+    ///
+    /// Tinted at **every** value including zero. Falling back to a neutral grey near zero looked
     /// principled in isolation, but the three gauges are stacked in one column: an idle 0% session
-    /// above a 40% weekly meant two tracks disagreeing about what an empty bar looks like, which
-    /// reads as a rendering bug rather than as a distinction. `.nan` still lands on grey, via
-    /// `rampComponents`.
+    /// above a 40% weekly meant two tracks disagreeing about what an empty bar looks like, which reads
+    /// as a rendering bug rather than as a distinction.
     static func gaugeTrack(_ fraction: Double) -> Color {
-        let c = rampComponents(min(1, max(0, fraction)))
-        return Color(hslHue: c.h, saturation: c.s, lightness: 0.12)
-    }
-
-    /// The fill colour's HSL hue and saturation, which is all the track needs — it supplies its own
-    /// lightness. `Double.nan` in gives a grey track rather than a crash, which is the right failure
-    /// for a decorative capsule.
-    private static func rampComponents(_ f: Double) -> (h: Double, s: Double) {
-        let rgb = rampRGB(f)
-        let mx = max(rgb.r, rgb.g, rgb.b), mn = min(rgb.r, rgb.g, rgb.b)
-        let d = mx - mn
-        let l = (mx + mn) / 2
-        guard d > 0.0001 else { return (0, 0) }
-        let s = d / (1 - abs(2 * l - 1))
-        let h: Double
-        switch mx {
-        case rgb.r: h = ((rgb.g - rgb.b) / d).truncatingRemainder(dividingBy: 6)
-        case rgb.g: h = (rgb.b - rgb.r) / d + 2
-        default:    h = (rgb.r - rgb.g) / d + 4
-        }
-        return (h * 60 < 0 ? h * 60 + 360 : h * 60, min(1, s))
+        let c = rampRGB(min(1, max(0, fraction)))
+        return Color(red:   c.r * 0.12 + 49.0 / 255,
+                     green: c.g * 0.12 + 40.0 / 255,
+                     blue:  c.b * 0.12 + 36.0 / 255)
     }
 
     static let corner: CGFloat = 18
     static let padding: CGFloat = 12
-}
-
-extension Color {
-    /// HSL, not HSB. SwiftUI ships `Color(hue:saturation:brightness:)`, and the two are not the same
-    /// thing — HSB's "brightness" of a saturated colour is 1.0, so it can't express "same hue, much
-    /// darker" without also draining the saturation. That is exactly what `Theme.gaugeTrack` needs.
-    init(hslHue h: Double, saturation s: Double, lightness l: Double) {
-        let c = (1 - abs(2 * l - 1)) * s
-        let hp = h / 60
-        let x = c * (1 - abs(hp.truncatingRemainder(dividingBy: 2) - 1))
-        let m = l - c / 2
-        let (r, g, b): (Double, Double, Double)
-        switch hp {
-        case ..<1:  (r, g, b) = (c, x, 0)
-        case ..<2:  (r, g, b) = (x, c, 0)
-        case ..<3:  (r, g, b) = (0, c, x)
-        case ..<4:  (r, g, b) = (0, x, c)
-        case ..<5:  (r, g, b) = (x, 0, c)
-        default:    (r, g, b) = (c, 0, x)
-        }
-        self.init(red: r + m, green: g + m, blue: b + m)
-    }
 }
 
 extension View {

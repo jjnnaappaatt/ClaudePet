@@ -59,7 +59,7 @@ struct DashboardView: View {
     /// three columns: 780 claimed the layout fits in 780pt, so a 900pt window scaled text up 15% and
     /// overflowed the row. Above ~1100pt height binds and `refWidth` stops mattering entirely.
     private static let refWidth: CGFloat = 900
-    private static let refHeight: CGFloat = 706
+    private static let refHeight: CGFloat = 722
 
     /// The boosts are named for **cards**, not for content: the two top panels have swapped sides
     /// once already, and whichever card is *taller* sets the row height — so a boost is free on one
@@ -146,7 +146,8 @@ struct DashboardView: View {
                     card { usagePanel(scale: usageScale,
                                       headerBoost: Self.boost(Self.headerBoost, for: geo.size)) }
                         .frame(width: Self.usageCardWidth(inner: geo.size.width - 24 * scale,
-                                                          gap: 10 * scale, scale: scale),
+                                                          gap: 10 * scale, scale: scale,
+                                                          size: geo.size),
                                height: nil)
                         .frame(maxHeight: .infinity)
                         .environment(\.widgetScale, usageScale)
@@ -167,30 +168,40 @@ struct DashboardView: View {
                 // This is also cheaper than the two-row arrangement it replaced. There, the project
                 // card's fixed rows sat *below* a chart row, so both heights added; here every column
                 // is independent and the row's minimum is the tallest single one, not a sum.
-                HStack(alignment: .top, spacing: 10 * scale) {
-                    let colW = geo.size.width - 24 * scale - 20 * scale
-                    VStack(spacing: 9 * scale) {
-                        card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
-                            .frame(maxHeight: .infinity)
-                        card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
-                            .frame(maxHeight: .infinity)
-                    }
-                    .frame(width: colW * 0.27)
+                // A GeometryReader, because the calendar's width depends on this row's HEIGHT: its
+                // cells are square, so seven columns of whatever height the row can spare is all the
+                // width it can use. Sized as a fixed fraction it stranded 91pt on each side at
+                // 1470×923 while fitting at 900×800 — the fraction that works at one size is wrong at
+                // the other. Whatever the calendar doesn't need goes to the charts.
+                GeometryReader { lower in
+                    let lowerScale = scale * Self.boost(Self.lowerBoost, for: geo.size)
+                    let weeks = CalendarGrid.weeks(metrics.cycleDaily).count
+                    let calW = CycleCalendarView.naturalWidth(cardHeight: lower.size.height,
+                                                             weeks: weeks, scale: lowerScale)
+                    let rest = max(0, lower.size.width - calW - 20 * scale)
+                    HStack(alignment: .top, spacing: 10 * scale) {
+                        VStack(spacing: 9 * scale) {
+                            card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
+                                .frame(maxHeight: .infinity)
+                            card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
+                                .frame(maxHeight: .infinity)
+                        }
+                        .frame(width: rest * 0.54)
 
-                    card { CycleCalendarView() }
-                        .frame(width: colW * 0.41)
-                        .frame(maxHeight: .infinity)
+                        card { CycleCalendarView() }
+                            .frame(width: calW)
+                            .frame(maxHeight: .infinity)
 
-                    // The fill frame goes INSIDE the card, not on it. `widgetCard()` draws its
-                    // background around whatever the content measures, so an outer `maxHeight` only
-                    // stretches the layout slot and leaves a short card floating in the middle of it —
-                    // which is exactly what a four-project cycle looked like. The other three cards
-                    // fill by accident of their content (a GeometryReader, a `chartPanel`); this is a
-                    // plain list of rows and has to say so.
-                    card {
-                        ProjectBreakdownView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        // The fill frame goes INSIDE the card, not on it. `widgetCard()` draws its
+                        // background around whatever the content measures, so an outer `maxHeight`
+                        // only stretches the layout slot and leaves a short card floating in the
+                        // middle of it — which is what a four-project cycle looked like.
+                        card {
+                            ProjectBreakdownView()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        }
                     }
+                    .frame(height: lower.size.height, alignment: .top)
                 }
                 .frame(maxHeight: .infinity)
                 .environment(\.widgetScale, scale * Self.boost(Self.lowerBoost, for: geo.size))
@@ -206,12 +217,19 @@ struct DashboardView: View {
         .background(Theme.windowBackground)
     }
 
-    /// 46% of the row — the smaller half, since the swap. It was 52% when this card held the model
-    /// grid; now the grid is on the right and *that* is the side needing width to keep two columns.
-    /// The floor keeps the Today header's two lines unwrapped beside the mascot at 900×800.
-    private static func usageCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat) -> CGFloat {
+    /// The left card takes 46% at the minimum window size and grows to 54% once there's width to
+    /// spare — the gauges are long bars that use length, while the model grid opposite has visible
+    /// slack at full screen.
+    ///
+    /// Faded in with `boost(_:for:)` rather than applied flat, and for the same reason that helper
+    /// exists: at 900pt the right card is already near its floor, and taking 8% off it there brings
+    /// back the "In 22…" truncation. The floor also keeps the Today header's two lines unwrapped
+    /// beside the mascot at the minimum size.
+    private static func usageCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat,
+                                       size: CGSize) -> CGFloat {
         let available = max(0, inner - gap)
-        return min(available * 0.56, max(available * 0.46, 360 * scale))
+        let share = 0.46 + (0.54 - 0.46) * (boost(2, for: size) - 1)   // 0.46 → 0.54 with width
+        return min(available * 0.60, max(available * share, 360 * scale))
     }
 
     // MARK: - Panels
@@ -223,8 +241,11 @@ struct DashboardView: View {
     /// biggest fixed height in the layout, and since nothing scrolls, every point of it is a point the
     /// type can't have. It went 172 → 122 → 100. The pet is decoration; the numbers are the product.
     private func usagePanel(scale: CGFloat, headerBoost: CGFloat) -> some View {
-        let pet = 66 * scale
-        let sky = 74 * scale          // taller than the pet → open sky above it, as in the widget
+        // The mascot row is as tall as `max(sky, the Today header column)`, and since `headerBoost`
+        // the header is the taller of the two — so growing the sky into it costs nothing. Past the
+        // header's height it starts setting the row, and lands on `refHeight`.
+        let pet = 76 * scale
+        let sky = 88 * scale          // taller than the pet → open sky above it, as in the widget
         return VStack(alignment: .leading, spacing: 8 * scale) {
             // Mascot and today's figures sit SIDE BY SIDE rather than stacked. Stacking read more
             // cleanly but made the card ~40pt taller at scale 1, and in this layout height is type
