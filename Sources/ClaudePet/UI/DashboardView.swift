@@ -43,53 +43,76 @@ struct DashboardView: View {
     /// so required height is `need × height/refHeight` — which exceeds the window at *every* height if
     /// `refHeight < need`, not just at small ones. That shipped once, in 0.6.0.
     ///
-    /// Measured at 1470×923 — full screen on a 16:10 display, where height binds hardest. Always test
-    /// with **both** datasets: real data shows one model row here while the sample shows four, and it's
-    /// the sample that makes the summary rail taller.
+    /// Measured across 900×800 / 1470×923 / **1990×760** / 1990×1256 / 2560×1440, with both datasets.
+    /// The wide-but-short case earns its place in that list: it is the only one where the boosts run at
+    /// full strength (they key off width) while height is tight, and it is 5px stricter than every
+    /// other size — 690 passed everywhere else and clipped there.
     ///
     /// Height binds at every realistic window size, so `refHeight` is effectively the type-size dial:
     /// the text only ever got bigger by making the layout need less room. What paid for it, in order of
-    /// size: dropping the full-width footer row (folded into the summary rail), giving Week and Hourly
-    /// their own columns instead of stacking them, shrinking the mascot 172 → 100, trimming the project
-    /// list 8 → 6 rows, compacting the Today header from three lines to two, and tightening every
-    /// padding and gap.
+    /// size: dropping the full-width footer row (folded into a card), splitting the lower half into
+    /// three independent columns so the project list's fixed rows stopped *adding* to a chart row's
+    /// height, shrinking the mascot 172 → 100, compacting the Today header from three lines to two, and
+    /// tightening every padding and gap.
     ///
-    /// The rail is the binding element in the top row and its stats column already exceeds the sky
-    /// block, so shrinking the mascot again buys nothing — the remaining levers are all content.
-    private static let refWidth: CGFloat = 780
-    private static let refHeight: CGFloat = 700
+    /// `refWidth` matters too, and only at narrow windows. It went 780 → 900 when the lower half became
+    /// three columns: 780 claimed the layout fits in 780pt, so a 900pt window scaled text up 15% and
+    /// overflowed the row. Above ~1100pt height binds and `refWidth` stops mattering entirely.
+    private static let refWidth: CGFloat = 900
+    private static let refHeight: CGFloat = 706
 
-    /// Extra scale for the summary rail only, filling the card the limits panel stretches it to.
-    ///
-    /// Measured: the rail's content reached only ~78% of the card at every window size (23% blank at
-    /// 900×800, 22% at 1470×923, 20% at 1990×1256), because the *right* card sets the row height. That
-    /// slack is free — growing into it costs no type size elsewhere and doesn't move `refHeight`.
-    ///
-    /// **1.18 is the boundary, not a preference.** Measured across 900×800 / 1470×923 / 1990×1256 with
-    /// real data (seven models — the tallest case): at 1.18 the card heights and the window's bottom
-    /// margin are identical to not boosting at all, and the blank drops to 6–10%. At 1.20 the rail
-    /// becomes the card that *sets* the row height, and the bottom margin at 1470×923 goes 3px → 0.
-    ///
-    /// Don't raise it without re-measuring, and don't trust "are the two cards equal?" as the guard —
-    /// they share a row and stretch together, so that reads equal either way. The signal is whether the
-    /// **card height changed from the unboosted baseline**.
-    private static let summaryBoost: CGFloat = 1.30
+    /// The boosts are named for **cards**, not for content: the two top panels have swapped sides
+    /// once already, and whichever card is *taller* sets the row height — so a boost is free on one
+    /// side and expensive on the other purely by position. Re-measure both after any swap.
 
-    /// Extra scale for the Today header alone, on top of the rail's. Its row is as tall as the mascot's
-    /// sky block, and two lines of text reached only about 60% of that, leaving the blank under
-    /// "3.6M work · 1B cache". Free for the same reason as `summaryBoost` — the mascot governs that
-    /// row's height. Bounded by **width**, not height: both lines have to stay on one line each in a
-    /// column ~200pt wide at 900×800. Measured at the minimum size before raising.
+    /// Extra scale for the left card (mascot, Today, the three gauges, subagents).
+    ///
+    /// **This is the costly one now.** After the swap the gauges are here and they set the row's
+    /// height, so every point of this boost is a point `refHeight` has to grow by — it came down 1.30
+    /// → 1.20 for exactly that reason, and the 41px it gave back went to the lower row, where the
+    /// calendar wanted it. The guard is **not** "are the two cards equal?" — they share a row and
+    /// stretch together, so that reads equal either way. The signal is whether the **card height
+    /// changed from the unboosted baseline**.
+    private static let usageBoost: CGFloat = 1.20
+
+    /// Extra scale for the Today header alone, on top of the left card's. Its row is as tall as the
+    /// mascot's sky block, and two lines of text reached only about 60% of that, leaving a blank under
+    /// "3.6M work · 1B cache". Bounded by **width**, not height: both lines have to stay unwrapped in a
+    /// narrow column — which is what `boost(_:for:)` below exists to guarantee at small windows.
     private static let headerBoost: CGFloat = 1.6
 
-    /// Extra scale for the limits card, and a fatter gauge bar to match.
+    /// Extra scale for the right card (Claude Code's lifetime totals, the model grid, week/cycle/
+    /// billing), and a fatter gauge bar to match on the left.
     ///
-    /// **Unlike every other boost here, this one is NOT free.** The limits card is the taller of the two
-    /// in the top row, so it *sets* that row's height — growing it grows the row, which grows the
-    /// layout's required height, which forces `refHeight` up and costs type size on every other panel.
-    /// Measure the whole page after changing it, not just this card.
-    private static let limitsBoost: CGFloat = 1.2
+    /// This is the side with the slack now, so it takes the large boost — before the swap it was 1.2
+    /// and the same 1.2 on this content left a 191px void between the model grid and the billing lines.
+    /// **1.50 is the boundary**: measured at 1470×923 with real data, at 1.50 the row is 482px tall and
+    /// still set by the left card; at 1.55 this card becomes the taller one, the row grows to 498 and
+    /// the cost lands on `refHeight`.
+    private static let totalsBoost: CGFloat = 1.50
     private static let barThickness: CGFloat = 9
+
+    /// Extra scale for the four lower cards.
+    ///
+    /// They carried no boost at all while the top row carried 1.2–1.3×, so at 1470×923 their captions
+    /// rendered ~15.8pt against the top row's ~20.6pt — the *peripheral* text ~23% smaller than the
+    /// headline text, which is backwards from how a reader works down a page. Not free: the project
+    /// card's fixed rows set the lower row's minimum height, so this multiplies straight into
+    /// `refHeight`. It's affordable only because restacking the lower half made that row shorter.
+    private static let lowerBoost: CGFloat = 1.12
+
+    /// Boosts buy **height** and are paid for in **width** — and at the minimum window size there is
+    /// no width to spend. At 900pt every top-row boost overflowed the row: the gap between the two
+    /// cards collapsed to nothing, the left card slid off the screen edge, the model grid truncated to
+    /// "In 22…", and "This billing cycle" wrapped onto two lines. None of that shows at 1470.
+    ///
+    /// So each boost fades in with the width surplus over `minWidth`, reaching full strength at 1.5×
+    /// it (1350pt) — the boosts were all measured at 1470, and this is what keeps that measurement
+    /// from being applied at a size where it doesn't hold.
+    static func boost(_ full: CGFloat, for size: CGSize) -> CGFloat {
+        let t = min(1, max(0, (size.width / minWidth - 1) / 0.5))
+        return 1 + (full - 1) * t
+    }
 
     /// Text grows with the window, clamped so it neither crowds at the minimum size nor turns into a
     /// poster on a large display.
@@ -107,61 +130,70 @@ struct DashboardView: View {
             let scale = Self.scale(for: geo.size)
             // Every one of these gaps and paddings is vertical budget, and vertical budget IS type
             // size here — see `refHeight`. They're deliberately tight so the text can be large.
-            // THREE rows, not four. The billing footer used to own a full-width strip of its own;
-            // folding it into the summary column removed that row and its gap, and filled the space
-            // the mascot card was wasting — the two problems turned out to be each other's solution.
+            // TWO rows. The billing footer used to own a full-width strip of its own; folding it into
+            // a card removed that row and its gap, and filled space that card was wasting — the two
+            // problems turned out to be each other's solution.
             VStack(spacing: 9 * scale) {
-                // Both cards take the height of the taller one. Left to their natural sizes the summary
-                // card ended well short of the limits card, leaving a band of dead canvas beside it —
-                // the row reads as one band, so the cards have to agree on where its bottom edge is.
+                // Both cards take the height of the taller one. Left to their natural sizes one ended
+                // well short of the other, leaving a band of dead canvas beside it — the row reads as
+                // one band, so the cards have to agree on where its bottom edge is.
                 HStack(alignment: .top, spacing: 10 * scale) {
-                    // Not 50/50. The summary column is a narrow rail; the limits panel holds three
-                    // full-width gauges. Split evenly, the left card ran ~40% empty at full screen.
-                    // The rail runs at its OWN scale. Its content filled only ~78% of the card, because
-                    // the limits card beside it sets the height — so the remaining fifth was free to
-                    // grow into, costing no type size anywhere else on the page.
-                    let railScale = scale * Self.summaryBoost
-                    card { summaryPanel(scale: railScale) }
-                        .frame(width: Self.summaryCardWidth(inner: geo.size.width - 24 * scale,
-                                                           gap: 10 * scale, scale: scale),
+                    // Left: who you are and where you stand right now — mascot, today's headline, and
+                    // the three limit gauges. Right: the accumulated totals. Left is the narrower of
+                    // the two because gauges are full-width bars that reflow into any width, whereas
+                    // the model grid on the right needs real width to hold two columns.
+                    let usageScale = scale * Self.boost(Self.usageBoost, for: geo.size)
+                    card { usagePanel(scale: usageScale,
+                                      headerBoost: Self.boost(Self.headerBoost, for: geo.size)) }
+                        .frame(width: Self.usageCardWidth(inner: geo.size.width - 24 * scale,
+                                                          gap: 10 * scale, scale: scale),
                                height: nil)
                         .frame(maxHeight: .infinity)
-                        .environment(\.widgetScale, railScale)
-                    card { limitsPanel(scale: scale) }
+                        .environment(\.widgetScale, usageScale)
+                    let totalsScale = scale * Self.boost(Self.totalsBoost, for: geo.size)
+                    card { totalsPanel(scale: totalsScale) }
                         .frame(maxHeight: .infinity)
-                        .environment(\.widgetScale, scale * Self.limitsBoost)
+                        .environment(\.widgetScale, totalsScale)
                 }
                 .fixedSize(horizontal: false, vertical: true)
 
-                // The calendar owns the whole left side of the lower half, not just one row of it.
+                // THREE columns, sized by what each shape actually needs.
                 //
-                // Measured: a calendar's aspect ratio is fixed by its shape, so square cells are capped
-                // by whichever axis is scarcer. Given a single row (~150pt tall) the cells maxed out at
-                // ~22pt and the grid occupied a third of even a narrow card, leaving the rest dead. Two
-                // rows' worth of height roughly doubles the cell size and lets the grid actually fill
-                // its card. The three smaller panels stack down the right, where each is naturally wide
-                // and short — the opposite shape, so they suit the leftover column.
+                // The two charts are wide-and-short by nature — 7 bars and 24 bars — so they stack
+                // happily in one narrow column and gain height from it. The calendar is the opposite:
+                // its aspect ratio is fixed by its shape, so it takes width priority and gets the
+                // largest column. By project is a list of rows: narrow is fine, tall is useful.
+                //
+                // This is also cheaper than the two-row arrangement it replaced. There, the project
+                // card's fixed rows sat *below* a chart row, so both heights added; here every column
+                // is independent and the row's minimum is the tallest single one, not a sum.
                 HStack(alignment: .top, spacing: 10 * scale) {
+                    let colW = geo.size.width - 24 * scale - 20 * scale
+                    VStack(spacing: 9 * scale) {
+                        card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
+                            .frame(maxHeight: .infinity)
+                        card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
+                            .frame(maxHeight: .infinity)
+                    }
+                    .frame(width: colW * 0.27)
+
                     card { CycleCalendarView() }
-                        .frame(width: (geo.size.width - 24 * scale - 10 * scale) * 0.36)
+                        .frame(width: colW * 0.41)
                         .frame(maxHeight: .infinity)
 
-                    // TWO rows on the right, not three stacked. Three cards down this column needed more
-                    // height than the two-row layout it replaced, which pushed the layout past the
-                    // window at every size — the calendar has to gain its height from the column beside
-                    // it, not from the page.
-                    VStack(spacing: 9 * scale) {
-                        HStack(alignment: .top, spacing: 10 * scale) {
-                            card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
-                                .frame(maxHeight: .infinity)
-                            card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
-                                .frame(maxHeight: .infinity)
-                        }
-                        .frame(maxHeight: .infinity)
-                        card { ProjectBreakdownView() }
+                    // The fill frame goes INSIDE the card, not on it. `widgetCard()` draws its
+                    // background around whatever the content measures, so an outer `maxHeight` only
+                    // stretches the layout slot and leaves a short card floating in the middle of it —
+                    // which is exactly what a four-project cycle looked like. The other three cards
+                    // fill by accident of their content (a GeometryReader, a `chartPanel`); this is a
+                    // plain list of rows and has to say so.
+                    card {
+                        ProjectBreakdownView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
                 }
                 .frame(maxHeight: .infinity)
+                .environment(\.widgetScale, scale * Self.boost(Self.lowerBoost, for: geo.size))
             }
             .padding(12 * scale)
             .environment(\.widgetScale, scale)
@@ -174,72 +206,70 @@ struct DashboardView: View {
         .background(Theme.windowBackground)
     }
 
-    /// 52% of the row. The rail carries a two-column model grid with In/Out under each name, so it needs
-    /// real width; the limits card is full-width bars and text that reflow happily in what's left.
-    private static func summaryCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat) -> CGFloat {
+    /// 46% of the row — the smaller half, since the swap. It was 52% when this card held the model
+    /// grid; now the grid is on the right and *that* is the side needing width to keep two columns.
+    /// The floor keeps the Today header's two lines unwrapped beside the mascot at 900×800.
+    private static func usageCardWidth(inner: CGFloat, gap: CGFloat, scale: CGFloat) -> CGFloat {
         let available = max(0, inner - gap)
-        return min(available * 0.62, max(available * 0.52, 400 * scale))
+        return min(available * 0.56, max(available * 0.46, 360 * scale))
     }
 
     // MARK: - Panels
 
-    /// The left rail: who you are and what you've spent — mascot, today's headline, today's models,
-    /// then the week / cycle / billing totals that used to sit in a footer strip of their own.
+    /// The left card: the live picture — mascot, today's headline, and the three limit gauges with
+    /// today's subagent share beneath them.
     ///
     /// The mascot is deliberately far smaller than the space would allow. Its sky block was the single
     /// biggest fixed height in the layout, and since nothing scrolls, every point of it is a point the
     /// type can't have. It went 172 → 122 → 100. The pet is decoration; the numbers are the product.
-    private func summaryPanel(scale: CGFloat) -> some View {
+    private func usagePanel(scale: CGFloat, headerBoost: CGFloat) -> some View {
         let pet = 66 * scale
         let sky = 74 * scale          // taller than the pet → open sky above it, as in the widget
         return VStack(alignment: .leading, spacing: 8 * scale) {
-            // Mascot and today's figures sit SIDE BY SIDE, and the model list goes in the right column
-            // beside the pet rather than beneath it. Stacking them read more cleanly but made the rail
-            // ~40pt taller at scale 1, and this rail sets the whole top row's height — which is type
-            // size. Beside the pet, the list is free until it outgrows the sky block.
+            // Mascot and today's figures sit SIDE BY SIDE rather than stacked. Stacking read more
+            // cleanly but made the card ~40pt taller at scale 1, and in this layout height is type
+            // size. Beside the pet, the header is free until it outgrows the sky block.
             HStack(alignment: .top, spacing: 14 * scale) {
+                // Three layers — see `ContentView.header` for how the grids relate. The pet and
+                // its sky are the 5h session; the ground beneath it is the week.
                 ZStack(alignment: .bottom) {
                     if metrics.weatherEffectsEnabled {
                         WeatherView(width: pet, height: sky, engine: weatherEngine)
                     }
+                    GroundView(size: pet)
                     MascotView(size: pet)
                 }
                 .frame(width: pet, height: sky, alignment: .bottom)
+                .help(metrics.petSceneDescription)
 
-                // No `maxHeight: .infinity` here. With the card now stretching to match the limits card
-                // beside it, a greedy right column swallowed all the slack and pushed the model grid
-                // down, opening a hole under the Today header. Let this row be as tall as the mascot;
-                // the slack belongs to the Spacer at the bottom of the card.
+                // No `maxHeight: .infinity` here. With the card stretching to match the one beside it, a
+                // greedy right column swallowed all the slack and pushed what follows down, opening a
+                // hole under the Today header. Let this row be as tall as the mascot; the slack belongs
+                // to the Spacer at the bottom of the card.
                 VStack(alignment: .leading, spacing: 7 * scale) {
                     // Today's figures run larger still. The mascot's sky block sets this row's height,
                     // and two lines of header filled only ~60% of it — so growing them is free, exactly
-                    // like the rail boost. Unlike everywhere else in this layout, the limit here is
+                    // like `usageBoost`. Unlike everywhere else in this layout, the limit here is
                     // WIDTH: both lines must stay unwrapped in a column that is only ~200pt wide at the
                     // minimum window size.
                     StatsHeaderView(compact: true)
-                        .environment(\.widgetScale, scale * Self.headerBoost)
+                        .environment(\.widgetScale, scale * headerBoost)
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
 
-            // Claude Code's own lifetime figures. "Today by model" used to sit here; it was a second
-            // model list directly above this one, and dropping it is most of what paid for these rows.
-            //
-            // With no `/stats` cache — an older Claude Code, or one that has never computed stats — the
-            // rail would otherwise be a mascot above empty space, so fall back to what used to be here.
+            // The gauges sit under the pet, so the mood on its face and the bar that produced it read
+            // as one statement: `mascotEmotion` derives from `blockFraction` — the 5h gauge directly
+            // beneath. The weekly bar below it is NOT the face's number; it drives the ground layer
+            // under the pet's feet. (It used to be `max(5h, weekly)`; see `MetricsStore`.)
             divider
-            if metrics.statsCache != nil {
-                StatsModelBreakdownView()
-            } else {
-                Text("Today by model")
-                    .scaledFont(10, weight: .semibold).foregroundStyle(Theme.textSecondary)
-                ModelBreakdownView()
-                statRow("All time", scale: scale,
-                        value: Format.tokens(metrics.totalsTokens(metrics.allTime)),
-                        trailing: Format.currency(metrics.allTime.costUSD),
-                        help: "Every turn in your transcripts. Claude Code's own /stats total would show "
-                              + "here instead, but its cache (~/.claude/stats-cache.json) wasn't found.")
-            }
+            BudgetGauge(barThickness: Self.barThickness)
+            divider
+            WeeklyLimitBar(barThickness: Self.barThickness)
+            divider
+            DailyPaceView(barThickness: Self.barThickness)
+            divider
+            subagentRow(scale: scale)
 
             Spacer(minLength: 0)
         }
@@ -280,20 +310,25 @@ struct DashboardView: View {
         .help(help)
     }
 
-    /// The three usage bars, then the subagent share, then the week / cycle / billing totals.
+    /// The right card: everything cumulative — Claude Code's own lifetime total and per-model split,
+    /// then the week / cycle / billing lines that used to sit in a footer strip of their own.
     ///
-    /// Subagents moved here from the rail by request — it belongs beside the bars it's a share of. The
-    /// billing lines followed for a different reason: this card had ~90pt of slack at scale 1 while the
-    /// rail had none, and in a two-card row only the taller card sets the height.
-    private func limitsPanel(scale: CGFloat) -> some View {
+    /// With no `/stats` cache — an older Claude Code, or one that has never computed stats — this would
+    /// otherwise open on empty space, so fall back to today's models plus our own all-time total.
+    private func totalsPanel(scale: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
-            BudgetGauge(barThickness: Self.barThickness)
-            divider
-            WeeklyLimitBar(barThickness: Self.barThickness)
-            divider
-            DailyPaceView(barThickness: Self.barThickness)
-            divider
-            subagentRow(scale: scale)
+            if metrics.statsCache != nil {
+                StatsModelBreakdownView()
+            } else {
+                Text("Today by model")
+                    .scaledFont(10, weight: .semibold).foregroundStyle(Theme.textSecondary)
+                ModelBreakdownView()
+                statRow("All time", scale: scale,
+                        value: Format.tokens(metrics.totalsTokens(metrics.allTime)),
+                        trailing: Format.currency(metrics.allTime.costUSD),
+                        help: "Every turn in your transcripts. Claude Code's own /stats total would show "
+                              + "here instead, but its cache (~/.claude/stats-cache.json) wasn't found.")
+            }
             Spacer(minLength: 0)
             divider
             WeekAllTimeView(showsExpandButton: false)

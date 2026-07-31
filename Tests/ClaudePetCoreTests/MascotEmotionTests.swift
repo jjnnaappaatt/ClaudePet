@@ -2,8 +2,10 @@ import Testing
 import Foundation
 @testable import ClaudePetCore
 
-/// The pet's mood is derived from limit pressure (whichever of 5h/weekly is closer), reusing
-/// the gauge fractions — so it tracks live server data or the local estimate identically.
+/// The pet's mood is derived from the **5-hour session alone**, reusing the gauge fraction — so it
+/// tracks live server data or the local estimate identically. The weekly limit is a separate signal
+/// (`groundCondition`); these tests pin that separation, because folding weekly back into the face
+/// is the regression that would silently make the ground redundant.
 @MainActor
 @Suite struct MascotEmotionTests {
 
@@ -36,7 +38,8 @@ import Foundation
 
     @Test func moodTracksUsagePressure() {
         let cases: [(Double, MascotEmotion)] = [
-            (2, .celebrating), (30, .happy), (65, .neutral), (90, .worried), (99, .alarmed),
+            (2, .celebrating), (15, .happy), (30, .content), (65, .neutral),
+            (80, .focused), (90, .worried), (99, .alarmed), (100, .exhausted),
         ]
         for (util, expected) in cases {
             let s = freshStore()
@@ -48,12 +51,27 @@ import Foundation
         }
     }
 
-    @Test func takesTheCloserOfTheTwoLimits() {
+    /// The inverse of a test that used to assert `max(5h, weekly)`. A hammered weekly limit must NOT
+    /// reach the pet's face — it belongs to the ground under it. Deleting this test rather than
+    /// flipping it would leave the old coupling free to creep back unnoticed.
+    @Test func weeklyPressureStaysOffTheFace() {
         let s = freshStore()
-        let path = cachePath(fiveHour: 10, sevenDay: 97)   // weekly is the pressure
+        let path = cachePath(fiveHour: 10, sevenDay: 97)   // weekly is nearly spent, the session isn't
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        s.statuslineCachePath = path
+        s.recompute()
+        #expect(s.mascotEmotion == .happy, "the session has headroom, so the pet is happy")
+        #expect(s.groundCondition == .cracked, "…and the week shows up underfoot instead")
+    }
+
+    /// The other direction, so neither signal can quietly swallow the other.
+    @Test func sessionPressureStaysOffTheGround() {
+        let s = freshStore()
+        let path = cachePath(fiveHour: 97, sevenDay: 10)
         defer { try? FileManager.default.removeItem(atPath: path) }
         s.statuslineCachePath = path
         s.recompute()
         #expect(s.mascotEmotion == .alarmed)
+        #expect(s.groundCondition == .lush)
     }
 }

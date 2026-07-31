@@ -45,26 +45,39 @@ struct CycleCalendarView: View {
             header
             if weeks.isEmpty {
                 Text("no cycle data yet")
-                    .scaledFont(10).foregroundStyle(Theme.textSecondary.opacity(0.7))
+                    .scaledFont(10).foregroundStyle(Theme.textSecondary)
             } else {
-                // Cells are sized from BOTH axes and kept square. Sizing on width alone stretched them
-                // into 4px stripes: seven columns across a 900pt card wants ~125pt cells, but the row
-                // only had ~90pt of height to give. A calendar's aspect ratio is fixed by its shape —
-                // it can't fill an arbitrary rectangle the way a bar chart can.
+                // Cells take their WIDTH from the card and their HEIGHT from the row — they are not
+                // square, and forcing them to be was the bug.
+                //
+                // A square cell can only be as big as the *scarcer* axis, and here that's height:
+                // measured at 1470×923 the grid took 45pt cells in a card 513pt wide, spanning
+                // x 100…444 and leaving 84pt dead on each side — a third of the card. Sizing each axis
+                // from its own budget fills it at zero page cost. The 2.6 cap is the guard against the
+                // opposite failure: sized on width alone in a short row, the cells degenerated into 4pt
+                // stripes. Tuned against the column width, not chosen for looks — at 1.8 the grid still
+                // left 85px dead on each side at 1470×923; the pair (cap 2.6, column 0.41) brings that
+                // to single digits from 900×800 through 2560×1440. At every one of those the *width*
+                // binds and the cap is inert; it only takes over in a wide-but-short window, where six
+                // rows of calendar genuinely cannot fill a wide card without becoming stripes, and some
+                // centred slack is the better of the two bad outcomes.
                 GeometryReader { g in
                     let gap = 4 * scale
                     // The weekday header shares this space, so its line has to come off the height
                     // before dividing by the week count — without it the last row fell off the card.
                     let headerRow = 16 * scale
-                    let side = max(6, min((g.size.width - gap * 6) / 7,
-                                          (g.size.height - headerRow - gap * CGFloat(weeks.count)) / CGFloat(weeks.count)))
+                    let rows = CGFloat(weeks.count)
+                    let fullW = max(6, (g.size.width - gap * 6) / 7)
+                    let fullH = max(6, (g.size.height - headerRow - gap * rows) / rows)
+                    let cellH = min(fullH, fullW)                 // never taller than wide
+                    let cellW = min(fullW, cellH * 2.6)           // …nor more than 2.6× wider
                     VStack(spacing: gap) {
-                        weekdayHeader(cal: cal, side: side, gap: gap)
+                        weekdayHeader(cal: cal, side: cellW, gap: gap)
                         ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
                             HStack(spacing: gap) {
                                 ForEach(Array(week.enumerated()), id: \.offset) { _, day in
                                     cell(day, maxV: maxV, now: now, cal: cal)
-                                        .frame(width: side, height: side)
+                                        .frame(width: cellW, height: cellH)
                                 }
                             }
                         }
@@ -87,7 +100,7 @@ struct CycleCalendarView: View {
             if let start = metrics.cycleStart, let end = metrics.cycleReset {
                 Text(start.formatted(.dateTime.month(.abbreviated).day())
                      + " – " + end.formatted(.dateTime.month(.abbreviated).day()))
-                    .scaledFont(9).foregroundStyle(Theme.textSecondary.opacity(0.6))
+                    .scaledFont(9).foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4 * scale)
@@ -96,11 +109,11 @@ struct CycleCalendarView: View {
             Text(amount(metrics.budgetUnit == .usd
                         ? metrics.cycle.costUSD
                         : Double(metrics.totalsTokens(metrics.cycle))))
-                .scaledFont(19, weight: .bold, design: .rounded)
+                .scaledFont(26, weight: .bold, design: .rounded)
                 .foregroundStyle(Theme.textPrimary)
             if metrics.budgetUnit == .tokens {
                 Text(metrics.tokenBasisLabel)
-                    .scaledFont(9).foregroundStyle(Theme.textSecondary.opacity(0.6))
+                    .scaledFont(9).foregroundStyle(Theme.textTertiary)
             }
         }
     }
@@ -109,16 +122,16 @@ struct CycleCalendarView: View {
     /// its own units, and this one was asking the reader to infer them.
     private func legend(maxV: Double) -> some View {
         HStack(spacing: 5 * scale) {
-            Text("less").scaledFont(8).foregroundStyle(Theme.textSecondary.opacity(0.55))
+            Text("less").scaledFont(8).foregroundStyle(Theme.textTertiary)
             ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { step in
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(Theme.claudeCoral.opacity(step == 0 ? 0.06 : 0.16 + 0.74 * step))
                     .frame(width: 9 * scale, height: 9 * scale)
             }
-            Text("more").scaledFont(8).foregroundStyle(Theme.textSecondary.opacity(0.55))
+            Text("more").scaledFont(8).foregroundStyle(Theme.textTertiary)
             Spacer()
             Text("up to \(amount(maxV))/day")
-                .scaledFont(8).foregroundStyle(Theme.textSecondary.opacity(0.55))
+                .scaledFont(8).foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
         }
     }
@@ -130,7 +143,7 @@ struct CycleCalendarView: View {
             ForEach(CalendarGrid.weekdayOrder(calendar: cal), id: \.self) { weekday in
                 Text(Self.letter(forWeekday: weekday, cal: cal))
                     .scaledFont(8)
-                    .foregroundStyle(Theme.textSecondary.opacity(0.55))
+                    .foregroundStyle(Theme.textTertiary)
                     .frame(width: side)
             }
         }

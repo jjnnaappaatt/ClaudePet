@@ -13,8 +13,8 @@ struct BudgetGauge: View {
     private var unit: BudgetUnit { metrics.budgetUnit }
     private var fraction: Double { metrics.blockFraction(unit: unit) }
 
-    /// Ramps through the Claude palette with usage — see `Theme.gaugeColor`.
-    private var barColor: Color { Theme.gaugeColor(fraction) }
+    /// Ramps through the Claude palette **along the bar** — see `Theme.gaugeGradient`.
+    private var barFill: LinearGradient { Theme.gaugeGradient(fraction) }
 
     private func amount(_ value: Double) -> String {
         unit == .tokens ? Format.tokens(Int(value)) : Format.currency(value)
@@ -61,8 +61,8 @@ struct BudgetGauge: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.12))
-                    Capsule().fill(barColor).frame(width: max(3, geo.size.width * fraction))
+                    Capsule().fill(Theme.gaugeTrack(fraction))
+                    Capsule().fill(barFill).frame(width: max(3, geo.size.width * fraction))
                 }
             }
             .frame(height: barThickness * scaleHeight)
@@ -92,7 +92,7 @@ struct BudgetGauge: View {
                         }
                     }
                 }
-                .foregroundStyle(Theme.textSecondary.opacity(0.85))
+                .foregroundStyle(Theme.textSecondary)
             }
             .scaledFont(9.5)
             .foregroundStyle(Theme.textSecondary)

@@ -28,6 +28,13 @@ struct WeeklyBarChart: View {
         return metrics.tokenBasis == .total ? "total/day" : "work/day"
     }
 
+    /// The weekly-window total the bars sum to — the same figure the weekly gauge is a fraction of.
+    private var total: String {
+        metrics.budgetUnit == .usd
+            ? Format.currency(metrics.week.costUSD)
+            : Format.tokens(metrics.totalsTokens(metrics.week))
+    }
+
     private var chartHelp: String {
         let basis = metrics.budgetUnit == .usd ? "Cost" : "\(metrics.tokenBasisLabel.capitalized) tokens"
         return """
@@ -45,12 +52,12 @@ struct WeeklyBarChart: View {
         let barMax = 30 * scale
 
         VStack(alignment: .leading, spacing: 4 * scale) {
-            HStack {
-                Text("This week").scaledFont(10, weight: .semibold)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Text(caption)
-                    .scaledFont(8.5).foregroundStyle(Theme.textSecondary.opacity(0.6))
+            // Same header shape as `TodayHourlyChart` in the dashboard: title, unit caption, then the
+            // window's own total as a hero figure. Two chart cards sitting in one column looked
+            // unbalanced when only one of them carried a number.
+            ViewThatFits(in: .horizontal) {
+                header(withCaption: true)
+                header(withCaption: false)
             }
             if fillsHeight {
                 GeometryReader { g in
@@ -63,6 +70,28 @@ struct WeeklyBarChart: View {
             }
         }
         .help(chartHelp)
+    }
+
+    /// Drops the unit caption rather than truncating it when the column is narrow — see
+    /// `TodayHourlyChart`, which does the same and for the same reason.
+    private func header(withCaption: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
+            Text("This week").scaledFont(fillsHeight ? 11 : 10, weight: .semibold)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize()
+            if withCaption {
+                Text(caption)
+                    .scaledFont(fillsHeight ? 9 : 8.5).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).fixedSize()
+            }
+            Spacer(minLength: 4 * scale)
+            if fillsHeight {
+                Text(total)
+                    .scaledFont(21, weight: .bold, design: .rounded)
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize()
+            }
+        }
     }
 
     /// `barArea` is the height the tallest bar gets. Fixed in the widget; in the dashboard it's the
@@ -80,10 +109,14 @@ struct WeeklyBarChart: View {
                         .fill(isNow ? Theme.claudeCoral
                                     : Theme.claudeCoral.opacity(notStarted ? 0.12 : 0.40))
                         .frame(height: max(2, CGFloat(value(day) / maxV) * barArea))
+                    // The BAR dims for a day that hasn't started; the LETTER doesn't. It was
+                    // `textSecondary.opacity(0.3)` — 0.21 absolute, 1.8:1, invisible — so the axis
+                    // simply stopped after today. Which weekday a slot is has to stay readable
+                    // whether or not it has usage yet.
                     Text(Self.dayLetter.string(from: day.date))
                         .scaledFont(7)
                         .foregroundStyle(isNow ? Theme.claudeCoral
-                                               : Theme.textSecondary.opacity(notStarted ? 0.3 : 0.7))
+                                               : (notStarted ? Theme.textTertiary : Theme.textSecondary))
                 }
                 .frame(maxWidth: .infinity)
             }

@@ -21,7 +21,7 @@ struct WeatherView: View {
     private var condition: WeatherCondition { metrics?.weatherCondition ?? .clearSky }
 
     var body: some View {
-        let fps = ProcessInfo.processInfo.isLowPowerModeEnabled ? 2.0 : 6.0
+        let fps = AnimationRate.current
         return TimelineView(.animation(minimumInterval: 1.0 / fps, paused: isPaused)) { context in
             Canvas { ctx, sz in
                 engine.setCondition(condition)

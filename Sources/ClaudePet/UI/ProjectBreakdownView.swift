@@ -14,10 +14,11 @@ struct ProjectBreakdownView: View {
     /// Cap the list so one busy month can't produce an unbounded wall of rows; the remainder is
     /// shown as an explicit "+N more" total rather than silently dropped.
     ///
-    /// 6 rather than 8 by choice: nothing on the dashboard scrolls, so these two rows were costing
-    /// every label on the page ~5% of its size (see `DashboardView.refHeight`). The tail is still
-    /// accounted for on the "+N more" line, so no usage disappears.
-    private static let maxRows = 6
+    /// Back to 8. It was cut to 6 when this card sat *under* a chart row, where the two heights added
+    /// and those rows cost every label on the page ~5% of its size. It now owns a full-height column of
+    /// its own, so the rows are close to free and 6 left the bottom of the card empty. The tail is
+    /// still accounted for on the "+N more" line either way, so no usage disappears.
+    private static let maxRows = 8
 
     private func value(_ p: ProjectTotal) -> Double {
         metrics.budgetUnit == .usd ? p.costUSD : Double(metrics.tokens(work: p.workTokens, total: p.totalTokens))
@@ -46,12 +47,12 @@ struct ProjectBreakdownView: View {
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Text("this cycle")
-                    .scaledFont(9).foregroundStyle(Theme.textSecondary.opacity(0.6))
+                    .scaledFont(9).foregroundStyle(Theme.textTertiary)
             }
 
             if all.isEmpty {
                 Text("no usage this cycle")
-                    .scaledFont(10).foregroundStyle(Theme.textSecondary.opacity(0.7))
+                    .scaledFont(10).foregroundStyle(Theme.textSecondary)
             } else {
                 ForEach(shown) { row in
                     projectRow(row, maxV: maxV)
@@ -60,11 +61,11 @@ struct ProjectBreakdownView: View {
                     let restValue = rest.reduce(0.0) { $0 + value($1) }
                     HStack {
                         Text("+\(rest.count) more")
-                            .scaledFont(9.5).foregroundStyle(Theme.textSecondary.opacity(0.7))
+                            .scaledFont(9.5).foregroundStyle(Theme.textSecondary)
                         Spacer()
                         Text(amount(restValue))
                             .scaledFont(9.5, design: .rounded)
-                            .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                            .foregroundStyle(Theme.textSecondary)
                     }
                     .help("Projects beyond the top \(Self.maxRows), combined — nothing is dropped, so "
                           + "the rows above plus this line still sum to the Cycle figure.")

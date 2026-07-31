@@ -3,6 +3,73 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.10.0] — 2026-07-31
+
+### Added
+- **The pet now shows two numbers instead of one.** Its face and sky follow your **5-hour session**;
+  the **ground it stands on** follows your **weekly limit** — lush and green with headroom, drying
+  through the week, cracked and bare at the edge. The mood used to be `max(5h, weekly)`, so a stormy
+  pet could mean either limit and there was no way to tell which. Now a calm pet on cracked earth says
+  something precise: plenty of session left, almost no week. Hover the pet for both in words.
+- **More of everything to say it with**: nine moods (`content`, `focused` and `exhausted` are new —
+  the ramp used to jump straight from happy at 49% to neutral at 50%, and had nothing at all for being
+  *past* the limit) and eight skies (`partlyCloudy`, `overcast`, `drizzle`).
+
+### Changed
+- **The two top panels have swapped sides.** The limit gauges now sit under the mascot on the left,
+  where the pet's mood and the bars that produced it read as one statement; Claude Code's lifetime
+  `/stats` total and the per-model grid move to the right, above the week/cycle/billing lines.
+- **The lower half is three columns**: This week over Today by hour in a narrow column, then the
+  billing-cycle calendar with width priority, then By project. It is also *cheaper* than the two-row
+  arrangement it replaced — the project list's fixed rows used to add to a chart row's height, and now
+  every column is independent, so the row's minimum is the tallest single one rather than a sum. That
+  paid for the project list going back to 8 rows and for a scale boost on all four lower cards.
+- **Text contrast, measured rather than eyeballed.** Grey captions were written as
+  `textSecondary.opacity(0.6)`, but `textSecondary` is *already* white at 0.70 — so that compounds to
+  0.42 absolute and 4.0:1, under the 4.5:1 AA floor for body text. Seventeen call sites did some
+  version of this, the worst at 2.3:1. There are now four named tiers, each documented with its
+  measured ratio, and nothing carrying words sits below the floor. Verified from the rendered pixels,
+  not from the source. The widget gets the same lift.
+- **The gauge bars are a gradient along their length**, not one flat interpolated colour. A stop sits
+  at its own percentage, so the pixel standing for 50% is the same coral whether the bar is at 60% or
+  at 100%. The ramp itself was rebuilt: nine stops sampled at equal *perceptual* distance instead of
+  three interpolated in RGB, which moved 1.51× faster in some parts of the bar than others and kinked
+  visibly at the middle anchor — now 1.12×, near uniform. Its ends are pushed out too for more
+  perceptual travel — 75% more — because the old ramp was so nearly monochrome that the gradient could
+  barely be seen.
+- **The unfilled part of a gauge is now a dark tint of the bar's own colour** rather than flat grey,
+  an idea measured out of Claude's own Usage panel. It roughly doubles how clearly "how full" reads.
+- **The calendar fills its card.** Cells were forced square, which caps them at the scarcer axis —
+  at 1470×923 that left 84px of dead space on each side, a third of the card. Width now comes from the
+  card and height from the row (capped at 2.6:1), which brings the dead space to single digits at
+  every window size except a wide-but-short one, where six rows of calendar genuinely cannot fill a
+  wide card without the cells becoming stripes.
+- **"Today by hour" and "This week" carry their totals as hero figures** in the dashboard, with the
+  unit caption on the title line. In a narrow column the caption is dropped whole rather than clipped
+  to "peak ~1…". The widget keeps both lines, unchanged.
+- **Scale boosts now fade in with window width.** They buy height and are paid for in width, and at
+  the 900pt minimum there is none to spend — the top row overflowed, the gap between its two cards
+  collapsed and the model grid truncated to "In 22…". They reach full strength at 1350pt, where they
+  were measured.
+
+- **The animation runs at 15 fps, not 6.** On a fixed pixel lattice the frame rate is a correctness
+  constraint, not a smoothness preference: heavy rain falls up to 13.8 grid rows a second, so at 6 fps
+  each drop jumped 2.3 rows between frames and skipped rows entirely — which is why the rain looked
+  sparse and broken rather than falling. There's now one shared `AnimationRate` for the mascot and the
+  weather, with a test tying it to the rain speed. Rain is denser too (a storm went 12 drops to 16, a
+  heavy one 20 to 26).
+
+### Fixed
+- **The pet no longer floats above the ground** at 75%+ of the weekly limit. The surface row is where
+  the feet land, and the two barest states left it empty — so the terrain read as a detached slab.
+- **Rain no longer falls through the ground.** The terrain stopped one row short of its frame and
+  drops appeared underneath it.
+- **The By project card no longer floats mid-column** when a cycle has only a few projects. Its fill
+  frame was outside the card, so the background was drawn around the content and then centred in a
+  slot twice its height.
+- **Weekday letters for days that haven't started yet are readable** (they were white at 0.21 —
+  1.8:1 — so the week chart's axis appeared to stop at today).
+
 ## [0.9.1] — 2026-07-30
 
 ### Changed

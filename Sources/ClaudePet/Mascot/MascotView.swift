@@ -26,11 +26,16 @@ struct MascotView: View {
             }
         }
         .frame(width: size, height: size)
-        .help("Mood: \(emotion.rawValue)")
+        // The FULL scene description, not just this layer's mood. An inner `.help` wins over an outer
+        // one wherever it sits, and the pet covers nearly the whole mascot block — so putting only
+        // "Mood: happy" here meant the explanation of what the sky and ground mean was unreachable
+        // except in the few pixels of margin around the sprite. Falls back when there's no store
+        // (previews, the mascot sheet).
+        .help(metrics?.petSceneDescription ?? "Mood: \(emotion.rawValue)")
     }
 
     private var codeDrawn: some View {
-        let fps = ProcessInfo.processInfo.isLowPowerModeEnabled ? 2.0 : 6.0
+        let fps = AnimationRate.current
         return TimelineView(.animation(minimumInterval: 1.0 / fps, paused: isPaused)) { context in
             Canvas { ctx, sz in
                 if isPaused {

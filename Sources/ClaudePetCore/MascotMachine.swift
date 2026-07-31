@@ -55,6 +55,10 @@ public struct MascotMachine {
             return .sit                                   // hold the sleeping pose
         case .worried, .alarmed:
             return roll < 0.7 ? .sit : .blink             // anxious — no wandering
+        case .exhausted:
+            return .sit                                   // spent; holds the slumped pose
+        case .focused:
+            return roll < 0.85 ? .sit : .blink            // head down, working
         case .happy, .celebrating:
             switch roll {                                 // livelier
             case ..<0.30: return .sit
@@ -62,6 +66,13 @@ public struct MascotMachine {
             case ..<0.75: return .glance
             case ..<0.88: return .walk
             default:      return .hop
+            }
+        case .content:
+            switch roll {                                 // settled, but still looks about
+            case ..<0.34: return .sit
+            case ..<0.66: return .blink
+            case ..<0.84: return .glance
+            default:      return .walk
             }
         case .neutral:
             switch roll {                                 // idle mix with the odd look-around

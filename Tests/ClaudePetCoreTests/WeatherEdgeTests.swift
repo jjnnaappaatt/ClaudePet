@@ -109,4 +109,30 @@ import Foundation
         s.recompute()                                   // idle → active AND alarmed at once
         #expect(s.consumeWeatherEvents() == [.confetti, .lightningStrike])
     }
+    /// The bolt must fire on entering the danger zone, not on becoming exactly `.alarmed`. A single
+    /// large turn can take you from `.worried` straight to `.exhausted` (100%+), skipping `.alarmed`
+    /// entirely — an equality check silently never fired for the worst case of all.
+    @Test func lightningFiresWhenJumpingStraightPastAlarmed() {
+        let s = freshStore()
+        let path = NSTemporaryDirectory() + "weather-jump-\(UUID().uuidString).json"
+        s.statuslineCachePath = path
+        s.useStatuslineData = true
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let reset = Date().addingTimeInterval(2 * 3600)
+
+        writeCache(to: path, fiveHour: 90, sevenDay: 0, reset: reset)
+        s.recompute()                                   // prime: worried, below the zone
+        #expect(s.mascotEmotion == .worried)
+        _ = s.consumeWeatherEvents()
+
+        writeCache(to: path, fiveHour: 100, sevenDay: 0, reset: reset)
+        s.recompute()                                   // → exhausted, never passing through alarmed
+        #expect(s.mascotEmotion == .exhausted)
+        #expect(s.consumeWeatherEvents() == [.lightningStrike])
+
+        writeCache(to: path, fiveHour: 100, sevenDay: 0, reset: reset)
+        s.recompute()                                   // still in the zone → no refire
+        #expect(s.consumeWeatherEvents().isEmpty)
+    }
+
 }

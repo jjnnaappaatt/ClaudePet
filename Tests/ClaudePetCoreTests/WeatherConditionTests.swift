@@ -10,9 +10,12 @@ import Foundation
             (.sleeping,    .clearSky),
             (.celebrating, .sunny),
             (.happy,       .sunny),
+            (.content,     .partlyCloudy),
             (.neutral,     .cloudy),
-            (.worried,     .storm),
-            (.alarmed,     .heavyStorm),
+            (.focused,     .overcast),
+            (.worried,     .drizzle),
+            (.alarmed,     .storm),
+            (.exhausted,   .heavyStorm),
         ]
         for (emotion, expected) in cases {
             #expect(WeatherCondition.from(emotion) == expected,
@@ -25,7 +28,7 @@ import Foundation
         for emotion in MascotEmotion.allCases {
             _ = WeatherCondition.from(emotion)
         }
-        #expect(MascotEmotion.allCases.count == 6)
+        #expect(MascotEmotion.allCases.count == 9)
     }
 
     @MainActor

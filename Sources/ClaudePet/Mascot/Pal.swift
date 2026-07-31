@@ -14,12 +14,19 @@ enum Pal {
         5: Color(red: 0.106, green: 0.106, blue: 0.118),   // #1B1B1E pupil
         6: Color(red: 0.40, green: 0.72, blue: 0.95),      // sweat drop (worried)
         8: Color(red: 0.93, green: 0.30, blue: 0.27),      // alarm mark (alarmed)
-        // Weather (7, 9–13)
+        // Weather (7, 9–13); ground owns 14–18 below
         7:  Color(red: 0.42, green: 0.62, blue: 0.86),     // rain
         9:  Color(red: 0.78, green: 0.80, blue: 0.85),     // cloud (light)
         10: Color(red: 0.40, green: 0.42, blue: 0.48),     // cloud (dark / storm)
         11: Color(red: 0.99, green: 0.82, blue: 0.36),     // sun
         12: Color(red: 1.00, green: 0.96, blue: 0.62),     // lightning bolt
         13: Color(red: 0.36, green: 0.80, blue: 0.74),     // confetti accent (teal)
+        // Ground (14–18) — the weekly limit as terrain. Muted on purpose: this layer sits directly
+        // under a coral pet and must not compete with it for attention.
+        14: Color(red: 0.42, green: 0.62, blue: 0.31),     // fresh grass
+        15: Color(red: 0.48, green: 0.55, blue: 0.29),     // dulled grass
+        16: Color(red: 0.29, green: 0.21, blue: 0.14),     // rich soil
+        17: Color(red: 0.42, green: 0.34, blue: 0.22),     // dry soil
+        18: Color(red: 0.16, green: 0.12, blue: 0.09),     // deep crack
     ]
 }

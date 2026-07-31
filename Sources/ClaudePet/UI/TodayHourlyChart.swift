@@ -24,16 +24,21 @@ struct TodayHourlyChart: View {
     var body: some View {
         let hours = metrics.todayHourly
         let maxV = max(hours.map(value).max() ?? 1, 1)
-        let barMax = 24 * scale
+        let barMax = (fillsHeight ? 30 : 24) * scale
         let currentHour = Calendar.current.component(.hour, from: Date())
 
         VStack(alignment: .leading, spacing: 4 * scale) {
-            HStack {
-                Text("Today by hour").scaledFont(10, weight: .semibold)
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Text(amount(value(from: metrics.today)))
-                    .scaledFont(9.5).foregroundStyle(Theme.textSecondary.opacity(0.6))
+            // In the dashboard the peak-hour caption rides on the TITLE line and today's total becomes
+            // a hero figure. That isn't decoration: the caption used to own a whole line of a card whose
+            // bars already use `fillsHeight`, so folding it up hands that line straight to the bars.
+            // The widget keeps both lines — its card is ~300pt wide and can't take a hero figure beside
+            // a merged header without wrapping.
+            // `ViewThatFits` rather than truncation: this card sits in a narrow column, and at 900pt
+            // the caption clipped to "peak ~1…", which is worse than absent. Dropping it whole is the
+            // right degradation — the peak hour is also readable off the bars themselves.
+            ViewThatFits(in: .horizontal) {
+                header(withCaption: true)
+                header(withCaption: false)
             }
             if fillsHeight {
                 GeometryReader { g in
@@ -46,12 +51,33 @@ struct TodayHourlyChart: View {
             HStack(spacing: 0) {
                 Text("12a"); Spacer(); Text("6a"); Spacer(); Text("12p"); Spacer(); Text("6p")
             }
-            .scaledFont(7).foregroundStyle(Theme.textSecondary.opacity(0.7))
-            Text(caption)
-                .scaledFont(9.5).lineLimit(1)
-                .foregroundStyle(Theme.textSecondary.opacity(0.6))
+            .scaledFont(7).foregroundStyle(Theme.textSecondary)
+            if !fillsHeight {
+                Text(caption)
+                    .scaledFont(9.5).lineLimit(1)
+                    .foregroundStyle(Theme.textTertiary)
+            }
         }
         .help("Today's usage by local hour — when in the day you've been working. Local data only.")
+    }
+
+    private func header(withCaption: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
+            Text("Today by hour").scaledFont(fillsHeight ? 11 : 10, weight: .semibold)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize()
+            if fillsHeight && withCaption {
+                Text(caption).scaledFont(9)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).fixedSize()
+            }
+            Spacer(minLength: 4 * scale)
+            Text(amount(value(from: metrics.today)))
+                .scaledFont(fillsHeight ? 21 : 9.5,
+                            weight: fillsHeight ? .bold : .regular, design: .rounded)
+                .foregroundStyle(fillsHeight ? Theme.textPrimary : Theme.textTertiary)
+                .fixedSize()
+        }
     }
 
     /// `barArea` is the height the tallest bar gets — fixed in the widget, the card's spare height in
@@ -74,10 +100,12 @@ struct TodayHourlyChart: View {
         unit == .usd ? t.costUSD : Double(metrics.totalsTokens(t))
     }
 
+    /// Short in the dashboard: this card sits in a narrow column there, and "most active ~4p" beside
+    /// the title and a hero figure truncated to "most active ~…" — which says nothing at all.
     private var caption: String {
-        if let h = metrics.peakHour(unit: unit) {
-            return "most active ~\(Format.hourLabel(h))"
+        guard let h = metrics.peakHour(unit: unit) else {
+            return fillsHeight ? "no activity" : "no activity yet today"
         }
-        return "no activity yet today"
+        return (fillsHeight ? "peak ~" : "most active ~") + Format.hourLabel(h)
     }
 }

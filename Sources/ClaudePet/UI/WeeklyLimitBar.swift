@@ -13,8 +13,8 @@ struct WeeklyLimitBar: View {
     private var unit: BudgetUnit { metrics.budgetUnit }
     private var fraction: Double { metrics.weeklyFraction(unit: unit) }
 
-    /// Ramps through the Claude palette with usage — see `Theme.gaugeColor`.
-    private var barColor: Color { Theme.gaugeColor(fraction) }
+    /// Ramps through the Claude palette **along the bar** — see `Theme.gaugeGradient`.
+    private var barFill: LinearGradient { Theme.gaugeGradient(fraction) }
 
     private func amount(_ v: Double) -> String {
         unit == .tokens ? Format.tokens(Int(v)) : Format.currency(v)
@@ -61,8 +61,8 @@ struct WeeklyLimitBar: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.12))
-                    Capsule().fill(barColor).frame(width: max(3, geo.size.width * fraction))
+                    Capsule().fill(Theme.gaugeTrack(fraction))
+                    Capsule().fill(barFill).frame(width: max(3, geo.size.width * fraction))
                 }
             }
             .frame(height: barThickness * scale)
@@ -72,7 +72,7 @@ struct WeeklyLimitBar: View {
                     Text("\(amount(metrics.weeklyTokensUsed(unit: unit)))\(basisSuffix) used this week")
                 } else {
                     Text("\(amount(metrics.weeklyValue(unit: unit))) / \(amount(metrics.weeklyBudget(unit: unit)))")
-                    Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))
+                    Text("·").foregroundStyle(Theme.textFaint)
                     Text("\(amount(metrics.weeklyRemaining(unit: unit))) left")
                         .foregroundStyle(Theme.highlight.opacity(0.9))
                 }

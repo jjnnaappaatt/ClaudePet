@@ -66,11 +66,11 @@ struct StatsModelBreakdownView: View {
                 if !rest.isEmpty {
                     HStack {
                         Text("+\(rest.count) more")
-                            .scaledFont(9.5).foregroundStyle(Theme.textSecondary.opacity(0.7))
+                            .scaledFont(9.5).foregroundStyle(Theme.textSecondary)
                         Spacer()
                         Text(Format.tokens(rest.reduce(0) { $0 + $1.workTokens }))
                             .scaledFont(9.5, design: .rounded)
-                            .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                            .foregroundStyle(Theme.textSecondary)
                     }
                     .help("The remaining models, combined: "
                           + rest.map(\.displayName).joined(separator: ", "))
@@ -94,11 +94,11 @@ struct StatsModelBreakdownView: View {
             }
             HStack(spacing: 5 * scale) {
                 Text("In \(Format.tokens(m.inputTokens))")
-                Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))
+                Text("·").foregroundStyle(Theme.textFaint)
                 Text("Out \(Format.tokens(m.outputTokens))")
                 Spacer()
             }
-            .scaledFont(9.5).foregroundStyle(Theme.textSecondary.opacity(0.8))
+            .scaledFont(9.5).foregroundStyle(Theme.textSecondary)
             .lineLimit(1)
             .padding(.leading, 12 * scale)
         }

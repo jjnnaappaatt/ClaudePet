@@ -50,7 +50,7 @@ struct StatsHeaderView: View {
             if compact {
                 HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
                     workFigure
-                    Text("·").scaledFont(11).foregroundStyle(Theme.textSecondary.opacity(0.4))
+                    Text("·").scaledFont(11).foregroundStyle(Theme.textFaint)
                     cacheFigure
                 }
                 .lineLimit(1)
@@ -77,7 +77,7 @@ struct StatsHeaderView: View {
             Text(Format.tokens(metrics.today.cacheTokens))
                 .scaledFont(12, weight: .medium, design: .rounded)
                 .foregroundStyle(Theme.textSecondary)
-            Text("cache").scaledFont(10).foregroundStyle(Theme.textSecondary.opacity(0.7))
+            Text("cache").scaledFont(10).foregroundStyle(Theme.textSecondary)
         }
     }
 
