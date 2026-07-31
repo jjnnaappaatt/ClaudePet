@@ -1,15 +1,23 @@
 import Foundation
 
 /// The pet's ambient sky, derived from its mood (see `MetricsStore.weatherCondition`). The mascot's
-/// face and its weather share one source of truth — `MascotEmotion` — so they can never disagree:
-/// calm sun when idle, sun while there's headroom, clouds at mid-usage, rain/storm near a limit,
-/// and a heavy storm with lightning at the edge.
+/// face and its weather share one source of truth — `MascotEmotion`, and therefore the **5-hour
+/// session** — so they can never disagree: calm sun when idle, sun while there's headroom, clouds at
+/// mid-usage, rain/storm near a limit, and a heavy storm with lightning past it.
+///
+/// The weekly limit deliberately does **not** appear here. Driving the sky from weekly while the face
+/// followed the session would let one image contradict itself — a grinning pet under a black cloud,
+/// with nothing on screen to explain why. Weekly is the ground under the pet's feet instead
+/// (`GroundCondition`), which is a separate layer and can never collide with this one.
 public enum WeatherCondition: String, CaseIterable, Sendable {
     case clearSky      // idle / sleeping — calm, a gentle sun
-    case sunny         // plenty of headroom (happy / celebrating)
-    case cloudy        // mid usage (neutral, 50–80%) — a few drifting clouds
-    case storm         // high usage (worried, 80–95%) — cloud + light rain
-    case heavyStorm    // critical (alarmed, ≥95%) — dark cloud, heavy rain, lightning
+    case sunny         // plenty of headroom (celebrating / happy)
+    case partlyCloudy  // easing off the top (content) — sun with one cloud crossing it
+    case cloudy        // mid usage (neutral) — a few drifting clouds
+    case overcast      // working hard (focused) — full cloud cover, no sun, no rain yet
+    case drizzle       // getting close (worried) — light, thin rain
+    case storm         // at the edge (alarmed) — dark cloud, real rain
+    case heavyStorm    // past the limit (exhausted) — heavy rain and lightning
 
     /// Steady-state weather for a mood. `.celebrating` maps to steady `.sunny` because the burst of
     /// confetti is a transient `WeatherEvent`, not a standing condition — the backdrop while
@@ -19,9 +27,12 @@ public enum WeatherCondition: String, CaseIterable, Sendable {
         case .sleeping:    return .clearSky
         case .celebrating: return .sunny
         case .happy:       return .sunny
+        case .content:     return .partlyCloudy
         case .neutral:     return .cloudy
-        case .worried:     return .storm
-        case .alarmed:     return .heavyStorm
+        case .focused:     return .overcast
+        case .worried:     return .drizzle
+        case .alarmed:     return .storm
+        case .exhausted:   return .heavyStorm
         }
     }
 }

@@ -1111,25 +1111,56 @@ public final class MetricsStore {
 
     // MARK: - Mascot mood
 
-    /// The pet's mood, from how close you are to a limit (whichever of 5h/weekly is closer),
-    /// using the same gauge fractions the bars show (server-live or local estimate). Idle when
-    /// there's no active session, so the pet sleeps when you're away.
+    /// The pet's mood, from how close the **5-hour session** is to its limit, using the same gauge
+    /// fraction the bar shows (server-live or local estimate). Idle when there's no active session,
+    /// so the pet sleeps when you're away.
+    ///
+    /// It used to read `max(blockFraction, weeklyFraction)`, which meant a stormy pet could be caused
+    /// by either limit and the picture couldn't tell you which. The weekly figure is now its own
+    /// signal — `groundCondition`, the terrain under the pet's feet — so each carries exactly one
+    /// number. Don't fold weekly back in here; that would make the ground redundant and the face
+    /// ambiguous again.
     public var mascotEmotion: MascotEmotion {
         guard activeBlock != nil || serverDriven5h else { return .sleeping }
-        let pressure = max(blockFraction(unit: budgetUnit), weeklyFraction(unit: budgetUnit))
-        switch pressure {
+        switch blockFraction(unit: budgetUnit) {
         case ..<0.05: return .celebrating   // fresh window, lots of room
-        case ..<0.50: return .happy
-        case ..<0.80: return .neutral
+        case ..<0.25: return .happy
+        case ..<0.50: return .content
+        case ..<0.70: return .neutral
+        case ..<0.85: return .focused
         case ..<0.95: return .worried
-        default:      return .alarmed
+        case ..<1.00: return .alarmed
+        default:      return .exhausted     // at or past the limit — throttling territory
         }
     }
 
-    // MARK: - Weather
+    // MARK: - Weather & ground
 
-    /// The pet's ambient sky, derived from the same mood the face shows — so the two always agree.
+    /// The pet's ambient sky, derived from the same mood the face shows — so the two always agree,
+    /// and the whole scene means one thing: your 5-hour session.
     public var weatherCondition: WeatherCondition { .from(mascotEmotion) }
+
+    /// The ground under the pet: the **weekly** limit. Unlike the mood there is no idle state — a
+    /// week keeps running whether or not a session is active, so the terrain always says something.
+    public var groundCondition: GroundCondition {
+        .from(weeklyFraction: weeklyFraction(unit: budgetUnit))
+    }
+
+    /// What the mascot block is actually saying, in words — the hover text for the whole scene.
+    ///
+    /// Without it the two signals are undiscoverable: nothing on screen tells you the pet is your
+    /// session and the ground is your week, so a calm pet on cracked earth just looks inconsistent.
+    /// Naming both, with both percentages, is what turns it from decoration into a reading.
+    public var petSceneDescription: String {
+        let session = Int((blockFraction(unit: budgetUnit) * 100).rounded())
+        let weekly = Int((weeklyFraction(unit: budgetUnit) * 100).rounded())
+        let mood = mascotEmotion == .sleeping
+            ? "The pet is asleep — no session is running."
+            : "The pet and its sky follow your 5-hour session (\(session)% — \(mascotEmotion.rawValue), "
+              + "\(weatherCondition.rawValue))."
+        return mood + " The ground it stands on follows your weekly limit "
+            + "(\(weekly)% — \(groundCondition.rawValue))."
+    }
 
     /// One-shot weather moments (confetti, lightning) raised on a usage transition. The view drains
     /// these via `consumeWeatherEvents()`; they are never part of the steady weather state.
@@ -1176,8 +1207,14 @@ public final class MetricsStore {
                 && (token.blockStart != prev.blockStart || token.serverReset != prev.serverReset))
         if freshWindow { pendingWeatherEvents.append(.confetti) }
 
-        // Crossed into the danger zone (≥95/100%) from a calmer mood.
-        if emotion == .alarmed, let p = prevEmotion, p != .alarmed {
+        // Crossed into the danger zone (≥95%) from a calmer mood.
+        //
+        // Tested against the whole *region*, not against `.alarmed` alone. Adding `.exhausted` above
+        // it put a second state in the danger zone, and an equality check would then miss the case it
+        // most needs to catch: a big turn landing you at 100%+ jumps `.worried` → `.exhausted` without
+        // ever being `.alarmed`, so the bolt would silently never fire.
+        let danger: Set<MascotEmotion> = [.alarmed, .exhausted]
+        if danger.contains(emotion), let p = prevEmotion, !danger.contains(p) {
             pendingWeatherEvents.append(.lightningStrike)
         }
     }

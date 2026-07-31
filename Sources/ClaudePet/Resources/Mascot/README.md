@@ -7,9 +7,12 @@ ClaudePet draws its mascot from built-in pixel art by default. To use higher-fid
 mascot-sleeping.png
 mascot-celebrating.png
 mascot-happy.png
+mascot-content.png
 mascot-neutral.png
+mascot-focused.png
 mascot-worried.png
 mascot-alarmed.png
+mascot-exhausted.png
 ```
 
 Each filename matches a `MascotEmotion` raw value. Square images work best (they're scaled to

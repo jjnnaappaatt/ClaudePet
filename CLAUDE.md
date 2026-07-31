@@ -198,11 +198,35 @@ likely on a subscription.
 
 ### Mascot & weather
 
-`MascotEmotion` is the single source of truth: `MetricsStore.mascotEmotion` derives mood from the
-larger of the two gauge fractions, and `WeatherCondition.from(emotion)` derives the sky from that
-same value — so face and weather can never disagree. One-shot moments (`WeatherEvent.confetti`,
-`.lightningStrike`) are edge-detected in `detectWeatherEdges()` at the end of each `recompute()`,
-queued, and drained once by `ContentView`; nothing fires on the first pass after launch.
+**The mascot block carries two numbers, on three layers.** The pet and its sky are the **5h session**;
+the ground under its feet is the **week**:
+
+- `MetricsStore.mascotEmotion` reads `blockFraction` **alone**, and `WeatherCondition.from(emotion)`
+  derives the sky from it — so face and weather can never disagree, and the whole scene means one
+  thing. It used to read `max(5h, weekly)`, which meant a stormy pet could be caused by either limit
+  with no way to tell which. Don't fold weekly back in; that makes the ground redundant and the face
+  ambiguous again (`MascotEmotionTests` pins both directions).
+- `GroundCondition` is the weekly fraction as terrain, drawn from `GroundArt` into its own matrix.
+  Terrain suits the slower clock: a session resets several times a day, a week once.
+
+Ground and mascot share the **same 16×16 lattice in the same `pet × pet` frame**, so their rows line up
+exactly — that is what lets them be separate matrices. The pet's art ends at **row 11** (feet), so
+ground owns rows 11 and below and the two can never overlap, and neither has to know about the other.
+Row 12 is the surface the feet land on and must never be empty; an empty cell there is a hole, and the
+pet reads as levitating over a floating slab. Weather is **not** on that lattice — it is 16×22 in a
+taller `pet × sky` frame, deliberately, so the sky sits above the pet; its cell size can therefore
+differ from the mascot's. `GroundView` has no `TimelineView`: ground doesn't move.
+
+Adding a mood or a ground state is cheap — the art is parametric (`Eyes × Arms × Accent`) — and that
+is exactly the trap. Two states can easily compose to the *same drawing*: the enum then has nine cases,
+every test passes, and the user sees seven. `ArtDistinctnessTests` enforces a measured floor of 6
+differing pixels; it caught seven collisions the first time it ran, three of them newly introduced.
+Render `CLAUDEPET_MASCOT` and look, too — it lays every mood, sky and ground out in rows, with the pet
+composited over the ground so a stray pixel in the feet is obvious.
+
+One-shot moments (`WeatherEvent.confetti`, `.lightningStrike`) are edge-detected in
+`detectWeatherEdges()` at the end of each `recompute()`, queued, and drained once by `ContentView`;
+nothing fires on the first pass after launch.
 
 `MascotEngine` and `WeatherEngine` are deliberately plain `@MainActor` classes, **not** `@Observable`
 — they're mutated inside `TimelineView` draw closures, and observation there would cause re-render
@@ -289,6 +313,25 @@ arrangement**, clamping back on-screen if a monitor is unplugged. Dockless agent
 Widget scaling multiplies font sizes via the `widgetScale` environment key rather than
 `.scaleEffect`, so text stays crisp.
 
+Two traps in the shared UI layer, both measured, both easy to reintroduce:
+
+- **Never `.opacity(…)` a `Theme` text colour — it compounds.** `Theme.textSecondary` is already white
+  at 0.70, so `.opacity(0.6)` on it is 0.42 absolute, not 0.6. In code that reads as "slightly
+  dimmer"; on screen it is 4.0:1 against the near-black card, under the 4.5:1 AA floor. Seventeen call
+  sites had drifted this way, five of them to 2.3:1. Use `textPrimary` / `textSecondary` /
+  `textTertiary` / `textFaint`, which carry their measured ratios in comments. Check contrast by
+  sampling the **rendered pixels** — source review is what let this through in the first place.
+- **A calendar can't fill an arbitrary rectangle.** Square cells take the *scarcer* axis, so a grid in
+  a wide, short card sizes off height and strands a third of the card empty; sized off width alone in
+  a short row it degenerates into 4pt stripes. `CycleCalendarView` takes width from the card, height
+  from the row, and caps the ratio.
+
+`DashboardView`'s per-card scale boosts buy **height** and are paid for in **width**. Each one is
+tuned at 1470×923 and then faded in with the window's width surplus (`boost(_:for:)`), because at the
+900pt minimum the same numbers overflow the row. And whichever card is *taller* sets its row's height,
+so a boost is free on one side and lands straight on `refHeight` on the other — moving a panel between
+cards flips which is which.
+
 `DashboardWindowController` hosts `DashboardView` in a second, real window. Facts verified by spike,
 each of which fails *silently* if undone:
 
@@ -333,27 +376,29 @@ because it lifts the headlines by the same factor. The dashboard sets 12; the wi
 When you change it, compute the *effective* points either side (`max(base, floor) × scale`): a floor that
 looks generous can still shrink a 10.5pt caption if `refHeight` moved at the same time.
 
-The summary rail runs at its **own** scale (`summaryBoost`), because the limits card beside it sets the
-row height and the rail's content only reached ~78% of it. Growing into that slack is free — it costs no
-type size elsewhere and doesn't move `refHeight`. The constant is a measured boundary: at 1.18 the card
-heights and the window's bottom margin match the unboosted layout exactly; at 1.20 the rail starts
-setting the row height instead and the bottom margin at 1470×923 collapses to zero. When re-measuring,
-don't use "are the two cards the same height?" as the guard — they share a row and stretch together, so
-it reads equal either way. Compare the card height against the unboosted baseline.
+Each card runs at its **own** scale — `usageBoost` (left: mascot, Today, gauges), `totalsBoost` (right:
+`/stats` totals, model grid, billing), `headerBoost` (the Today figures alone) and `lowerBoost` (the four
+lower cards). Whichever card is *taller* sets its row's height, so the same number is free on one side
+and lands straight on `refHeight` on the other — and moving a panel between cards **flips which is
+which**. That already happened once: before the top panels swapped sides the costly one was on the
+right at 1.2, and it is now `usageBoost` on the left. `totalsBoost` = 1.50 is a measured boundary (at
+1.55 the right card becomes the taller one and the row grows 482 → 498px at 1470×923). When
+re-measuring, don't use "are the two cards the same height?" as the guard — they share a row and stretch
+together, so it reads equal either way. Compare against the unboosted baseline.
 
-**A calendar can't fill an arbitrary rectangle.** Its aspect ratio is fixed by its shape, so square
-cells are capped by whichever axis is scarcer — `CycleCalendarView` sizes them from both and centres
-the grid. Given a single row (~150pt tall) the cells maxed out at ~22pt and the grid used a third of
-even a narrow card; that's why the calendar spans the whole left column of the lower half and the three
-smaller panels (wide and short — the opposite shape) stack to its right. Three cards down that right
-column needed more height than the two rows they replaced and pushed the page past the window at every
-size, so keep it at two.
+Boosts buy **height** and are paid for in **width**. `DashboardView.boost(_:for:)` fades every one of
+them in with the window's width surplus over `minWidth`, reaching full strength at 1.5× it: all four
+were measured at 1470×923, and applied at the 900pt minimum they overflowed the top row — the gap
+between its two cards collapsed to nothing and the model grid truncated to "In 22…".
 
-**Boosts that are free vs boosts that cost.** `summaryBoost` and `headerBoost` grow content into space
-some *other* view already forced open, so they change no height and cost nothing. `limitsBoost` and
-`barThickness` grow the card that SETS the top row's height, so they push `refHeight` up and shrink type
-everywhere — measure the whole page, not the card. When one of the free ones is at its ceiling, raising
-a costly one hands it new slack: the 1.2 limits boost is what let `summaryBoost` go 1.18 → 1.30.
+**A calendar can't fill an arbitrary rectangle.** Its aspect ratio is fixed by its shape, so *square*
+cells are capped by whichever axis is scarcer — which at 1470×923 left 84px dead on each side, a third
+of the card. `CycleCalendarView` now takes width from the card and height from the row, capping the
+ratio at 2.6:1; that brings the dead space to single digits everywhere except a wide-but-short window,
+where six rows genuinely cannot fill a wide card without becoming stripes. The lower half is **three**
+columns (charts stacked in a narrow one, then the calendar with width priority, then By project) —
+which is also cheaper than the two-row version it replaced, because independent columns take the
+tallest single height rather than a sum.
 
 **`refHeight` can never give the layout bottom margin.** It scales with the window: when height binds,
 `required = need × h/refHeight`, so tuning it to "just fits" sets `need ≈ refHeight` and the margin is
@@ -374,8 +419,8 @@ lever is `ProjectBreakdownView.maxRows`, not the scale clamp.
 Exactly one row stretches — the cycle chart, whose bars fill the height they're given. The others stay
 snug around their content. Stretching every row instead just moved the slack inside the cards (~180pt
 of dead air beside the mascot), which reads as unfinished; growing the one panel worth looking at
-large is what actually uses a big display. Related: the top row is split ~38/62, not evenly, because
-the mascot card holds a pet plus a short stats column while the limits card holds three full-width
+large is what actually uses a big display. Related: the top row is split ~46/54, not evenly, because
+the left card's gauges are full-width bars that reflow into any width while the right card holds
 gauges.
 
 ## Conventions

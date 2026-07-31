@@ -15,12 +15,12 @@ struct WeekAllTimeView: View {
             label("Week", metrics.week)
                 .help("Current weekly-limit window (resets every 7 days)."
                       + metrics.sidechainNote(metrics.week))
-            Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))
+            Text("·").foregroundStyle(Theme.textFaint)
             label("Cycle", metrics.cycle).help(cycleHelp)
             if let reset = metrics.cycleReset {
                 TimelineView(.periodic(from: .now, by: 3600)) { context in
                     Text("· \(Format.durationLong(reset.timeIntervalSince(context.date)))")
-                        .foregroundStyle(Theme.textSecondary.opacity(0.6))
+                        .foregroundStyle(Theme.textTertiary)
                 }
             }
             Spacer()
@@ -54,7 +54,7 @@ struct WeekAllTimeView: View {
 
     private func label(_ name: String, _ t: Totals) -> some View {
         HStack(spacing: 4) {
-            Text(name).foregroundStyle(Theme.textSecondary.opacity(0.8))
+            Text(name).foregroundStyle(Theme.textSecondary)
             Text(Format.tokens(metrics.totalsTokens(t))).foregroundStyle(Theme.textPrimary)
         }
     }

@@ -19,7 +19,7 @@ struct ModelBreakdownView: View {
         VStack(alignment: .leading, spacing: 3) {
             if metrics.todayByModel.isEmpty {
                 Text("no model usage today")
-                    .scaledFont(10).foregroundStyle(Theme.textSecondary.opacity(0.7))
+                    .scaledFont(10).foregroundStyle(Theme.textSecondary)
             } else {
                 ForEach(metrics.todayByModel) { row in
                     HStack(spacing: 6) {
@@ -32,7 +32,7 @@ struct ModelBreakdownView: View {
                             .scaledFont(10, design: .rounded).foregroundStyle(Theme.textSecondary)
                         Text(row.unpriced ? "—" : Format.currency(row.costUSD))
                             .scaledFont(10, weight: .semibold, design: .rounded)
-                            .foregroundStyle(row.unpriced ? Theme.textSecondary.opacity(0.6) : Theme.textPrimary)
+                            .foregroundStyle(row.unpriced ? Theme.textTertiary : Theme.textPrimary)
                             .frame(width: 44 * scale, alignment: .trailing)
                             .help(row.unpriced
                                 ? "No price set for \(row.family.displayName) — tokens are exact, cost can't be estimated."

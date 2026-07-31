@@ -15,7 +15,7 @@ struct BillingLineView: View {
                 Text("Paid").foregroundStyle(Theme.textSecondary)
                 Text(metrics.monthlyPrice > 0 ? Format.currency(metrics.monthlyPrice) : "—")
                     .foregroundStyle(Theme.textPrimary)
-                Text("·").foregroundStyle(Theme.textSecondary.opacity(0.4))
+                Text("·").foregroundStyle(Theme.textFaint)
                 Text("API value").foregroundStyle(Theme.textSecondary)
                 Text(Format.currency(metrics.cycle.costUSD)).foregroundStyle(Theme.claudeCoral)
                 if totalPaid > 0 {

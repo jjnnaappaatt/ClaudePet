@@ -50,14 +50,14 @@ struct DailyPaceView: View {
             }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.12))
+                    Capsule().fill(Theme.gaugeTrack(overAverage ? 1 : fraction))
                     // Full bar == a usual day, so the fill always agrees with the "today N%" beside it.
                     // Past a usual day it pins full; the ramp is what says how far past — the caption's
                     // % gives the number. Same palette ramp as the two gauges above, so "hotter" means
                     // the same thing on all three bars.
                     // `fraction` pins at 1 once today passes a usual day, so `overAverage` is what
                     // carries "past it" into the ramp's top stop.
-                    Capsule().fill(Theme.gaugeColor(overAverage ? 1 : fraction))
+                    Capsule().fill(Theme.gaugeGradient(overAverage ? 1 : fraction))
                         .frame(width: max(3, geo.size.width * fraction))
                 }
             }

@@ -91,4 +91,23 @@ import Foundation
         e.advance(to: t.addingTimeInterval(1.0 / 6.0))
         #expect(e.debugFlashing)             // bolt is active right after a strike
     }
+    /// The frame rate is a correctness constraint here, not a smoothness preference.
+    ///
+    /// Positions are floored onto a 16×22 lattice, so a drop is either on row 7 or row 8 — never
+    /// between. If its speed exceeds one row per frame it skips rows outright, and the rain reads as
+    /// dots blinking at unrelated heights instead of falling. At the old 6 fps the fastest drop moved
+    /// 2.3 rows a frame, which is what made heavy rain look sparse and broken.
+    @Test func rainNeverSkipsARowAtTheStandardFrameRate() {
+        let rowsPerFrame = WeatherEngine.maxRainRowsPerSecond / AnimationRate.standard
+        #expect(rowsPerFrame < 1.0,
+                "fastest drop moves \(rowsPerFrame) rows/frame — raise AnimationRate.standard or lower the rain speed")
+    }
+
+    /// Low Power Mode is allowed to be coarse, but not a slideshow: below ~4 fps the clouds visibly
+    /// jump rather than drift, which reads as a stutter bug rather than as a battery saving.
+    @Test func lowPowerRateStaysAboveASlideshow() {
+        #expect(AnimationRate.lowPower >= 4)
+        #expect(AnimationRate.lowPower < AnimationRate.standard)
+    }
+
 }

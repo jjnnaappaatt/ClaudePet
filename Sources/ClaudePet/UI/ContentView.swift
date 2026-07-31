@@ -116,13 +116,19 @@ struct ContentView: View {
         let pet = 64 * scale
         let sky = 88 * scale          // taller than the pet → open sky above it
         return HStack(alignment: .top, spacing: 11 * scale) {
+            // Three layers: sky behind, ground under the feet, pet in front. Pet and ground share
+            // one 16×16 lattice in this `pet` box so their rows align exactly; the sky is a taller
+            // 16×22 grid in the `sky` box, deliberately, so it opens out above the pet.
+            // The pet and its sky are the 5h session; the ground beneath is the week.
             ZStack(alignment: .bottom) {
                 if metrics.weatherEffectsEnabled {
                     WeatherView(width: pet, height: sky, engine: weatherEngine)   // sky overhead
                 }
+                GroundView(size: pet)                                            // the week underfoot
                 MascotView(size: pet)                                            // pet stands beneath
             }
             .frame(width: pet, height: sky, alignment: .bottom)
+            .help(metrics.petSceneDescription)
             StatsHeaderView()
         }
     }
