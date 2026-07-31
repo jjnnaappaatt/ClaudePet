@@ -43,8 +43,8 @@ struct ProjectBreakdownView: View {
 
         VStack(alignment: .leading, spacing: 4 * scale) {
             HStack {
-                Text("By project").scaledFont(11, weight: .semibold)
-                    .foregroundStyle(Theme.textSecondary)
+                Text("By project").scaledFont(13.5, weight: .semibold)
+                    .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Text("this cycle")
                     .scaledFont(9).foregroundStyle(Theme.textTertiary)

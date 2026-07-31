@@ -47,20 +47,14 @@ struct CycleCalendarView: View {
                 Text("no cycle data yet")
                     .scaledFont(10).foregroundStyle(Theme.textSecondary)
             } else {
-                // Cells take their WIDTH from the card and their HEIGHT from the row — they are not
-                // square, and forcing them to be was the bug.
+                // Cells are SQUARE, and the card is sized to suit rather than the other way round.
                 //
-                // A square cell can only be as big as the *scarcer* axis, and here that's height:
-                // measured at 1470×923 the grid took 45pt cells in a card 513pt wide, spanning
-                // x 100…444 and leaving 84pt dead on each side — a third of the card. Sizing each axis
-                // from its own budget fills it at zero page cost. The 2.6 cap is the guard against the
-                // opposite failure: sized on width alone in a short row, the cells degenerated into 4pt
-                // stripes. Tuned against the column width, not chosen for looks — at 1.8 the grid still
-                // left 85px dead on each side at 1470×923; the pair (cap 2.6, column 0.41) brings that
-                // to single digits from 900×800 through 2560×1440. At every one of those the *width*
-                // binds and the cap is inert; it only takes over in a wide-but-short window, where six
-                // rows of calendar genuinely cannot fill a wide card without becoming stripes, and some
-                // centred slack is the better of the two bad outcomes.
+                // A square cell can only be as big as the scarcer axis, and here that is always height:
+                // seven columns across a wide card want far more width than the row can give in height.
+                // Letting cells go wide to fill the card was tried (a 2.6:1 cap) and it does remove the
+                // dead space, but a month grid of 2.6:1 tiles stops reading as a calendar. So the cells
+                // stay square and `DashboardView` gives this card a narrow column instead — the fix
+                // belongs in the column width, not in the cell shape.
                 GeometryReader { g in
                     let gap = 4 * scale
                     // The weekday header shares this space, so its line has to come off the height
@@ -69,8 +63,8 @@ struct CycleCalendarView: View {
                     let rows = CGFloat(weeks.count)
                     let fullW = max(6, (g.size.width - gap * 6) / 7)
                     let fullH = max(6, (g.size.height - headerRow - gap * rows) / rows)
-                    let cellH = min(fullH, fullW)                 // never taller than wide
-                    let cellW = min(fullW, cellH * 2.6)           // …nor more than 2.6× wider
+                    let side = min(fullH, fullW)                 // square: the scarcer axis wins
+                    let cellH = side, cellW = side
                     VStack(spacing: gap) {
                         weekdayHeader(cal: cal, side: cellW, gap: gap)
                         ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
@@ -91,48 +85,98 @@ struct CycleCalendarView: View {
         .help(help)
     }
 
-    /// Headline-sized, like the Today figures — this card owns the whole left column, so a caption-sized
-    /// title read as a footnote on it.
+    /// How wide this card wants to be for a given height.
+    ///
+    /// Square cells make the width a **function of the height** — seven columns of whatever the row
+    /// can spare vertically — so the column can't be a fixed fraction of the window. It was, and at
+    /// 1470×923 that left a 241pt grid centred in a 424pt card: 91pt dead on each side, the same
+    /// failure as the original square-cell attempt, just moved. `DashboardView` calls this to size the
+    /// column from the row height instead.
+    ///
+    /// The chrome figures are measured, and errors here degrade gently in both directions: too narrow
+    /// and the cells simply become width-bound and a little smaller; too wide and a little slack
+    /// returns. Neither clips.
+    static func naturalWidth(cardHeight: CGFloat, weeks: Int, scale: CGFloat) -> CGFloat {
+        let cardPadding: CGFloat = 16                  // `card()` pads 8 on each side, unscaled
+        let chrome = (46 + 14 + 12) * scale            // stacked header + legend + the two 6pt gaps
+        let gap = 4 * scale
+        let headerRow = 16 * scale                     // the weekday letters
+        let rows = CGFloat(max(1, weeks))
+        let gridH = max(30 * scale, cardHeight - cardPadding - chrome)
+        let side = max(6, (gridH - headerRow - gap * rows) / rows)
+        return side * 7 + gap * 6 + cardPadding
+    }
+
+    /// Two lines, not one. The total used to sit at the end of the title row, which meant the header
+    /// needed ~420pt before it would fit — and that, not the grid, was what set this card's minimum
+    /// width and kept it from ever being narrow enough for square cells to fill it. Stacking also
+    /// reads as more of a headline, not less: the figure gets a line of its own instead of being
+    /// squeezed against the right edge.
     private var header: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            // The card is deliberately narrow now, so the date range is dropped whole rather than
+            // clipped to "4 Jul – 4…", which says less than nothing. Same degradation as the charts.
+            ViewThatFits(in: .horizontal) {
+                titleRow(withDates: true)
+                titleRow(withDates: false)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
+                // The cycle TOTAL, so it names the basis rather than sitting beside a "/day" caption —
+                // "90.3M work/day" would read as a rate.
+                Text(amount(metrics.budgetUnit == .usd
+                            ? metrics.cycle.costUSD
+                            : Double(metrics.totalsTokens(metrics.cycle))))
+                    .scaledFont(26, weight: .bold, design: .rounded)
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize()
+                if metrics.budgetUnit == .tokens {
+                    Text(metrics.tokenBasisLabel)
+                        .scaledFont(9).foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func titleRow(withDates: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
             Text("This billing cycle").scaledFont(15, weight: .semibold)
                 .foregroundStyle(Theme.textPrimary)
-            if let start = metrics.cycleStart, let end = metrics.cycleReset {
+                .fixedSize()
+            if withDates, let start = metrics.cycleStart, let end = metrics.cycleReset {
                 Text(start.formatted(.dateTime.month(.abbreviated).day())
                      + " – " + end.formatted(.dateTime.month(.abbreviated).day()))
                     .scaledFont(9).foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
+                    .lineLimit(1).fixedSize()
             }
-            Spacer(minLength: 4 * scale)
-            // The cycle TOTAL, so it names the basis rather than sitting beside a "/day" caption —
-            // "90.3M work/day" would read as a rate.
-            Text(amount(metrics.budgetUnit == .usd
-                        ? metrics.cycle.costUSD
-                        : Double(metrics.totalsTokens(metrics.cycle))))
-                .scaledFont(26, weight: .bold, design: .rounded)
-                .foregroundStyle(Theme.textPrimary)
-            if metrics.budgetUnit == .tokens {
-                Text(metrics.tokenBasisLabel)
-                    .scaledFont(9).foregroundStyle(Theme.textTertiary)
-            }
+            Spacer(minLength: 0)
         }
     }
 
     /// What the shading means. A density grid is unreadable without it — every other panel here states
     /// its own units, and this one was asking the reader to infer them.
     private func legend(maxV: Double) -> some View {
+        ViewThatFits(in: .horizontal) {
+            legendRow(maxV: maxV, withPeak: true)
+            legendRow(maxV: maxV, withPeak: false)
+        }
+    }
+
+    private func legendRow(maxV: Double, withPeak: Bool) -> some View {
         HStack(spacing: 5 * scale) {
-            Text("less").scaledFont(8).foregroundStyle(Theme.textTertiary)
+            Text("less").scaledFont(8).foregroundStyle(Theme.textTertiary).fixedSize()
             ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { step in
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(Theme.claudeCoral.opacity(step == 0 ? 0.06 : 0.16 + 0.74 * step))
                     .frame(width: 9 * scale, height: 9 * scale)
             }
-            Text("more").scaledFont(8).foregroundStyle(Theme.textTertiary)
-            Spacer()
-            Text("up to \(amount(maxV))/day")
-                .scaledFont(8).foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
+            Text("more").scaledFont(8).foregroundStyle(Theme.textTertiary).fixedSize()
+            Spacer(minLength: 4 * scale)
+            if withPeak {
+                Text("up to \(amount(maxV))/day")
+                    .scaledFont(8).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).fixedSize()
+            }
         }
     }
 

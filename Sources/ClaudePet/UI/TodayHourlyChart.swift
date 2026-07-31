@@ -24,7 +24,7 @@ struct TodayHourlyChart: View {
     var body: some View {
         let hours = metrics.todayHourly
         let maxV = max(hours.map(value).max() ?? 1, 1)
-        let barMax = (fillsHeight ? 30 : 24) * scale
+        let barMax = (fillsHeight ? 30 : 40) * scale
         let currentHour = Calendar.current.component(.hour, from: Date())
 
         VStack(alignment: .leading, spacing: 4 * scale) {
@@ -36,10 +36,7 @@ struct TodayHourlyChart: View {
             // `ViewThatFits` rather than truncation: this card sits in a narrow column, and at 900pt
             // the caption clipped to "peak ~1…", which is worse than absent. Dropping it whole is the
             // right degradation — the peak hour is also readable off the bars themselves.
-            ViewThatFits(in: .horizontal) {
-                header(withCaption: true)
-                header(withCaption: false)
-            }
+            header()
             if fillsHeight {
                 GeometryReader { g in
                     bars(hours, maxV: maxV, currentHour: currentHour, barArea: max(8, g.size.height))
@@ -52,31 +49,24 @@ struct TodayHourlyChart: View {
                 Text("12a"); Spacer(); Text("6a"); Spacer(); Text("12p"); Spacer(); Text("6p")
             }
             .scaledFont(7).foregroundStyle(Theme.textSecondary)
-            if !fillsHeight {
-                Text(caption)
-                    .scaledFont(9.5).lineLimit(1)
-                    .foregroundStyle(Theme.textTertiary)
-            }
         }
         .help("Today's usage by local hour — when in the day you've been working. Local data only.")
     }
 
-    private func header(withCaption: Bool) -> some View {
+    /// Title left, peak hour right — in **both** layouts now. The total used to sit on the right, but
+    /// it is the same figure the Today gauge already prints one card away in the dashboard, and the
+    /// same one the header prints in the widget. Repeating it twice in one view bought nothing, and
+    /// the peak hour is the one thing this chart knows that nothing else does.
+    private func header() -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
-            Text("Today by hour").scaledFont(fillsHeight ? 11 : 10, weight: .semibold)
-                .foregroundStyle(Theme.textSecondary)
+            Text("Today by hour").scaledFont(fillsHeight ? 13.5 : 12, weight: .semibold)
+                .foregroundStyle(fillsHeight ? Theme.textPrimary : Theme.textSecondary)
                 .fixedSize()
-            if fillsHeight && withCaption {
-                Text(caption).scaledFont(9)
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1).fixedSize()
-            }
             Spacer(minLength: 4 * scale)
-            Text(amount(value(from: metrics.today)))
-                .scaledFont(fillsHeight ? 21 : 9.5,
-                            weight: fillsHeight ? .bold : .regular, design: .rounded)
-                .foregroundStyle(fillsHeight ? Theme.textPrimary : Theme.textTertiary)
-                .fixedSize()
+            Text(caption)
+                .scaledFont(fillsHeight ? 10 : 10.5)
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1).fixedSize()
         }
     }
 
@@ -100,8 +90,8 @@ struct TodayHourlyChart: View {
         unit == .usd ? t.costUSD : Double(metrics.totalsTokens(t))
     }
 
-    /// Short in the dashboard: this card sits in a narrow column there, and "most active ~4p" beside
-    /// the title and a hero figure truncated to "most active ~…" — which says nothing at all.
+    /// Short in the dashboard, where this card sits in a narrow column and the long form clipped to
+    /// "most active ~…", which says nothing at all. The widget has the width for the full phrase.
     private var caption: String {
         guard let h = metrics.peakHour(unit: unit) else {
             return fillsHeight ? "no activity" : "no activity yet today"
