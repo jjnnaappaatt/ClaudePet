@@ -11,7 +11,7 @@ import ClaudePetCore
 struct DailyPaceView: View {
     /// Bar thickness. 7 suits the widget's compact card; the dashboard passes a fatter bar, where the
     /// same 7pt reads as a hairline next to figures three times the size.
-    var barThickness: CGFloat = 7
+    var barThickness: CGFloat = 9
 
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -57,7 +57,7 @@ struct DailyPaceView: View {
                     // the same thing on all three bars.
                     // `fraction` pins at 1 once today passes a usual day, so `overAverage` is what
                     // carries "past it" into the ramp's top stop.
-                    Capsule().fill(Theme.gaugeGradient(overAverage ? 1 : fraction))
+                    Capsule().fill(Theme.gaugeFill(overAverage ? 1 : fraction))
                         .frame(width: max(3, geo.size.width * fraction))
                 }
             }

@@ -84,9 +84,11 @@ struct StatsModelBreakdownView: View {
             HStack(spacing: 6 * scale) {
                 Circle().fill(dotColor[m.family] ?? .gray)
                     .frame(width: 6 * scale, height: 6 * scale)
+                // Shrink rather than clip — this grid is the documented site of the "In 22…"
+                // truncation, and the card's type just grew.
                 Text(m.displayName)
                     .scaledFont(10.5, weight: .medium).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
+                    .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 4 * scale)
                 Text("\(share * 100, specifier: "%.1f")%")
                     .scaledFont(10, weight: .semibold, design: .rounded)
@@ -99,7 +101,7 @@ struct StatsModelBreakdownView: View {
                 Spacer()
             }
             .scaledFont(9.5).foregroundStyle(Theme.textSecondary)
-            .lineLimit(1)
+            .lineLimit(1).minimumScaleFactor(0.8)
             .padding(.leading, 12 * scale)
         }
         .help("\(m.displayName): \(Format.tokens(m.workTokens)) input+output all time, "

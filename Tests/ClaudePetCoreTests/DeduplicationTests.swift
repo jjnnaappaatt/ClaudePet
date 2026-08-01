@@ -20,13 +20,25 @@ import Foundation
         #expect(unique.reduce(0) { $0 + $1.workTokens } == 150)   // NOT 350
     }
 
-    @Test func statefulDedupAcrossBatches() {
-        var dedup = Deduplicator()
-        let first = dedup.newEntries(from: [entry("a", work: 1), entry("b", work: 1)])
-        let second = dedup.newEntries(from: [entry("b", work: 1), entry("c", work: 1)])
-        #expect(first.map(\.messageID) == ["a", "b"])
-        #expect(second.map(\.messageID) == ["c"])   // b already seen in batch 1
-        #expect(dedup.uniqueCount == 3)
+    /// Dedup spans batches — i.e. it is global across files, not per file.
+    ///
+    /// This used to drive `Deduplicator.newEntries`, a stateful API with zero production call sites:
+    /// the scanner caches raw entries per file and dedups the whole concatenation at merge time,
+    /// precisely so the result can't depend on which file a duplicate landed in. Re-pointed at
+    /// `merge` so the property is still pinned against the code that actually runs.
+    @Test func dedupSpansBatchesRatherThanFiles() {
+        let batchA = [entry("a", work: 1), entry("b", work: 1)]
+        let batchB = [entry("b", work: 1), entry("c", work: 1)]
+        let merged = UsageScanner.merge(batchA + batchB)
+        #expect(merged.map(\.messageID) == ["a", "b", "c"])
+        #expect(merged.reduce(0) { $0 + $1.workTokens } == 3)   // b counted once, not twice
+    }
+
+    /// The same input with dedup off keeps every copy — the "match /stats" mode.
+    @Test func mergeKeepsRepeatsWhenAskedTo() {
+        let raw = UsageScanner.merge([entry("a", work: 1), entry("a", work: 1)], deduplicated: false)
+        #expect(raw.count == 2)
+        #expect(raw.reduce(0) { $0 + $1.workTokens } == 2)
     }
 
     @Test func distinctIDsAllKept() {

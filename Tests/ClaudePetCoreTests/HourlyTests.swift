@@ -68,11 +68,21 @@ import Foundation
         #expect(store.peakHour(unit: .usd) == 10)
     }
 
-    @Test func hourLabelFormatsTwelveHourClock() {
-        #expect(Format.hourLabel(0) == "12a")
-        #expect(Format.hourLabel(9) == "9a")
-        #expect(Format.hourLabel(12) == "12p")
-        #expect(Format.hourLabel(18) == "6p")
-        #expect(Format.hourLabel(23) == "11p")
+    /// Read as a word, not as a position on the chart's 0…24 axis — see `Format.hourLabel` for why
+    /// the two deliberately differ.
+    @Test func hourLabelReadsAsAWord() {
+        #expect(Format.hourLabel(0) == "12am")
+        #expect(Format.hourLabel(9) == "9am")
+        #expect(Format.hourLabel(11) == "11am")
+        #expect(Format.hourLabel(12) == "12pm")
+        #expect(Format.hourLabel(18) == "6pm")
+        #expect(Format.hourLabel(23) == "11pm")
+    }
+
+    /// Out-of-range hours wrap rather than producing "24pm" or a negative — the chart indexes 0…23.
+    @Test func hourLabelWrapsOutOfRange() {
+        #expect(Format.hourLabel(24) == "12am")
+        #expect(Format.hourLabel(-1) == "11pm")
+        #expect(Format.hourLabel(25) == "1am")
     }
 }

@@ -58,6 +58,10 @@ public struct DayTotal: Sendable, Equatable, Identifiable {
     public var workTokens: Int = 0
     public var totalTokens: Int = 0
     public var costUSD: Double = 0
+    /// The subagent (sidechain) slice of the two counts above — accumulated alongside them, for the
+    /// same reason `Totals` carries its own: a share can't be recovered afterwards from a total.
+    public var sidechainWorkTokens: Int = 0
+    public var sidechainTotalTokens: Int = 0
     public var id: TimeInterval { date.timeIntervalSince1970 }
 }
 
@@ -89,6 +93,10 @@ public struct Aggregates: Sendable, Equatable {
     /// project. Both use the identical in-cycle predicate as `cycle`, so each sums exactly to it.
     public var cycleDaily: [DayTotal] = []
     public var cycleByProject: [ProjectTotal] = []
+    /// The same split over ALL history. Kept beside the cycle version rather than replacing it: the
+    /// cycle one is pinned by tests to sum exactly to `cycle`, which the dashboard's calendar card
+    /// depends on. This one sums to `allTime` instead.
+    public var allTimeByProject: [ProjectTotal] = []
 }
 
 /// Rolls deduplicated entries into today / week / all-time totals plus a
@@ -169,11 +177,19 @@ public enum Aggregator {
         // afterwards — see `ProjectKey.resolveRoot`.
         struct ProjectAcc { var work = 0; var total = 0; var cost = 0.0; var cwds: [String: Int] = [:] }
         var projectAcc: [String: ProjectAcc] = [:]
+        var lifetimeProjectAcc: [String: ProjectAcc] = [:]
 
         for e in entries {
             let cost = pricing.cost(for: e)
             let weight = pricing.weight(for: e.family)
             agg.allTime.add(e, cost: cost, weight: weight)
+
+            var lifeAcc = lifetimeProjectAcc[e.projectDir] ?? ProjectAcc()
+            lifeAcc.work += e.workTokens
+            lifeAcc.total += e.totalTokens
+            lifeAcc.cost += cost
+            if !e.project.isEmpty { lifeAcc.cwds[e.project, default: 0] += 1 }
+            lifetimeProjectAcc[e.projectDir] = lifeAcc
 
             // ONE predicate for `cycle`, `cycleDaily` and `cycleByProject`: the dashboard shows the
             // three together, so a bar chart or a project list that didn't add up to the headline
@@ -187,6 +203,10 @@ public enum Aggregator {
                     cycleBuckets[day]!.workTokens += e.workTokens
                     cycleBuckets[day]!.totalTokens += e.totalTokens
                     cycleBuckets[day]!.costUSD += cost
+                    if e.isSidechain {
+                        cycleBuckets[day]!.sidechainWorkTokens += e.workTokens
+                        cycleBuckets[day]!.sidechainTotalTokens += e.totalTokens
+                    }
                 }
 
                 var acc = projectAcc[e.projectDir] ?? ProjectAcc()
@@ -224,6 +244,10 @@ public enum Aggregator {
                 dayBuckets[key]!.workTokens += e.workTokens
                 dayBuckets[key]!.totalTokens += e.totalTokens
                 dayBuckets[key]!.costUSD += cost
+                if e.isSidechain {
+                    dayBuckets[key]!.sidechainWorkTokens += e.workTokens
+                    dayBuckets[key]!.sidechainTotalTokens += e.totalTokens
+                }
             }
 
             if calendar.isDate(e.timestamp, inSameDayAs: now) {
@@ -268,6 +292,19 @@ public enum Aggregator {
         // This is a deterministic default order, not the display order — a view showing `work` or `$`
         // must re-sort by the figure it actually prints (see `ProjectBreakdownView`).
         agg.cycleByProject = byPath.values.sorted {
+            if $0.path.isEmpty != $1.path.isEmpty { return !$0.path.isEmpty }
+            return $0.totalTokens > $1.totalTokens
+        }
+        var lifeByPath: [String: ProjectTotal] = [:]
+        for (dir, acc) in lifetimeProjectAcc {
+            let path = ProjectKey.resolveRoot(dir: dir, cwdCounts: acc.cwds)
+            var pt = lifeByPath[path] ?? ProjectTotal(path: path)
+            pt.workTokens += acc.work
+            pt.totalTokens += acc.total
+            pt.costUSD += acc.cost
+            lifeByPath[path] = pt
+        }
+        agg.allTimeByProject = lifeByPath.values.sorted {
             if $0.path.isEmpty != $1.path.isEmpty { return !$0.path.isEmpty }
             return $0.totalTokens > $1.totalTokens
         }

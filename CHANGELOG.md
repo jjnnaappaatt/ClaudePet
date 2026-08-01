@@ -3,6 +3,154 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.11.0] — 2026-08-01
+
+### Added
+- **Lifetime KPI tiles** fill the empty band in the totals card: sessions, messages, active days,
+  first session, current and longest streak, all-time busiest hour, and longest session. Every figure
+  is **read from Claude Code's own stats cache**, the same rule that governs the `/stats` total above
+  them — the file already carried all of it.
+  - Three of the tiles Claude Code shows are deliberately absent, because they'd restate their
+    neighbours: Total tokens is the hero of that very card, Favourite model is row 1 of the model grid
+    directly above it, and tokens/day is what the Today pace bar prints.
+  - **Figures the cache can undercount are extended with our own days.** It is recomputed at most
+    daily, so a streak read straight out of it understates — it said 24 where the truth was 26, and
+    active days 71 where Claude Code itself showed 73. Current streak, longest streak and active days
+    all extend across the same span, so they can't contradict each other.
+  - A missing field renders as "—", never "0": an older Claude Code writes a cache without these keys,
+    and "0 messages" would be a confident lie rather than "this file doesn't say".
+- **Subagents/day**, in its own box beside This week: how much of each day ran under the Task tool,
+  as a **share of that day on a fixed 0–100% scale**. The track is the whole day, the fill is the
+  delegated part, and the percentage is printed under each weekday.
+  - It was briefly a second bar chart of the same shape, and that was wrong. Each chart normalises to
+    its own maximum, so Tuesday's subagent bar stood exactly as tall as Tuesday's total bar while
+    being ~6× smaller — two identical marks side by side invite that comparison, and giving them
+    separate boxes made it worse rather than better. A share has no free maximum, so there is nothing
+    left to misread.
+  - Deliberately **not** the gauge ramp. Every ramped bar in the app means "close to a limit", and a
+    heavy-delegation day is not a warning — the same argument that made Subagents today a pace bar.
+  - The header carries the week's own share, and drops it whole rather than clipping it when the card
+    is too narrow.
+  - `DayTotal` carries the subagent split per day now, not just per window, and the buckets sum to
+    the window's own subagent figure exactly the way This week's sum to Week.
+
+### Changed
+- **Memory: idle footprint drops from 368 MB to ~181 MB, and the scan's peak from 1.2 GB to 724 MB.**
+  A pet widget that idles between 30-second recomputes was sitting on its own high-water mark, and
+  `vmmap` said why: **998 MB of `MALLOC_SMALL` regions marked "(empty)"** — arenas grown to parse
+  1.9 GB of transcripts, freed, and then kept against a next allocation that doesn't come for hours.
+  `heap` now puts the live set at **82.5 MB** across 230k nodes, of which 41.9 MB is the per-file entry
+  cache and 8.1 MB is one interned string per entry.
+  - Read `Physical footprint`, not `ps` RSS: RSS counts clean resident pages and still reads ~709 MB
+    against a 181 MB footprint. And compare like ages — an idle process sheds hundreds of MB, so a
+    17-minute "before" against a 1-minute "after" measures the clock, not the change.
+  - **Intern `model` and `cwd` while parsing.** Both come back from `JSONDecoder` as a fresh `String`
+    per line and both exceed Swift's 15-byte inline limit, so each one heap-allocated: **250,200
+    allocations carrying about 130 distinct values** on a 125,806-entry corpus. `heap` confirms it —
+    126,461 `Swift.StringStorage` nodes remain, one per entry rather than four.
+  - **Stop building the entry list three times.** The merge used `flatMap` (which reallocates as it
+    grows) and then `filter` for dedup (which returns a second full array). It now counts first,
+    reserves once, and compacts in place.
+  - **Hand the freed pages back**, with one `malloc_zone_pressure_relief` after a scan — never after a
+    recompute, which touches no disk. Empty small-zone regions fell 266 → 141.
+  - **Skip 56.5% of lines before `JSONDecoder` ever sees them.** Of 289,259 logged lines only 125,806
+    contain a `usage` key; the rest were being decoded into a full `LogRecord` purely to be dropped one
+    line later. A substring test rejects them first. It also removes two redundant copies per line —
+    `Data.SubSequence` *is* `Data`, so the chunk copy and the per-line copy bought nothing.
+    **This did not move the peak** (724 MB against 692–790 MB before it), so it is a scan-speed and
+    allocation-churn change, not a footprint one; it is kept on those terms.
+- **Subagents today is a pace bar**, read against your own recent subagent days rather than as a share
+  of today. As a share it had no ceiling, so the gauge ramp would have been lying: 60% subagents is a
+  fact about how you worked, not a warning, and the same day reads ~15% of work but ~8% of
+  cache-inclusive total depending on a display setting. Against your usual subagent day it asks the
+  same question the Today bar asks, so the colour means what it means everywhere else — full bar = a
+  usual day, pinned once past it, exact % in the caption. A day with no history says "building
+  subagent average…" instead of drawing a bar. Its caption no longer carries "18% of today" as a third
+  clause — that share now has a chart of its own, where it is the point rather than an aside.
+- **The subagent percentage sits on top of its own bar**, rising with it, and 15% smaller. It went
+  centred (floating in an empty track with the bar far below) → pinned to the top of the track (a tidy
+  row, but a 7% day labelled 100pt above the 7% bar) → riding the fill. Clamped so a near-100% day puts
+  it on the coral rather than off the top. Dropping the second label row also lands the weekday letters
+  on the same baseline as This week's beside it.
+  - The size reduction nearly shipped as a no-op. Declared 12pt and scaled, the old label asked for
+    16.65pt — too wide for a ~34pt slot — so `minimumScaleFactor` had been silently shrinking it to
+    ~14pt. Taking 15% off the declared size changed the picture by 3%, because the declared size was
+    never what was on screen. Measured from pixels instead: "48%" is 32 → 27px wide, cap 11 → 9px.
+- **"+N more" lines up with the token column** it continues. It carried neither the row's horizontal
+  padding nor its trailing cost reservation, so it drifted 63pt right, into the *cost* column: a token
+  total sitting under the dollar figures, reading as a dollar figure.
+- **The model grid and lifetime tiles are 15% larger.** Their fonts are declared at 9–10.5pt but the
+  dashboard floors every font at 12, so editing those numbers does nothing — only the card's boost
+  moves them. The height came out of that card's own inter-section gaps rather than the page: at the
+  same boost with the old gaps the top row grew 48pt and clipped the bottom card off the window.
+  `"Busiest hr · all time"` now fits in full, where it truncated to `"all ti…"` even before the
+  increase.
+- **Tuesday and Thursday no longer both read "T".** English initials are S M T W T F S — *two* pairs
+  collide, and only the weekend one had been fixed. The weekly charts begin on the weekly reset day,
+  which moves, so the order rotates and position can't separate either pair. Both now get two letters:
+  `M Tu W Th F Sa Su`. The billing calendar shares the same helper even though its fixed Sunday-first
+  columns would disambiguate on their own — it sits on the same screen as both charts, and one view
+  showing "T" and another showing "Tu" for the same weekday is its own small lie.
+- **Four boxes in the lower left, not two cards of two panels**: Today by hour, Today by model,
+  Subagents/day and This week each get their own card, with the two weekday charts on an exact 50/50
+  split — equal widths are what make them fair to compare. The vertical seam therefore doesn't line up
+  with the row above, which is accepted: matching it would mean taking width from the 24-bar hour
+  chart or handing Subagents/day more room than This week.
+- **By project is all time**, not this cycle. Its header says so, and the empty state no longer claims
+  the cycle is quiet when what it means is that nothing has been read yet. The cycle split is still
+  computed and still sums exactly to the Cycle figure — this adds a lifetime series beside it rather
+  than changing what that one means.
+- **"Billing cycle"**, not "This billing cycle", and the title now sits against the middle of the
+  figure beside it rather than hugging its top. At the 900×800 minimum the shorter name fits on one
+  line, which brings back the full date range and the legend's peak-per-day figure.
+- **Thicker gauge bars and the slack spread between the rows, not pooled under them.** The complaint
+  was the gap between the three bars, not the bars themselves: all the card's spare height used to
+  collect at the bottom, so the gauges bunched under the mascot with a void beneath. Equal spacers
+  distribute it into the gaps instead. Widget and dashboard both.
+- **The dashboard's type is ~3% smaller** at every size where height binds. The subagent pace bar made
+  the left card the taller of the two, so it now sets the top row's height, and the lower row — which
+  was already at its minimum on a wide, short window — lost the difference and clipped "By project"
+  off the bottom edge at 1990×820. The reference height it scales against had to grow to match what
+  the layout actually needs. Nothing on screen looks tight before it clips, because every gauge and
+  chart in that card stretches; the check is the bottom-most *card* pixel, not the text.
+- **The billing-cycle header wraps its title and pins the figure top-right.** Every earlier
+  arrangement fought the card's narrowness: one line needed ~420pt and set the card's minimum width,
+  and stacking the figure under the title spent ~45px of height — which is what the square cells are
+  sized by. Letting the *words* wrap spends the one thing the header has spare and buys the grid
+  ~24px of width back.
+- **Today's cell in the calendar is properly marked** — a ring at double the weight and full-strength
+  coral. At 1.5px against a shaded fill it read as an artifact of the shading.
+- **Each gauge bar is one flat colour again**, chosen by that bar's own percentage, instead of a
+  gradient along its length. It is also what the statusline does: `build_bar` resolves a single rgb
+  for the whole bar. A bar shaded along its length implies the early part of the window was "cooler"
+  than the later part, which isn't a thing that happened — every token counts the same.
+- **The billing-cycle calendar is wider**, with correspondingly bigger cells — 279 → 302px at
+  1470×923, and 279 → 339px at the 900×800 minimum. Widening it alone could never have worked: with
+  square cells its width is set by its *height*, so it was already at its cap and the extra would have
+  become dead space. The height had to come out of the top row.
+  - It reached +50% mid-way and gave most of it back, because everything added to the top row
+    afterwards — the 30% larger mascot, the KPI tiles, the subagent pace bar — is height the lower row
+    no longer has. The end state is +8%, and saying +50% would describe a build nobody will run.
+- **Today by hour sits above This week**, and shares its card with a new **Today by model** column —
+  which models you used today, the one thing the widget showed that the dashboard didn't. (The model
+  grid in the card above is Claude Code's *all-time* `/stats` split, a different question.) The column
+  hides itself when the card is too narrow to hold it and the chart.
+- **The hour axis runs 0–24** rather than 12a/6a/12p/6p. The bars are 24 hourly buckets, so a 24-hour
+  axis maps onto them one-to-one instead of making the reader translate first. The peak-hour caption
+  follows, zero-padded so it doesn't reflow as it ticks past 09.
+- **The mascot block is 30% larger** in the dashboard. Not free: the mascot row is the taller of the
+  sky and the Today header, and the sky binds — so every point of it pushes the top row down into the
+  lower one, measured at 1.9px of calendar width per point. That trade was made deliberately, and it
+  is most of why the calendar's +50% ended up at +8%.
+- **"Today by model" is larger and looser** — bigger names and figures, more space between rows.
+- **One name for the peak hour, with am/pm.** The widget said "most active ~09" and the dashboard
+  "peak ~09" for the identical figure, which read as two different measurements. Both now say
+  `peak ~9am`. The chart's axis stays on 0–24 deliberately: it's a scale read by position, where the
+  numbers map one-to-one onto the twenty-four buckets, while the caption is a single time read as a
+  word.
+- **The axis labels have room to breathe** — the weekday letters and hour numbers were touching the
+  bottom edge of their cards, which read as clipped rather than finished.
+
 ## [0.10.1] — 2026-07-31
 
 ### Changed

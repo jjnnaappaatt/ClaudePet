@@ -45,10 +45,18 @@ struct TodayHourlyChart: View {
             } else {
                 bars(hours, maxV: maxV, currentHour: currentHour, barArea: barMax)
             }
+            // 0…24, not 12a/6a/12p/6p. The bars are 24 hourly buckets, so a 24-hour axis maps onto
+            // them one-to-one; the 12-hour form made the reader translate before they could read the
+            // shape. `24` closes the span rather than leaving the last bar's edge unlabelled.
             HStack(spacing: 0) {
-                Text("12a"); Spacer(); Text("6a"); Spacer(); Text("12p"); Spacer(); Text("6p")
+                Text("0"); Spacer(); Text("6"); Spacer(); Text("12")
+                Spacer(); Text("18"); Spacer(); Text("24")
             }
             .scaledFont(7).foregroundStyle(Theme.textSecondary)
+            // The axis sat hard against the card's bottom edge, which read as clipped rather than as
+            // finished. The card's own padding is unscaled, so this is the only lever that grows with
+            // the layout.
+            .padding(.bottom, 4 * scale)
         }
         .help("Today's usage by local hour — when in the day you've been working. Local data only.")
     }
@@ -58,15 +66,29 @@ struct TodayHourlyChart: View {
     /// same one the header prints in the widget. Repeating it twice in one view bought nothing, and
     /// the peak hour is the one thing this chart knows that nothing else does.
     private func header() -> some View {
+        ViewThatFits(in: .horizontal) {
+            headerRow(withCaption: true)
+            headerRow(withCaption: false)
+        }
+    }
+
+    /// The `ViewThatFits` is load-bearing, and the comment above claimed it long before the code had
+    /// it. Both runs are `.fixedSize()`, and `.fixedSize()` text does not stay inside its frame: once
+    /// this card was pinned to an explicit width, a header wider than the card centred its overflow
+    /// and pushed the entire lower row off the left edge of the window. Dropping the caption whole is
+    /// the right degradation — the peak hour is readable off the bars, and "peak ~1…" is not.
+    private func headerRow(withCaption: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
             Text("Today by hour").scaledFont(fillsHeight ? 13.5 : 12, weight: .semibold)
                 .foregroundStyle(fillsHeight ? Theme.textPrimary : Theme.textSecondary)
                 .fixedSize()
             Spacer(minLength: 4 * scale)
-            Text(caption)
-                .scaledFont(fillsHeight ? 10 : 10.5)
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1).fixedSize()
+            if withCaption {
+                Text(caption)
+                    .scaledFont(fillsHeight ? 10 : 10.5)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).fixedSize()
+            }
         }
     }
 
@@ -90,12 +112,10 @@ struct TodayHourlyChart: View {
         unit == .usd ? t.costUSD : Double(metrics.totalsTokens(t))
     }
 
-    /// Short in the dashboard, where this card sits in a narrow column and the long form clipped to
-    /// "most active ~…", which says nothing at all. The widget has the width for the full phrase.
+    /// One phrase in both layouts. The widget used to say "most active ~9am" and the dashboard
+    /// "peak ~9am" for the identical figure, which read as two different measurements.
     private var caption: String {
-        guard let h = metrics.peakHour(unit: unit) else {
-            return fillsHeight ? "no activity" : "no activity yet today"
-        }
-        return (fillsHeight ? "peak ~" : "most active ~") + Format.hourLabel(h)
+        guard let h = metrics.peakHour(unit: unit) else { return "no activity yet" }
+        return "peak ~" + Format.hourLabel(h)
     }
 }

@@ -19,6 +19,7 @@ public final class MetricsStore {
     public var todayHourly: [HourTotal] = []      // today's usage in 24 local-hour buckets
     public var cycleDaily: [DayTotal] = []        // one bucket per calendar date the billing cycle
     public var cycleByProject: [ProjectTotal] = []  // touches, and that same window split by project
+    public var allTimeByProject: [ProjectTotal] = []
                                                  // — each sums exactly to `cycle` (dashboard only)
     public var unknownModels: Set<String> = []
     public var activeBlock: UsageBlock?
@@ -130,7 +131,11 @@ public final class MetricsStore {
     /// Fired after config is saved (e.g. so the panel can resize to a new widget scale).
     public var onConfigChange: (() -> Void)?
 
-    private let scanner = UsageScanner()
+    /// Injectable **only** so `refresh()` itself can be tested. Every `MetricsStore` test used
+    /// `ingestForTesting`, which assigns `lastEntries` directly and never touches the scanner — so
+    /// inverting the `deduplicated:` argument in `refresh()` would have tripled every figure in the
+    /// app with the whole suite still green. See `ScannerWiringTests`.
+    private let scanner: UsageScanner
     private var watcher: FileWatcher?
     private var tick: Timer?                       // time-based recompute (rolls windows while idle)
     private var lastEntries: [UsageEntry] = []
@@ -141,8 +146,10 @@ public final class MetricsStore {
     private var hasScannedFromDisk = false
     private let defaults: UserDefaults
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard,
+                scannerRoot: URL = UsageScanner.defaultRoot) {
         self.defaults = defaults
+        self.scanner = UsageScanner(root: scannerRoot)
         account = AccountInfo.detect()
         monthlyPrice = account.plan.monthlyPrice    // default; overridden by saved value below
         loadConfig()
@@ -208,6 +215,28 @@ public final class MetricsStore {
         lastEntries = await scanner.scan(deduplicated: !countRepeatedLogLines)
         recompute()
         isLoading = false
+        Self.returnFreedMemoryToTheOS()
+    }
+
+    /// Hand the allocator's freed pages back to the OS after a scan.
+    ///
+    /// **A scan's peak is not its steady state, and malloc keeps the difference.** Parsing 1.9 GB of
+    /// transcripts into ~125k entries drove `Physical footprint (peak)` to 1.2 GB; afterwards
+    /// `vmmap` showed **998 MB of MALLOC_SMALL regions marked "(empty)"** — arenas grown for the
+    /// scan, freed, and retained against a next allocation that, for a pet widget idling between
+    /// 30-second recomputes, does not come for hours.
+    ///
+    /// Most of those pages are clean, so the honest figure is `Physical footprint` rather than `ps`
+    /// RSS (368 MB vs 1.31 GB at the same instant) — but the dirty remainder is real and the pages
+    /// still count against the process. `malloc_zone_pressure_relief(nil, 0)` asks every zone to
+    /// madvise them back. It is the same call the OS makes under memory pressure; doing it eagerly
+    /// after the one operation that spikes is what keeps a background app's footprint near its live
+    /// set instead of near its high-water mark.
+    ///
+    /// Called only after a *scan*, never after `recompute()` — that runs on a 30s timer and touches
+    /// no disk, so there is nothing to release and the walk would be pure overhead.
+    private static func returnFreedMemoryToTheOS() {
+        malloc_zone_pressure_relief(nil, 0)
     }
 
     /// Synchronous one-shot load (used by snapshot rendering).
@@ -244,6 +273,7 @@ public final class MetricsStore {
         todayHourly = agg.todayHourly
         cycleDaily = agg.cycleDaily
         cycleByProject = agg.cycleByProject
+        allTimeByProject = agg.allTimeByProject
         unknownModels = agg.unknownModels
         activeBlock = FiveHourBlockEngine.activeSession(from: entries, pricing: pricing, now: now,
                                                         resetOffset: sessionResetOffset)
@@ -636,6 +666,55 @@ public final class MetricsStore {
         dailyAverage(unit: budgetUnit, now: now, calendar: calendar) > 0
     }
 
+    // MARK: - Subagent pace
+    //
+    // The same three questions as the daily pace above, asked of the subagent slice alone, and
+    // deliberately written to mirror it line for line — the two bars sit one above the other and
+    // must not drift apart in how they define "a usual day".
+    //
+    // Why a PACE and not a share: a share of today has no ceiling, so the gauge ramp (which means
+    // "close to a limit" on every other bar) would be lying. "Today against your usual subagent day"
+    // is the same kind of question the Today bar asks, so the ramp keeps its meaning.
+
+    private func daySidechainValue(_ d: DayTotal, unit: BudgetUnit) -> Double {
+        // No per-day cost split exists for the sidechain slice, so in $ mode this scales the day's
+        // cost by the subagent share of its tokens. Approximate, and only used for the bar's shape.
+        guard unit == .usd else { return Double(daySidechainTokens(d)) }
+        let all = Double(dayTokens(d))
+        return all > 0 ? d.costUSD * Double(daySidechainTokens(d)) / all : 0
+    }
+
+    public func subagentDailyAverage(unit: BudgetUnit, now: Date = Date(),
+                                     calendar: Calendar = .current) -> Double {
+        let priors = weekDaily
+            .filter { !isCurrentDayBucket($0, now: now, calendar: calendar) }
+            .map { daySidechainValue($0, unit: unit) }
+            .filter { $0 > 0 }
+        guard !priors.isEmpty else { return 0 }
+        return priors.reduce(0, +) / Double(priors.count)
+    }
+
+    public func subagentTodayValue(unit: BudgetUnit, now: Date = Date(),
+                                   calendar: Calendar = .current) -> Double {
+        if let t = weekDaily.first(where: { isCurrentDayBucket($0, now: now, calendar: calendar) }) {
+            return daySidechainValue(t, unit: unit)
+        }
+        return unit == .usd ? today.costUSD * sidechainShare(today) : Double(sidechainTokens(today))
+    }
+
+    public func subagentPaceFraction(unit: BudgetUnit, now: Date = Date(),
+                                     calendar: Calendar = .current) -> Double {
+        let avg = subagentDailyAverage(unit: unit, now: now, calendar: calendar)
+        guard avg > 0 else { return 0 }
+        return min(1, max(0, subagentTodayValue(unit: unit, now: now, calendar: calendar) / avg))
+    }
+
+    public func subagentPaceExceedsAverage(unit: BudgetUnit, now: Date = Date(),
+                                           calendar: Calendar = .current) -> Bool {
+        let avg = subagentDailyAverage(unit: unit, now: now, calendar: calendar)
+        return avg > 0 && subagentTodayValue(unit: unit, now: now, calendar: calendar) > avg
+    }
+
     // MARK: - Token display basis
     // Every token figure on screen shows "work" (input+output) or cache-inclusive "total", per the
     // user's `tokenBasis`, and funnels through these so the choice stays consistent. The gauge
@@ -661,6 +740,9 @@ public final class MetricsStore {
     public func sidechainTokens(_ t: Totals) -> Int {
         tokens(work: t.sidechainWorkTokens, total: t.sidechainTotalTokens)
     }
+    public func daySidechainTokens(_ d: DayTotal) -> Int {
+        tokens(work: d.sidechainWorkTokens, total: d.sidechainTotalTokens)
+    }
     public func sidechainTokens(_ b: UsageBlock) -> Int {
         tokens(work: b.sidechainWorkTokens, total: b.sidechainTotalTokens)
     }
@@ -671,6 +753,17 @@ public final class MetricsStore {
     }
     public func sidechainShare(_ b: UsageBlock) -> Double {
         share(part: sidechainTokens(b), of: blockTokens(b))
+    }
+
+    /// One day's subagent share, 0…1 — what `SubagentShareChart` draws.
+    ///
+    /// **Clamped, unlike the other two.** They feed a tooltip clause that says "N% of this figure",
+    /// where an impossible 105% would merely read as odd. This one is a bar HEIGHT against a
+    /// full-height track, and a fraction above 1 draws outside its own slot. The slice is a subset of
+    /// the day by construction, so the clamp should never bind — it's there because the failure mode
+    /// if it ever does is a rendering artifact rather than a wrong number.
+    public func daySidechainShare(_ d: DayTotal) -> Double {
+        min(1, max(0, share(part: daySidechainTokens(d), of: dayTokens(d))))
     }
 
     /// A tooltip clause naming the subagent share, or "" when there's nothing to say.
@@ -1071,6 +1164,70 @@ public final class MetricsStore {
         statsCache?.endsYesterday(now, calendar: calendar) ?? false
     }
 
+    /// The current run of consecutive active days, **extended past the cache** with days it hasn't
+    /// folded in yet.
+    ///
+    /// Read straight out of the cache this is the one KPI that goes stale in a way that misleads: the
+    /// file is recomputed at most daily, so a streak ending on its last day understates by however far
+    /// behind it is — it said 24 while the true answer was 26. Same shape as `statsTotalTokens`'
+    /// today-delta: trust the cache for the span it covers, and use our own days only for the span it
+    /// doesn't.
+    ///
+    /// Extension stops at the first day with no usage, which ends the streak rather than skipping the
+    /// gap. It also stops at the edge of `cycleDaily`, which is all the local history in hand — so a
+    /// cache older than the billing cycle returns its own figure unchanged rather than a guess.
+    /// Days our own history shows as active **after** the cache's last day.
+    ///
+    /// Every figure that the cache can undercount has to be extended by the same span, or the tiles
+    /// contradict each other: the first render showed a 27-day streak beside 26 active days, which
+    /// cannot happen. One helper, three callers.
+    private func statsLocalDaysAfterCache(now: Date, calendar: Calendar) -> [Date] {
+        guard let c = statsCache, let lastCached = c.lastComputedDate(calendar: calendar) else { return [] }
+        let cutoff = calendar.startOfDay(for: lastCached)
+        let today = calendar.startOfDay(for: now)
+        // BOTH series: there is no all-time daily history, `cycleDaily` is empty until a billing
+        // anchor exists, and `weekDaily` only reaches back to the weekly reset.
+        return Set((weekDaily + cycleDaily)
+                    .filter { dayTokens($0) > 0 || $0.costUSD > 0 }
+                    .map { calendar.startOfDay(for: $0.date) })
+            .filter { $0 > cutoff && $0 <= today }
+            .sorted()
+    }
+
+    /// Active days, extended past the cache the same way the streak is.
+    public func statsActiveDays(now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let c = statsCache else { return nil }
+        guard !c.activeDays.isEmpty else { return nil }
+        return c.activeDays.count + statsLocalDaysAfterCache(now: now, calendar: calendar).count
+    }
+
+    /// The longest run on record — **including** the current one once it has been extended past the
+    /// cache. Without this the panel could show a current streak longer than its own longest, which is
+    /// impossible by definition: the cache's `longestStreak` stops at the last day it folded in, so an
+    /// extended current streak can overtake it (26 vs 24 the first time this rendered).
+    public func statsLongestStreak(now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let c = statsCache else { return nil }
+        return max(c.longestStreak, statsCurrentStreak(now: now, calendar: calendar) ?? 0)
+    }
+
+    public func statsCurrentStreak(now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let c = statsCache, !c.activeDays.isEmpty else { return nil }
+        var streak = c.streakEndingAtLastDay
+        guard let lastCached = c.lastComputedDate(calendar: calendar) else { return streak }
+
+        // Walk forward one day at a time from the cache's edge, stopping at the first day with no
+        // usage — that ends the streak rather than skipping the gap.
+        var cursor = calendar.startOfDay(for: lastCached)
+        let ours = Set(statsLocalDaysAfterCache(now: now, calendar: calendar))
+        while let next = calendar.date(byAdding: .day, value: 1, to: cursor),
+              next <= calendar.startOfDay(for: now),
+              ours.contains(next) {
+            streak += 1
+            cursor = next
+        }
+        return streak
+    }
+
     /// "29 Jul" — the last day Claude Code folded into its cache.
     public var statsAsOfDescription: String? {
         guard let d = statsCache?.lastComputedDate() else { return nil }
@@ -1302,7 +1459,18 @@ public final class MetricsStore {
                                 cacheReadTokens: 462_062_039, cacheWriteTokens: 40_672_724),
             ],
             lastComputedDay: g.dateComponents([.year, .month, .day], from: yesterday),
-            totalSessions: 208, asOf: now)
+            totalSessions: 208,
+            // The KPI tiles read these too. Without them the preview renders half a grid of dashes,
+            // which is a worse thing to check a layout against than plausible figures.
+            totalMessages: 125_137,
+            activeDays: (0..<26).compactMap {
+                g.date(byAdding: .day, value: -$0, to: yesterday)
+                    .map { d in g.dateComponents([.year, .month, .day], from: d) }
+            },
+            hourCounts: [9: 14, 11: 24, 14: 31, 22: 13],
+            firstSessionDate: g.date(byAdding: .day, value: -84, to: now),
+            longestSessionMessages: 1_720,
+            asOf: now)
         lastUpdated = now
     }
 }

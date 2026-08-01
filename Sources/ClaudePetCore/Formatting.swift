@@ -33,7 +33,10 @@ public enum Format {
         return f
     }()
 
-    private static func grouped(_ v: Double) -> String {
+    /// Thousands-separated whole numbers: `125,137`. Public because the KPI tiles print raw counts
+    /// (sessions, messages) that must not be abbreviated the way token figures are — "125k messages"
+    /// loses the precision that makes the number worth showing.
+    public static func grouped(_ v: Double) -> String {
         grouping.string(from: NSNumber(value: v.rounded())) ?? String(format: "%.0f", v)
     }
 
@@ -53,12 +56,66 @@ public enum Format {
     }
 
     /// Friendly 12-hour clock label: 0 -> "12a", 9 -> "9a", 12 -> "12p", 18 -> "6p", 23 -> "11p"
+    /// An hour as a word: `9am`, `2pm`, `12am`.
+    ///
+    /// Deliberately a different convention from the hour chart's own axis, which runs 0…24. They
+    /// answer different questions: the axis is a *scale*, read by position, where 0…24 maps
+    /// one-to-one onto the twenty-four buckets; this is a *single time*, read as a word, where "9am"
+    /// lands without the reader counting gridlines. Not an oversight — don't "fix" one to match the
+    /// other without deciding which reading you're serving.
     public static func hourLabel(_ hour: Int) -> String {
         let h = ((hour % 24) + 24) % 24
-        let ampm = h < 12 ? "a" : "p"
-        let twelve = h % 12 == 0 ? 12 : h % 12
-        return "\(twelve)\(ampm)"
+        return "\(h % 12 == 0 ? 12 : h % 12)\(h < 12 ? "am" : "pm")"
     }
+
+    /// The weekday label under a weekly chart's slot: one letter where that is unambiguous, **two
+    /// where it is not** — `Su Mo→M Tu W Th F Sa`, i.e. `M Tu W Th F Sa Su`.
+    ///
+    /// English initials are S M T W T F S: **two pairs collide, not one.** Unlike the billing
+    /// calendar — where Sunday is always the first column, so position disambiguates — these slots
+    /// begin on the weekly *reset* day. That day moves, so the order rotates and neither the two S's
+    /// nor the two T's can be told apart by where they sit.
+    ///
+    /// The weekend pair was fixed first and the weekday pair left alone, on the grounds that widening
+    /// the axis wasn't worth it. That was the wrong call for the same reason the first fix was the
+    /// right one: a reader who can't tell Tuesday from Thursday can't read the chart. Two letters
+    /// costs ~4pt of a ~34pt slot.
+    ///
+    /// Still only the ambiguous days — M, W and F stay single, because a label is a hint and the
+    /// short ones are quicker to scan. Shared by both weekly charts so they can't diverge.
+    public static func weekdayLabel(for date: Date, calendar: Calendar = .current) -> String {
+        twoLetter(calendar.component(.weekday, from: date)) ?? weekdayInitial.string(from: date)
+    }
+
+    /// The same label from a weekday *number*, for a grid whose columns are weekdays rather than
+    /// dates — the billing calendar. It has its own fixed Sunday-first order, so position alone would
+    /// disambiguate there; it shares this anyway because the calendar sits beside both weekly charts
+    /// on one screen, and "T" in one place and "Tu" in another two cards away is its own small lie.
+    public static func weekdayLabel(weekday: Int, calendar: Calendar = .current) -> String {
+        if let short = twoLetter(weekday) { return short }
+        // Build a real date with that weekday so the initial comes from the locale, not a hardcoded
+        // list — the same trick the calendar used before this moved here.
+        var comps = DateComponents()
+        comps.weekday = weekday
+        guard let d = calendar.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime)
+        else { return "" }
+        return weekdayInitial.string(from: d)
+    }
+
+    /// Two letters for the days a single initial can't separate; nil for the ones it can.
+    private static func twoLetter(_ weekday: Int) -> String? {
+        switch weekday {
+        case 1:  "Su"
+        case 3:  "Tu"
+        case 5:  "Th"
+        case 7:  "Sa"
+        default: nil
+        }
+    }
+
+    private static let weekdayInitial: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEEEE"; return f
+    }()
 
     /// Compact "time since": "just now", "5m ago", "2h ago", "3d ago".
     public static func relativeAge(from date: Date, now: Date = Date()) -> String {

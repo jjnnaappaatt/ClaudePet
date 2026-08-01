@@ -84,20 +84,14 @@ enum Theme {
         return Color(red: c.r, green: c.g, blue: c.b)
     }
 
-    /// The ramp painted **along** the bar, so the fill is a continuous gradient instead of one flat
-    /// colour that happens to be interpolated.
+    /// One flat colour for the whole bar, picked by the current percentage — **not** a gradient along
+    /// its length.
     ///
-    /// The mapping is position → percentage, not position → 0…1 of the fill: a stop sits at
-    /// `stop.p / fraction`, so the pixel standing for 50% is the same mid-coral whether the bar is at
-    /// 60% or at 100%. Rescaling to the fill's own length instead would repaint the whole ramp on every
-    /// change and make the colour at a given point meaningless.
-    static func gaugeGradient(_ fraction: Double) -> LinearGradient {
-        let f = min(1, max(0.02, fraction))    // floor: a 0% bar still has 3pt of capsule to paint
-        var stops = rampStops.filter { $0.p < f }
-            .map { Gradient.Stop(color: gaugeColor($0.p), location: $0.p / f) }
-        stops.append(Gradient.Stop(color: gaugeColor(f), location: 1))
-        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
-    }
+    /// The gradient was tried and dropped. It is also what the statusline does *not* do: `build_bar`
+    /// resolves a single rgb for the whole bar and paints every cell with it. A bar shaded along its
+    /// length says "this part of my usage was cooler than that part", which is not a thing that
+    /// happened — every token in the window counts the same. One colour per bar reads as one state.
+    static func gaugeFill(_ fraction: Double) -> Color { gaugeColor(fraction) }
 
     /// The unfilled remainder of a gauge: **the fill's own shadow**, so the bar reads as one object
     /// rather than a bright thing sitting on an unrelated brown.

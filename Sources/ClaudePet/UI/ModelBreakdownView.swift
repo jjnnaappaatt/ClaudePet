@@ -16,7 +16,7 @@ struct ModelBreakdownView: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 5 * scale) {
             if metrics.todayByModel.isEmpty {
                 Text("no model usage today")
                     .scaledFont(10).foregroundStyle(Theme.textSecondary)
@@ -26,14 +26,16 @@ struct ModelBreakdownView: View {
                         Circle().fill(dotColor[row.family] ?? .gray)
                             .frame(width: 6 * scale, height: 6 * scale)
                         Text(row.family.displayName)
-                            .scaledFont(11, weight: .medium).foregroundStyle(Theme.textPrimary)
+                            .scaledFont(13, weight: .medium).foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1).fixedSize()
                         Spacer()
                         Text(Format.tokens(metrics.modelTokens(row)))
-                            .scaledFont(10, design: .rounded).foregroundStyle(Theme.textSecondary)
+                            .scaledFont(11.5, design: .rounded).foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1).fixedSize()
                         Text(row.unpriced ? "—" : Format.currency(row.costUSD))
-                            .scaledFont(10, weight: .semibold, design: .rounded)
+                            .scaledFont(11.5, weight: .semibold, design: .rounded)
                             .foregroundStyle(row.unpriced ? Theme.textTertiary : Theme.textPrimary)
-                            .frame(width: 44 * scale, alignment: .trailing)
+                            .frame(width: 50 * scale, alignment: .trailing)
                             .help(row.unpriced
                                 ? "No price set for \(row.family.displayName) — tokens are exact, cost can't be estimated."
                                 : "Notional API-equivalent cost estimate; tokens are exact.")

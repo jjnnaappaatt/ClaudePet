@@ -6,6 +6,12 @@ import ClaudePetCore
 /// while still being real weekdays; reset day's bar holds only the parts inside the window.
 /// Values follow the gauge unit ($ or tokens) and the work/total basis; today is highlighted and
 /// days still to come are dimmed.
+///
+/// The subagent slice of the same seven days is **not** a second instance of this view. It was, for
+/// exactly one build: `Series {total, subagents}` selecting the value and the title. Two identical
+/// marks side by side each normalising to their own `maxV` made Tuesday's subagent bar stand as tall
+/// as Tuesday's total bar while being ~6× smaller — the comparison the eye makes is the one the chart
+/// invites. `SubagentShareChart` draws a different mark on a fixed 0…100% axis instead.
 struct WeeklyBarChart: View {
     /// Let the bars grow into whatever height the container gives them. Off in the widget, where the
     /// card is sized from its content and a fixed bar height is what keeps it compact; on in the
@@ -14,10 +20,6 @@ struct WeeklyBarChart: View {
 
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
-
-    private static let dayLetter: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "EEEEE"; return f   // single-letter weekday
-    }()
 
     private func value(_ d: DayTotal) -> Double {
         metrics.budgetUnit == .usd ? d.costUSD : Double(metrics.dayTokens(d))
@@ -59,6 +61,8 @@ struct WeeklyBarChart: View {
                 bars(days, maxV: maxV, now: now, barArea: barMax)
             }
         }
+        // Same reason as the hour chart: the weekday letters were touching the card's bottom edge.
+        .padding(.bottom, 4 * scale)
         .help(chartHelp)
     }
 
@@ -97,7 +101,7 @@ struct WeeklyBarChart: View {
                     // `textSecondary.opacity(0.3)` — 0.21 absolute, 1.8:1, invisible — so the axis
                     // simply stopped after today. Which weekday a slot is has to stay readable
                     // whether or not it has usage yet.
-                    Text(Self.dayLetter.string(from: day.date))
+                    Text(Format.weekdayLabel(for: day.date))
                         .scaledFont(7)
                         .foregroundStyle(isNow ? Theme.claudeCoral
                                                : (notStarted ? Theme.textTertiary : Theme.textSecondary))
