@@ -19,6 +19,8 @@ import Foundation
       "totalSessions": 208,
       "totalMessages": 125137,
       "hourCounts": {"9": 14, "14": 31},
+      "firstSessionDate": "2026-05-08T09:40:38.571Z",
+      "longestSession": {"sessionId":"af6e6cf1","duration":2498851599,"messageCount":1720,"timestamp":"2026-05-19T08:39:07.144Z"},
       "dailyActivity": [{"date":"2026-07-29","messageCount":6431,"sessionCount":34,"toolCallCount":2328}],
       "modelUsage": {
         "claude-opus-4-8":  {"inputTokens":22078886,"outputTokens":89435705,"cacheReadInputTokens":19088345916,"cacheCreationInputTokens":421818449,"costUSD":0},
@@ -160,4 +162,100 @@ import Foundation
         #expect(store.statsTotalTokens() == nil)
         #expect(store.statsAsOfDescription == nil)
     }
+    // MARK: - The lifetime KPI figures
+
+    /// Every tile is READ from the file. These pin the reading against the real values.
+    @Test func readsTheLifetimeCounters() throws {
+        let path = try write(Self.json)
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let c = try #require(StatsCacheReader.read(path: path))
+        #expect(c.totalSessions == 208)
+        #expect(c.totalMessages == 125_137)
+        #expect(c.activeDays.count == 1)
+        #expect(c.longestSessionMessages == 1720)
+    }
+
+    /// Ties on message count break toward the EARLIER hour, so the answer can't flicker between reads.
+    @Test func busiestHourIsTheArgmaxOfHourCounts() {
+        let c = Self.cache(hourCounts: [9: 14, 14: 31, 22: 13])
+        #expect(c.busiestHour == 14)
+        #expect(Self.cache(hourCounts: [9: 20, 14: 20]).busiestHour == 9)
+        #expect(Self.cache(hourCounts: [:]).busiestHour == nil)
+        #expect(Self.cache(hourCounts: [3: 0]).busiestHour == nil)
+    }
+
+    /// Runs are counted on a fixed Gregorian calendar — these are the file's own dates compared
+    /// against each other, and under the Thai Buddhist calendar `Calendar.current` disagrees on the
+    /// year entirely.
+    @Test func streaksCountConsecutiveDays() {
+        let c = Self.cache(days: ["2026-07-01", "2026-07-02", "2026-07-03",   // 3
+                                  "2026-07-10",                               // 1
+                                  "2026-07-20", "2026-07-21"])                // 2, and last
+        #expect(c.longestStreak == 3)
+        #expect(c.streakEndingAtLastDay == 2)
+    }
+
+    @Test func streakHandlesAnEmptyAndASingleDay() {
+        #expect(Self.cache(days: []).longestStreak == 0)
+        #expect(Self.cache(days: []).streakEndingAtLastDay == 0)
+        #expect(Self.cache(days: ["2026-07-01"]).streakEndingAtLastDay == 1)
+    }
+
+    /// Out-of-order dates in the file must not break the run detection.
+    @Test func streakSortsBeforeCounting() {
+        let c = Self.cache(days: ["2026-07-03", "2026-07-01", "2026-07-02"])
+        #expect(c.longestStreak == 3)
+    }
+
+    private static func cache(days: [String] = [], hourCounts: [Int: Int] = [:]) -> StatsCache {
+        StatsCache(models: [StatsModelTotal(model: "m", inputTokens: 1, outputTokens: 1,
+                                            cacheReadTokens: 0, cacheWriteTokens: 0)],
+                   lastComputedDay: nil, totalSessions: 0,
+                   activeDays: days.compactMap { StatsCacheReader.parseDay($0) },
+                   hourCounts: hourCounts, asOf: Date())
+    }
+
+    /// A current streak extended past the cache can overtake the cache's own longest — the panel
+    /// rendered "current 26d / longest 24d" the first time, which is impossible by definition.
+    @MainActor
+    @Test func longestStreakNeverTrailsTheCurrentOne() throws {
+        let name = "kpi-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        let store = TestSupport.store(defaults: defaults)
+
+        // A cache that stops three days ago while every day since has usage: the current streak is
+        // extended to 4 and must drag the longest up with it.
+        let cal = Calendar.current
+        // The cache file's dates are always GREGORIAN. Building them with `Calendar.current` wrote
+        // "2569-07-28" on this machine — the Thai Buddhist year — and the streak silently refused to
+        // extend. Same trap the production parser is written to avoid; a test can fall into it too.
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = cal.timeZone
+        func ymd(_ daysAgo: Int) -> String {
+            let d = cal.date(byAdding: .day, value: -daysAgo, to: Date())!
+            let c = gregorian.dateComponents([.year, .month, .day], from: d)
+            return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
+        }
+        let json = """
+        {"lastComputedDate":"\(ymd(3))",
+         "dailyActivity":[{"date":"\(ymd(3))"}],
+         "modelUsage":{"m":{"inputTokens":1,"outputTokens":1}}}
+        """
+        store.statsCachePath = try write(json)
+        defer { try? FileManager.default.removeItem(atPath: store.statsCachePath) }
+        store.ingestForTesting((0...3).map {
+            TestSupport.entry(at: cal.date(byAdding: .day, value: -$0, to: Date())!,
+                              input: 500, output: 500)
+        })
+
+        let current = store.statsCurrentStreak() ?? 0
+        let longest = store.statsLongestStreak() ?? 0
+        let active = store.statsActiveDays() ?? 0
+        #expect(current > 1, "the streak should have been extended past the cache, got \(current)")
+        #expect(longest >= current, "longest \(longest) must never trail current \(current)")
+        // A streak cannot be longer than the number of days you were active at all.
+        #expect(active >= current, "active days \(active) must never trail the streak \(current)")
+    }
+
 }

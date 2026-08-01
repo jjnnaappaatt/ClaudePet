@@ -43,10 +43,18 @@ struct DashboardView: View {
     /// so required height is `need × height/refHeight` — which exceeds the window at *every* height if
     /// `refHeight < need`, not just at small ones. That shipped once, in 0.6.0.
     ///
-    /// Measured across 900×800 / 1470×923 / **1990×760** / 1990×1256 / 2560×1440, with both datasets.
+    /// Measured across 900×800 / 1470×923 / **1990×820** / 1990×1256 / 2560×1440, with both datasets.
     /// The wide-but-short case earns its place in that list: it is the only one where the boosts run at
     /// full strength (they key off width) while height is tight, and it is 5px stricter than every
-    /// other size — 690 passed everywhere else and clipped there.
+    /// other size — 690 passed everywhere else and clipped there. (It was 1990×760 until `minHeight`
+    /// made 760 unreachable; the shape is what matters, not the exact number.)
+    ///
+    /// 722 → 745 when the subagent row became a full pace bar. The plan that added it assumed the left
+    /// card had 74px spare and would grow into it for free; measured, it had **15**, so the top row
+    /// grew 18.5pt at scale 1 and the lower row — already at its minimum at 1990×820 — lost the
+    /// difference and clipped "By project" off the bottom edge. Every gauge and chart in the card
+    /// stretches, so nothing on screen looks tight until it suddenly clips: measure the bottom-most
+    /// *card* pixel, not the text.
     ///
     /// Height binds at every realistic window size, so `refHeight` is effectively the type-size dial:
     /// the text only ever got bigger by making the layout need less room. What paid for it, in order of
@@ -59,7 +67,7 @@ struct DashboardView: View {
     /// three columns: 780 claimed the layout fits in 780pt, so a 900pt window scaled text up 15% and
     /// overflowed the row. Above ~1100pt height binds and `refWidth` stops mattering entirely.
     private static let refWidth: CGFloat = 900
-    private static let refHeight: CGFloat = 722
+    private static let refHeight: CGFloat = 745
 
     /// The boosts are named for **cards**, not for content: the two top panels have swapped sides
     /// once already, and whichever card is *taller* sets the row height — so a boost is free on one
@@ -73,7 +81,7 @@ struct DashboardView: View {
     /// calendar wanted it. The guard is **not** "are the two cards equal?" — they share a row and
     /// stretch together, so that reads equal either way. The signal is whether the **card height
     /// changed from the unboosted baseline**.
-    private static let usageBoost: CGFloat = 1.20
+    private static let usageBoost: CGFloat = 1.04
 
     /// Extra scale for the Today header alone, on top of the left card's. Its row is as tall as the
     /// mascot's sky block, and two lines of text reached only about 60% of that, leaving a blank under
@@ -86,11 +94,23 @@ struct DashboardView: View {
     ///
     /// This is the side with the slack now, so it takes the large boost — before the swap it was 1.2
     /// and the same 1.2 on this content left a 191px void between the model grid and the billing lines.
-    /// **1.50 is the boundary**: measured at 1470×923 with real data, at 1.50 the row is 482px tall and
-    /// still set by the left card; at 1.55 this card becomes the taller one, the row grows to 498 and
-    /// the cost lands on `refHeight`.
-    private static let totalsBoost: CGFloat = 1.50
-    private static let barThickness: CGFloat = 9
+    /// **This is the only dial that makes that card's captions bigger.** They are declared at
+    /// 9/9.5/10/10.5, but the dashboard floors every font at `minScaledFont: 12`, so editing those
+    /// numbers changes nothing at all — they are already floored. Only the boost moves them.
+    ///
+    /// **The boundary is not where the old note here claimed.** It said 1.50; measured after the
+    /// subagent pace bar made the LEFT card the taller one, the row starts growing at **1.24** and
+    /// 1.34 grew it 48pt and clipped the bottom card off the window. Re-measure this after anything
+    /// that changes either card — the number in a comment is a fact about a layout that no longer
+    /// exists.
+    ///
+    /// 1.34 is affordable only because `totalsPanel`'s inter-section gap came down with it (10 → 5).
+    /// Those gaps scale with the boost, so most of what a bigger boost buys in type it spends again in
+    /// leading; tightening them pays for the type out of the card's own slack instead of out of the
+    /// page. At 1.34 with the old gaps the top row was 576px, with the new ones it is 528 — the
+    /// unboosted baseline, i.e. free.
+    private static let totalsBoost: CGFloat = 1.34
+    private static let barThickness: CGFloat = 10
 
     /// Extra scale for the four lower cards.
     ///
@@ -176,17 +196,98 @@ struct DashboardView: View {
                 GeometryReader { lower in
                     let lowerScale = scale * Self.boost(Self.lowerBoost, for: geo.size)
                     let weeks = CalendarGrid.weeks(metrics.cycleDaily).count
-                    let calW = CycleCalendarView.naturalWidth(cardHeight: lower.size.height,
-                                                             weeks: weeks, scale: lowerScale)
+                    // `naturalWidth` answers "how wide do square cells of this height want to be", and
+                    // once asked it can want a lot: at 51% of the row it starved the other two columns
+                    // and pushed the charts off the left edge. The cap is what stops that.
+                    //
+                    // At 0.40 it is a **backstop that binds at no tested size** — measured, the
+                    // calendar asks for 339pt against a 350pt cap at the 900×800 minimum, 302 against
+                    // 576 at 1470×923, 270 against 785 at 1990×820. It earns its place only because
+                    // `naturalWidth` did once ask for 51%, when the top row was shorter; nothing
+                    // guarantees it won't again.
+                    //
+                    // 0.34 — its first value, set while that was happening — did bind at the minimum,
+                    // and cost the calendar 40pt and wrapped "Billing cycle" onto two lines. 0.40 fits
+                    // the title on one line, restores the full date range and the legend's peak
+                    // figure, and leaves the hour chart 282pt. Renders at 1470×923 / 1990×1256 /
+                    // 2560×1440 are byte-identical either way, so tune it at 900×800 or not at all.
+                    let calW = min(CycleCalendarView.naturalWidth(cardHeight: lower.size.height,
+                                                                 weeks: weeks, scale: lowerScale),
+                                   lower.size.width * 0.40)
                     let rest = max(0, lower.size.width - calW - 20 * scale)
+                    let chartW = rest * 0.54
+                    // Four boxes, not two cards of two panels. The gate is expressed against the
+                    // width a panel actually gets, which is `chartW` minus the extra card's own
+                    // unscaled padding — so the constant keeps meaning "the narrow panel needs this
+                    // much" instead of drifting as the chrome around it changes.
+                    let secondary = chartW - 16 >= 350 * scale
                     HStack(alignment: .top, spacing: 10 * scale) {
                         VStack(spacing: 9 * scale) {
-                            card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
-                                .frame(maxHeight: .infinity)
-                            card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
-                                .frame(maxHeight: .infinity)
+                            // Row 1 keeps its unequal split: 24 hourly bars use every point of width
+                            // they can get, while the model list is a fixed narrow column. "Which
+                            // models did I use today" was the one thing the widget showed that the
+                            // dashboard did not. (The right card's model grid is Claude Code's
+                            // ALL-TIME `/stats` split, which is a different question.)
+                            HStack(alignment: .top, spacing: 10 * scale) {
+                                // Both widths pinned, and the model card is NOT `.fixedSize`.
+                                // Sized greedily it demanded its full 190*scale + padding out of a
+                                // column that didn't have it, the HStack overflowed, and — since
+                                // neither `.frame(width:)` nor `.fixedSize` clips — the whole lower
+                                // row centred and slid off the LEFT edge of the window. Live at
+                                // 1180×900 and invisible at every other size tested.
+                                let modelW = secondary ? 190 * scale + 16 : 0
+                                let hourW = max(120 * scale,
+                                                chartW - (secondary ? modelW + 10 * scale : 0))
+                                card { chartPanel(TodayHourlyChart(fillsHeight: true)) }
+                                    .frame(width: hourW)
+                                    .frame(maxHeight: .infinity)
+                                // Squeezed into what was left at 900×800 the model column got 121pt
+                                // and broke "Opus" across two lines — a column too narrow to read is
+                                // worse than no column, and the same figures are one card up in the
+                                // Today header.
+                                if secondary {
+                                    card {
+                                        todayModels(scale: scale * Self.boost(Self.lowerBoost,
+                                                                              for: geo.size))
+                                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                                    }
+                                    .frame(width: modelW)
+                                    .frame(maxHeight: .infinity)
+                                }
+                            }
+                            .frame(maxHeight: .infinity)
+
+                            // Row 2 is a true 50/50: two charts over the same seven days, and equal
+                            // widths are what make them fair to compare. That leaves the vertical
+                            // seam ~48pt off the row above, which is accepted — matching the seams
+                            // would mean taking width from the 24-bar chart or handing the subagent
+                            // card more room than This week.
+                            //
+                            // The gate names the VIEW, not the position. It used to hide "the second
+                            // panel in the HStack"; after the swap that is `This week`, so a literal
+                            // port would have hidden the primary chart at the minimum window size and
+                            // kept the subagent one. Nothing about that fails loudly — the layout
+                            // still renders, with the wrong chart in it.
+                            HStack(alignment: .top, spacing: 10 * scale) {
+                                // Pinned to an explicit half, not left to `maxWidth: .infinity`.
+                                // Both cards ask for infinity, but SwiftUI still weighs their IDEAL
+                                // widths, and this card's header carries three `fixedSize` runs
+                                // ("Subagents/day", "% of work", "22% this week") against This
+                                // week's two — so it claimed 354pt to the other's 229. Equal widths
+                                // are the entire reason these two sit side by side.
+                                let halfW = secondary ? (chartW - 10 * scale) / 2 : chartW
+                                if secondary {
+                                    card { chartPanel(SubagentShareChart()) }
+                                        .frame(width: halfW)
+                                        .frame(maxHeight: .infinity)
+                                }
+                                card { chartPanel(WeeklyBarChart(fillsHeight: true)) }
+                                    .frame(width: halfW)
+                                    .frame(maxHeight: .infinity)
+                            }
+                            .frame(maxHeight: .infinity)
                         }
-                        .frame(width: rest * 0.54)
+                        .frame(width: chartW)
 
                         card { CycleCalendarView() }
                             .frame(width: calW)
@@ -244,9 +345,13 @@ struct DashboardView: View {
         // The mascot row is as tall as `max(sky, the Today header column)`, and since `headerBoost`
         // the header is the taller of the two — so growing the sky into it costs nothing. Past the
         // header's height it starts setting the row, and lands on `refHeight`.
-        let pet = 76 * scale
-        let sky = 88 * scale          // taller than the pet → open sky above it, as in the widget
-        return VStack(alignment: .leading, spacing: 8 * scale) {
+        // +30%, and the ratio is kept so the clear band the weather needs above the pet survives.
+        // NOT free: the mascot row is `max(sky, the Today header column)` and sky binds (88 vs 76), so
+        // every point here pushes the top row down into the lower one — measured at 1.9px of calendar
+        // width per point of sky. That trade was made deliberately.
+        let pet = 99 * scale
+        let sky = 114 * scale         // taller than the pet → open sky above it, as in the widget
+        return VStack(alignment: .leading, spacing: 6 * scale) {
             // Mascot and today's figures sit SIDE BY SIDE rather than stacked. Stacking read more
             // cleanly but made the card ~40pt taller at scale 1, and in this layout height is type
             // size. Beside the pet, the header is free until it outgrows the sky block.
@@ -283,38 +388,30 @@ struct DashboardView: View {
             // as one statement: `mascotEmotion` derives from `blockFraction` — the 5h gauge directly
             // beneath. The weekly bar below it is NOT the face's number; it drives the ground layer
             // under the pet's feet. (It used to be `max(5h, weekly)`; see `MetricsStore`.)
+            // A Spacer between every section rather than one at the end. Whatever slack the row has
+            // used to pool at the bottom, so the gauges bunched under the mascot with a void beneath
+            // them; equal spacers distribute it into the gaps instead, which is what actually reads as
+            // "not top-heavy". They cost no height — `minLength: 0` — so this is free at any size.
+            //
+            // What is NOT free is the content: since the subagent row became a pace bar this card is
+            // the taller of the two and therefore sets the row height, so anything added here lands on
+            // `refHeight` and shrinks the type on the whole page. Measure before assuming otherwise —
+            // the spare here was 15pt, not the 74 an earlier reading of this comment claimed.
             divider
+            Spacer(minLength: 0)
             BudgetGauge(barThickness: Self.barThickness)
+            Spacer(minLength: 0)
             divider
             WeeklyLimitBar(barThickness: Self.barThickness)
+            Spacer(minLength: 0)
             divider
             DailyPaceView(barThickness: Self.barThickness)
+            Spacer(minLength: 0)
             divider
-            subagentRow(scale: scale)
-
+            SubagentPaceView(barThickness: Self.barThickness)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    /// Today's subagent slice, under the three bars it's a share of. (The old "All time" row beside it
-    /// is gone — `StatsModelBreakdownView` shows Claude Code's own lifetime total instead, which is the
-    /// number `/stats` prints.)
-    private func subagentRow(scale: CGFloat) -> some View {
-        let on = metrics.includeSubagents
-        let share = metrics.sidechainShare(metrics.today)
-        return statRow("Subagents today", scale: scale,
-                       value: on ? Format.tokens(metrics.sidechainTokens(metrics.today)) : "—",
-                       trailing: on ? "\(Int((share * 100).rounded()))%" : "off",
-                       help: on
-                           ? "Today's tokens from turns the Task tool ran — subagents and workflow "
-                             + "agents. The % is their share of today's figure on the current basis, and "
-                             + "it moves when you change that basis: a subagent works in a short-lived "
-                             + "context, while the main conversation re-reads a large cached one every "
-                             + "turn. So subagents are usually a BIGGER share of 'work' than of "
-                             + "cache-inclusive 'total' — measured here, 15% versus 8%."
-                           : "\"Include subagent usage\" is off in Settings → Appearance, so these turns "
-                             + "aren't counted in any figure here.")
     }
 
     private func statRow(_ label: String, scale: CGFloat, value: String, trailing: String,
@@ -337,7 +434,11 @@ struct DashboardView: View {
     /// With no `/stats` cache — an older Claude Code, or one that has never computed stats — this would
     /// otherwise open on empty space, so fall back to today's models plus our own all-time total.
     private func totalsPanel(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 10 * scale) {
+        // 10 → 5, and it is what pays for `totalsBoost` 1.16 → 1.34. Six children means six gaps, all
+        // scaled by the boost, so raising the boost inflates the leading as fast as the type and the
+        // card outgrows the row. Halving the gap is a real typographic trade at 15% larger text, and
+        // it keeps the top row at its unboosted 528px instead of 576px.
+        VStack(alignment: .leading, spacing: 5 * scale) {
             if metrics.statsCache != nil {
                 StatsModelBreakdownView()
             } else {
@@ -350,12 +451,31 @@ struct DashboardView: View {
                         help: "Every turn in your transcripts. Claude Code's own /stats total would show "
                               + "here instead, but its cache (~/.claude/stats-cache.json) wasn't found.")
             }
+            // The KPI tiles take the slack the Spacer used to hold. They keep a Spacer above and
+            // below so that when an account has enough models to squeeze the band, the grid is pushed
+            // rather than the billing lines — those must never leave the card.
+            Spacer(minLength: 0)
+            StatsKPIGrid()
             Spacer(minLength: 0)
             divider
             WeekAllTimeView(showsExpandButton: false)
             BillingLineView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Today's per-model split, sharing the hour chart's card. Titled, because unlabelled it reads as
+    /// a continuation of the chart beside it rather than a different cut of the day.
+    private func todayModels(scale: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 4 * scale) {
+            Text("Today by model").scaledFont(13.5, weight: .semibold)
+                .foregroundStyle(Theme.textPrimary)
+                .fixedSize()
+            ModelBreakdownView()
+            Spacer(minLength: 0)
+        }
+        .help("Which models you've used today, with tokens and notional cost. The all-time split is "
+              + "the model grid in the card above, which is Claude Code's own /stats accounting.")
     }
 
     /// One chart per card in the bottom row. No trailing `Spacer` — the charts are built with

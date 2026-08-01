@@ -33,7 +33,7 @@ struct ProjectBreakdownView: View {
         // `totalTokens` (a deterministic default), but this view shows whatever `TokenBasis` /
         // `budgetUnit` select — so under "work" the aggregator's order put 4M above 8.2M and the list
         // read as unsorted. The empty-path bucket still sinks to the bottom.
-        let all = metrics.cycleByProject.sorted {
+        let all = metrics.allTimeByProject.sorted {
             if $0.path.isEmpty != $1.path.isEmpty { return !$0.path.isEmpty }
             return value($0) > value($1)
         }
@@ -46,12 +46,14 @@ struct ProjectBreakdownView: View {
                 Text("By project").scaledFont(13.5, weight: .semibold)
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
-                Text("this cycle")
+                Text("all time")
                     .scaledFont(9).foregroundStyle(Theme.textTertiary)
             }
 
             if all.isEmpty {
-                Text("no usage this cycle")
+                // Not "this cycle" — the rows are lifetime now, so an empty list means no transcripts
+                // have been read at all, not that the current cycle happens to be quiet.
+                Text("no usage recorded yet")
                     .scaledFont(10).foregroundStyle(Theme.textSecondary)
             } else {
                 ForEach(shown) { row in
@@ -59,22 +61,33 @@ struct ProjectBreakdownView: View {
                 }
                 if !rest.isEmpty {
                     let restValue = rest.reduce(0.0) { $0 + value($1) }
-                    HStack {
+                    // Same geometry as `projectRow`, so this figure lands in the TOKEN column with
+                    // the rows it is a continuation of. It used to be a bare `HStack` + `Spacer()`
+                    // with neither the row's horizontal padding nor its trailing cost reservation,
+                    // so it drifted 63·scale right — into, and 5·scale past, the COST column. A
+                    // token total sitting under the dollar figures reads as a dollar figure.
+                    HStack(spacing: 6 * scale) {
                         Text("+\(rest.count) more")
                             .scaledFont(9.5).foregroundStyle(Theme.textSecondary)
-                        Spacer()
+                        Spacer(minLength: 4 * scale)
                         Text(amount(restValue))
                             .scaledFont(9.5, design: .rounded)
                             .foregroundStyle(Theme.textSecondary)
+                        // Holds the cost column open. There is no combined cost to print — the rows
+                        // show `costUSD` per project and summing the tail would invite reading it as
+                        // one project's spend — so the strip stays empty rather than borrowed.
+                        Color.clear.frame(width: 52 * scale, height: 1)
                     }
+                    .padding(.horizontal, 5 * scale)
                     .help("Projects beyond the top \(Self.maxRows), combined — nothing is dropped, so "
-                          + "the rows above plus this line still sum to the Cycle figure.")
+                          + "the rows above plus this line still sum to the all-time total.")
                 }
             }
         }
-        .help("Tokens by project across the current billing cycle. Names come from each turn's own "
-              + "recorded working directory, so they're exact. Subagent turns count toward the "
-              + "project that launched them.")
+        .help("Tokens by project across ALL of your history, not just this billing cycle — so these "
+              + "rows sum to the all-time total, not to the Cycle figure beside them. Names come from "
+              + "each turn's own recorded working directory, so they're exact. Subagent turns count "
+              + "toward the project that launched them.")
     }
 
     /// One line per project, with the proportional bar as a BACKGROUND fill rather than a second

@@ -80,9 +80,48 @@ only changed files re-parse) → `JSONLParser` (streams 1 MB chunks per file —
 100 MB+, so never `Data(contentsOf:)`) → `Deduplicator` → `Aggregator` + `FiveHourBlockEngine` +
 `WeeklyWindowEngine` → `MetricsStore` → SwiftUI.
 
-**Dedup is load-bearing:** ~51% of assistant lines repeat the same `message.id` with *identical*
-usage — they are not streaming deltas. Keep the first per `messageID`, never sum, or tokens and cost
-roughly double.
+**This pipeline sets the app's memory high-water mark, and the peak is what you pay for.** Parsing
+1.9 GB of transcripts into ~125k entries once drove the footprint to 1.2 GB and left it there: `vmmap`
+showed ~1 GB of `MALLOC_SMALL` regions marked **"(empty)"** — freed arenas the allocator keeps against
+a next allocation an idle widget won't make for hours. Three things hold it down now, and all three
+are easy to undo by accident:
+
+- `malloc_zone_pressure_relief` after a **scan** (`MetricsStore.refresh`), never after a recompute.
+- A `StringInterner` threaded through the parse. `model` and `cwd` arrive as a fresh `String` per line
+  and both exceed Swift's 15-byte inline limit, so each heap-allocates — 250k allocations for ~130
+  distinct values. Any new per-entry `String` field belongs in the same table.
+- One allocation in `UsageScanner.merge`: count, `reserveCapacity`, then compact **in place**.
+  `flatMap` + `filter` built the 125k-entry array three times over.
+- A `"usage"` substring test before `JSONDecoder` in `JSONLParser.entries`. Only 125,806 of 289,259
+  logged lines carry the key; the rest were decoded into a full `LogRecord` just to be dropped. Safe
+  in one direction only, which is the point: a false positive costs a decode that was happening
+  anyway, a false negative is impossible. It bought **scan speed, not footprint** — the peak did not
+  move — so don't cite it as a memory fix.
+
+Measure with `vmmap -summary <pid>`, not `ps` — RSS counts clean resident pages and still reads
+~709 MB against a 181 MB footprint. `heap <pid>` is the one that ends arguments: it put the live set
+at 82.5 MB (41.9 MB of per-file entry arrays, 8.1 MB of interned strings), which is what proved the
+~500 MB of "(empty)" arenas really were free rather than leaked. Compare **`Physical footprint (peak)`**, and quote it as a
+range: FSEvents re-scans on every transcript write and each re-scan re-peaks, so over 11 minutes of
+active use it wandered 526–790 MB. Do **not** compare current footprint between two runs of different
+ages — an idle process sheds hundreds of MB, so a 17-minute "before" against a 1-minute "after" is not
+a measurement, it is a clock.
+
+**Dedup is load-bearing:** on a real corpus **8,349 of 12,259 `message.id`s appear more than once**,
+every repeat inside the same file with byte-identical usage — they are re-logs of one API response,
+not streaming deltas. Keep the first per `messageID`, never sum, or tokens and cost roughly triple.
+
+**…but it is switched off by a setting, so never read a figure as deduped without checking.**
+`countRepeatedLogLines` (Settings → "Count repeated log lines (match /stats)") passes
+`deduplicated: false` all the way down; it is a supported mode, not a bug. This paragraph used to stop
+at the sentence above, which reads as a guarantee — and cost a full investigation into a "3× overcount"
+that was the user's own preference working correctly. **Check the preference before diagnosing any
+figure that looks too large.** With it on, ClaudePet's all-time work reads 185.6M against `/stats`'
+140.5M; with it off, 60.6M.
+
+Verify a token figure against the transcripts directly rather than against another figure in the app:
+sum `input_tokens + output_tokens` over `~/.claude/projects/**/*.jsonl`, keyed on
+`message.id ?? requestId`. That is what settled it, and it takes about a minute.
 
 ### MetricsStore
 
@@ -279,6 +318,14 @@ Two traps in that file:
   never matched and the live delta could not fire at all on that machine. It reads as a stale cache, not
   as an error, and only showed up when the raw components were printed from a real run.
 
+**Anything read from that cache that can grow is undercounted while it lags**, and the fix has to be
+applied consistently or the figures contradict each other. `statsCurrentStreak`, `statsLongestStreak`
+and `statsActiveDays` all extend across the same span — the days after `lastComputedDay` that our own
+`weekDaily`/`cycleDaily` show as active — via one private helper. Extending only the streak produced a
+26-day streak beside a cached "longest" of 24, and then a 27-day streak beside 26 active days: both
+impossible, both shipped to a render before being caught. There is no all-time daily series, so the
+extension reaches only as far back as those two windows; past that the cached figure stands unchanged.
+
 The cache lags up to a day, so `statsTotalTokens` adds today's own count **only** when the cache ends
 exactly yesterday (`endsYesterday`) — `covers` guards the double-count, and a cache two or more days
 behind shows the dated figure alone rather than inventing the missing days. That delta is ClaudePet's
@@ -296,6 +343,25 @@ unbounded above, which let a clock-skewed turn inflate `cycle` while belonging t
 whereas these bars are labelled by date, so a short partial first/last bar is honest. The loop is
 `while d < cw.end`: with `billingCycleDayOverride` set the bounds land exactly on midnight, and `<=`
 adds a spurious empty trailing bar (a mid-day cycle boundary hides this — test both).
+
+`allTimeByProject` is the lifetime twin of `cycleByProject` and is accumulated **outside** the in-cycle
+predicate, in its own dictionary, rather than by relaxing that predicate — 24 assertions pin what
+`cycleByProject` means, including that it sums exactly to `cycle`. Two series, two invariants: each
+sums to its own total. `ProjectBreakdownView` reads the lifetime one; its header and its empty state
+both have to say so, or the card silently reports the wrong span.
+
+`DayTotal` carries `sidechainWorkTokens`/`sidechainTotalTokens` as well, accumulated in **both** bucket
+loops, so the subagent slice is available per day and not just per window. Same rule as everything else
+here: Σ over the weekly window's buckets equals `week.sidechainWorkTokens` exactly.
+
+**Two charts of the same buckets must not be the same mark.** `WeeklyBarChart` and the subagent slice
+were briefly one view with a `Series` enum, drawn side by side. Each instance normalises to its own
+`maxV`, so the subagent bar stood exactly as tall as the total bar while being ~6× smaller — the
+comparison the eye makes is the one identical marks invite. `SubagentShareChart` draws a *share* on a
+fixed 0…100% axis instead, which has no free maximum to misread. Note what it does **not** use: the
+gauge ramp, because every ramped bar in this app means "close to a limit" and a heavy-delegation day
+is not a warning (same reasoning as `SubagentPaceView`). `daySidechainShare` is clamped where the other
+`sidechainShare` overloads aren't — those feed a tooltip, this one is a bar height.
 
 `Aggregator`'s row order is a deterministic default keyed on `totalTokens`. A view showing `work` or
 `$` must **re-sort by the figure it prints**, or the list looks unsorted — under `work` the default
@@ -325,7 +391,11 @@ Two traps in the shared UI layer, both measured, both easy to reintroduce:
 cells are capped by whichever axis is scarcer — always height here. Two attempts failed before the
 right one: square cells in a fixed-fraction column left 84px dead a side, and letting cells go wide
 (a 2.6:1 cap) filled the card but stopped reading as a calendar. The cells are square and the **column
-is sized from the row height** instead (see `CycleCalendarView.naturalWidth`), which is also why the
+is sized from the row height** instead (see `CycleCalendarView.naturalWidth`, capped at 40% of the row
+so a short top row can't let the calendar starve its neighbours — at 40% that cap is a backstop that
+binds at **no** tested size, measured 339 against 350 at the 900×800 minimum and 270 against 785 at
+1990×820; it earns its place only because `naturalWidth` did once ask for 51%. Tune it at 900×800, the
+one size where it ever bound, and confirm the others are byte-identical), which is also why the
 lower row is wrapped in its own `GeometryReader` — the column split can't be computed until that row's
 height is known. Its header stacks onto two lines for the same reason: on one line it needed ~420pt and
 *it*, not the grid, set the card's minimum width.
@@ -337,6 +407,28 @@ Since height binds at every realistic window size, `refHeight` is also the **typ
 can only grow if the layout needs less room. That's the whole reason the dashboard's mascot is 122pt
 of sky rather than the widget's proportions — and if the text still needs to be bigger, the next
 lever is `ProjectBreakdownView.maxRows`, not the scale clamp.
+
+Two traps in the lower-left 2×2 of cards, both of which render happily and are wrong:
+
+- **A width gate must name the view, not the position.** `chartW >= 350 * scale` used to hide "the
+  second panel in the HStack". When Subagents/day and This week swapped places, a literal port hid the
+  *primary* chart at the minimum window size and kept the subagent one — nothing errors, the layout
+  still fills, and only looking at a 900×800 render catches it.
+- **`.frame(width:)` does not clip.** The two weekday cards are pinned to an exact half because both
+  asking for `maxWidth: .infinity` still lets SwiftUI weigh their *ideal* widths — three `fixedSize`
+  runs in one header against two in the other split a column 354/229. But pinning then made the
+  oversized header centre and draw the title clean off the left edge of the **window**. Any header
+  built from `fixedSize` text in a pinned card needs `ViewThatFits` (see `SubagentShareChart.header`,
+  and `CycleCalendarView.legend` before it), dropping a whole element rather than clipping one.
+
+**Nothing looks tight before it clips**, so "does it still fit?" cannot be answered by looking. Every
+gauge and chart in the top row stretches, and the lower row absorbs whatever the top row takes until it
+hits its own minimum — at which point the bottom card runs straight off the window edge with no warning
+anywhere above it. Measure the bottom-most **card** pixel against the window edge, not the bottom-most
+text, and do it at **1990×820**: that is the only tested size where the boosts run at full strength
+(they key off width) while height is tight, and it clipped there while every other size still had 10px+
+to spare. Adding a row to the *taller* top card is what triggers this, and which card is taller changes
+— re-measure rather than trusting a comment that says one of them has slack.
 
 Exactly one row stretches — the cycle chart, whose bars fill the height they're given. The others stay
 snug around their content. Stretching every row instead just moved the slack inside the cards (~180pt
@@ -358,6 +450,15 @@ failure. Inject a fixed `now`/`calendar` (see `AggregatorTests`, `WeeklyWindowTe
 code always calls `Date()` internally, pin the *config* instead (see
 `AutoPeakTests.pinWeeklyAnchorFarFrom`). Tests build entries via `TestSupport.entry(...)` and use
 fresh throwaway `UserDefaults` suites.
+
+**`ingestForTesting` bypasses the scanner, so it cannot cover the wiring.** Every `MetricsStore` test
+used it, which left `refresh()`'s single `deduplicated:` argument unprotected: inverting it triples
+every figure in the app and the whole suite stayed green. `MetricsStore(scannerRoot:)` exists purely so
+`ScannerWiringTests` can drive the real on-disk path — and that test earns its place only because it
+was checked by deliberately inverting the flag and watching it fail. **A test for a silent defect is
+worth nothing until you have seen it fail**; the defect it guards produces figures that stay
+internally consistent (the Auto budget anchors inflate alongside the usage they're fitted to) and are
+simply all wrong together.
 
 **Comments explain *why*, never *what*** — a non-obvious constraint, a workaround, an invariant a
 future reader could break. `MetricsStore.swift` is representative. Group with `// MARK: -`.

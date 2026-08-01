@@ -6,15 +6,15 @@ import ClaudePetCore
 struct WeeklyLimitBar: View {
     /// Bar thickness. 7 suits the widget's compact card; the dashboard passes a fatter bar, where the
     /// same 7pt reads as a hairline next to figures three times the size.
-    var barThickness: CGFloat = 7
+    var barThickness: CGFloat = 9
 
     @Environment(MetricsStore.self) private var metrics
 
     private var unit: BudgetUnit { metrics.budgetUnit }
     private var fraction: Double { metrics.weeklyFraction(unit: unit) }
 
-    /// Ramps through the Claude palette **along the bar** — see `Theme.gaugeGradient`.
-    private var barFill: LinearGradient { Theme.gaugeGradient(fraction) }
+    /// One flat colour for the whole bar, from the statusline's ramp — see `Theme.gaugeFill`.
+    private var barFill: Color { Theme.gaugeFill(fraction) }
 
     private func amount(_ v: Double) -> String {
         unit == .tokens ? Format.tokens(Int(v)) : Format.currency(v)

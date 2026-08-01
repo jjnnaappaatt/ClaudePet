@@ -12,10 +12,6 @@ struct CycleCalendarView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
-    private static let dayLetter: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "EEEEE"; return f     // single-letter weekday
-    }()
-
     private func value(_ d: DayTotal) -> Double {
         metrics.budgetUnit == .usd ? d.costUSD : Double(metrics.dayTokens(d))
     }
@@ -63,8 +59,11 @@ struct CycleCalendarView: View {
                     let rows = CGFloat(weeks.count)
                     let fullW = max(6, (g.size.width - gap * 6) / 7)
                     let fullH = max(6, (g.size.height - headerRow - gap * rows) / rows)
-                    let side = min(fullH, fullW)                 // square: the scarcer axis wins
-                    let cellH = side, cellW = side
+                    // Square is the target; 1.2 is the most give allowed when height binds hard.
+                    // Strictly square leaves the card narrower than the page can afford to give it,
+                    // and 1.2:1 still reads as a square by eye — 2.6:1, tried earlier, did not.
+                    let cellH = min(fullH, fullW)
+                    let cellW = min(fullW, cellH * 1.2)
                     VStack(spacing: gap) {
                         weekdayHeader(cal: cal, side: cellW, gap: gap)
                         ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
@@ -98,28 +97,44 @@ struct CycleCalendarView: View {
     /// returns. Neither clips.
     static func naturalWidth(cardHeight: CGFloat, weeks: Int, scale: CGFloat) -> CGFloat {
         let cardPadding: CGFloat = 16                  // `card()` pads 8 on each side, unscaled
-        let chrome = (46 + 14 + 12) * scale            // stacked header + legend + the two 6pt gaps
+        let chrome = (50 + 14 + 12) * scale            // wrapped title beside the figure, legend, two gaps
         let gap = 4 * scale
         let headerRow = 16 * scale                     // the weekday letters
         let rows = CGFloat(max(1, weeks))
         let gridH = max(30 * scale, cardHeight - cardPadding - chrome)
         let side = max(6, (gridH - headerRow - gap * rows) / rows)
-        return side * 7 + gap * 6 + cardPadding
+        return side * 1.2 * 7 + gap * 6 + cardPadding   // matches the cell aspect above
     }
 
-    /// Two lines, not one. The total used to sit at the end of the title row, which meant the header
-    /// needed ~420pt before it would fit — and that, not the grid, was what set this card's minimum
-    /// width and kept it from ever being narrow enough for square cells to fill it. Stacking also
-    /// reads as more of a headline, not less: the figure gets a line of its own instead of being
-    /// squeezed against the right edge.
+    /// One line when it fits, stacked when it doesn't.
+    ///
+    /// It was stacked unconditionally, which is what let the card get narrow — but it spent ~45px of
+    /// height, and height is exactly what the grid is short of, because square cells are sized by it.
+    /// Now that the card is wider the single line usually fits, and the cells grow into the line it
+    /// gives back. The date range is dropped whole before the layout stacks, since clipping it to
+    /// "4 Jul – 4…" says less than nothing.
+    /// Title on the left, total pinned **top-right**. The title is allowed to wrap; the figure is not.
+    ///
+    /// Every earlier arrangement fought the card's narrowness. One line needed ~420pt and set the
+    /// card's minimum width; stacking the figure under the title fixed that but spent ~45px of height,
+    /// and height is what the grid is short of, because square cells are sized by it. Letting the
+    /// *words* wrap instead spends the one thing this header has spare — the title's own line — and
+    /// puts the figure where the eye already looks for a card's headline number.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            // The card is deliberately narrow now, so the date range is dropped whole rather than
-            // clipped to "4 Jul – 4…", which says less than nothing. Same degradation as the charts.
-            ViewThatFits(in: .horizontal) {
-                titleRow(withDates: true)
-                titleRow(withDates: false)
+        HStack(alignment: .center, spacing: 8 * scale) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Billing cycle")
+                    .scaledFont(15, weight: .semibold)
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)   // wrap rather than truncate
+                if let start = metrics.cycleStart, let end = metrics.cycleReset {
+                    Text(start.formatted(.dateTime.month(.abbreviated).day())
+                         + " – " + end.formatted(.dateTime.month(.abbreviated).day()))
+                        .scaledFont(9).foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
             }
+            Spacer(minLength: 0)
             HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
                 // The cycle TOTAL, so it names the basis rather than sitting beside a "/day" caption —
                 // "90.3M work/day" would read as a rate.
@@ -131,25 +146,9 @@ struct CycleCalendarView: View {
                     .fixedSize()
                 if metrics.budgetUnit == .tokens {
                     Text(metrics.tokenBasisLabel)
-                        .scaledFont(9).foregroundStyle(Theme.textTertiary)
+                        .scaledFont(9).foregroundStyle(Theme.textTertiary).fixedSize()
                 }
-                Spacer(minLength: 0)
             }
-        }
-    }
-
-    private func titleRow(withDates: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
-            Text("This billing cycle").scaledFont(15, weight: .semibold)
-                .foregroundStyle(Theme.textPrimary)
-                .fixedSize()
-            if withDates, let start = metrics.cycleStart, let end = metrics.cycleReset {
-                Text(start.formatted(.dateTime.month(.abbreviated).day())
-                     + " – " + end.formatted(.dateTime.month(.abbreviated).day()))
-                    .scaledFont(9).foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1).fixedSize()
-            }
-            Spacer(minLength: 0)
         }
     }
 
@@ -185,9 +184,15 @@ struct CycleCalendarView: View {
     private func weekdayHeader(cal: Calendar, side: CGFloat, gap: CGFloat) -> some View {
         HStack(spacing: gap) {
             ForEach(CalendarGrid.weekdayOrder(calendar: cal), id: \.self) { weekday in
-                Text(Self.letter(forWeekday: weekday, cal: cal))
+                // Shared with both weekly charts (`Format.weekdayLabel`) so all three agree: two
+                // letters for the pairs a single initial can't separate, one for the rest. This
+                // column order is fixed Sunday-first, so position alone would do here — but the
+                // charts beside it rotate with the reset day and cannot rely on that, and one screen
+                // showing "T" and "Tu" for the same weekday is worse than a slightly wider label.
+                Text(Format.weekdayLabel(weekday: weekday, calendar: cal))
                     .scaledFont(8)
                     .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).minimumScaleFactor(0.7)
                     .frame(width: side)
             }
         }
@@ -204,8 +209,10 @@ struct CycleCalendarView: View {
             let level = future ? 0 : 0.16 + 0.74 * min(1, value(day) / maxV)
             shape
                 .fill(Theme.claudeCoral.opacity(level))
+                // Today gets a ring twice the weight of the cell borders. At 1.5px against a shaded
+                // fill it read as an artifact of the shading rather than as a marker you could find.
                 .overlay(shape.stroke(isToday ? Theme.claudeCoral : Color.white.opacity(0.06),
-                                      lineWidth: isToday ? 1.5 : 1))
+                                      lineWidth: isToday ? 3 : 1))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .help("\(day.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())): "
                       + amount(value(day)))
@@ -216,11 +223,4 @@ struct CycleCalendarView: View {
         }
     }
 
-    private static func letter(forWeekday weekday: Int, cal: Calendar) -> String {
-        // Build a real date with that weekday so the symbol comes from the locale, not a hardcoded list.
-        var comps = DateComponents(); comps.weekday = weekday
-        guard let d = cal.nextDate(after: Date(), matching: comps, matchingPolicy: .nextTime)
-        else { return "" }
-        return dayLetter.string(from: d)
-    }
 }

@@ -26,6 +26,11 @@ public actor UsageScanner {
     public func scan(deduplicated: Bool = true) -> [UsageEntry] {
         let files = Self.jsonlFiles(under: root)
         var present = Set<URL>()
+        // One table for the whole scan, so `model` and `cwd` are shared across FILES and not merely
+        // within one. Held locally rather than on the actor: it exists to stop 250k allocations
+        // being made, not to be kept afterwards, and the strings it hands out are retained by the
+        // entries themselves.
+        let interner = StringInterner()
 
         for url in files {
             present.insert(url)
@@ -42,34 +47,64 @@ public actor UsageScanner {
             // guard's else-body.)
             let dir = Self.projectDir(of: url, under: root)
             guard let entries = autoreleasepool(invoking: {
-                try? JSONLParser.entries(inFileAt: url, projectDir: dir)
+                try? JSONLParser.entries(inFileAt: url, projectDir: dir, interner: interner)
             }) else { continue }
             cache[url] = CachedFile(mtime: mtime, size: size, entries: entries)
         }
         // Forget files that disappeared.
         for url in cache.keys where !present.contains(url) { cache[url] = nil }
 
-        return Self.merge(cache.values.flatMap(\.entries), deduplicated: deduplicated)
+        return Self.merge(Self.concatenated(cache.values), deduplicated: deduplicated)
     }
 
     // MARK: - One-shot (no cache) — used for synchronous snapshot rendering.
 
     public static func scanOnce(root: URL = UsageScanner.defaultRoot,
                                 deduplicated: Bool = true) -> [UsageEntry] {
-        let all = jsonlFiles(under: root).flatMap {
-            (try? JSONLParser.entries(inFileAt: $0, projectDir: projectDir(of: $0, under: root))) ?? []
+        let interner = StringInterner()
+        var all: [UsageEntry] = []
+        for url in jsonlFiles(under: root) {
+            // Per-file `autoreleasepool`, the same as the actor path — and for the same measured
+            // reason. It was missing here, so every snapshot render (`CLAUDEPET_DASHBOARD`,
+            // `CLAUDEPET_SNAPSHOT`) held the Foundation temporaries of all 2,229 files at once.
+            let dir = projectDir(of: url, under: root)
+            autoreleasepool {
+                if let e = try? JSONLParser.entries(inFileAt: url, projectDir: dir,
+                                                    interner: interner) {
+                    all.append(contentsOf: e)
+                }
+            }
         }
         return merge(all, deduplicated: deduplicated)
     }
 
     // MARK: - Helpers
 
+    /// One array, sized once.
+    ///
+    /// `flatMap` grows geometrically, so building ~125k entries reallocated the backing store a
+    /// dozen times and left the previous buffer live at each doubling — a transient of roughly the
+    /// final size on top of the final size. Counting first costs one cheap pass over the values.
+    private static func concatenated(_ files: some Collection<CachedFile>) -> [UsageEntry] {
+        var out: [UsageEntry] = []
+        out.reserveCapacity(files.reduce(0) { $0 + $1.entries.count })
+        for f in files { out.append(contentsOf: f.entries) }
+        return out
+    }
+
     static func merge(_ entries: [UsageEntry], deduplicated: Bool = true) -> [UsageEntry] {
         // Sort by time so dedup keeps the earliest copy deterministically. Sort in place
-        // (the caller's array is a fresh flatMap result) to avoid a second full-set copy.
+        // (the caller's array is a fresh concatenation) to avoid a second full-set copy.
         var sorted = entries
         sorted.sort { $0.timestamp < $1.timestamp }
-        return deduplicated ? Deduplicator.deduplicated(sorted) : sorted
+        guard deduplicated else { return sorted }
+        // In place, not `filter`. `Deduplicator.deduplicated` returns a NEW array, so at the moment
+        // it returned there were two full copies live; `removeAll(where:)` compacts the one we
+        // already own. Same earliest-wins semantics — `removeAll(where:)` visits in order.
+        var seen = Set<String>()
+        seen.reserveCapacity(sorted.count)
+        sorted.removeAll { !seen.insert($0.messageID).inserted }
+        return sorted
     }
 
     static func jsonlFiles(under root: URL) -> [URL] {

@@ -48,13 +48,66 @@ public struct StatsCache: Sendable, Equatable {
     /// rather than the 30th. Comparing y/m/d integers has no such trap.
     public let lastComputedDay: DateComponents?
     public let totalSessions: Int
+    public let totalMessages: Int
+    /// Every day Claude Code recorded activity on, as y/m/d, ascending. Same reason as
+    /// `lastComputedDay` for keeping components rather than `Date`s: the file's dates are bare
+    /// Gregorian strings, and turning them into instants forces a timezone choice at parse time.
+    public let activeDays: [DateComponents]
+    /// All-time message counts per hour of the local day, 0…23. Sparse in the file.
+    public let hourCounts: [Int: Int]
+    public let firstSessionDate: Date?
+    public let longestSessionMessages: Int
     public let asOf: Date                    // file mtime, for freshness display
 
-    public init(models: [StatsModelTotal], lastComputedDay: DateComponents?, totalSessions: Int, asOf: Date) {
+    public init(models: [StatsModelTotal], lastComputedDay: DateComponents?, totalSessions: Int,
+                totalMessages: Int = 0, activeDays: [DateComponents] = [],
+                hourCounts: [Int: Int] = [:], firstSessionDate: Date? = nil,
+                longestSessionMessages: Int = 0, asOf: Date) {
         self.models = models
         self.lastComputedDay = lastComputedDay
         self.totalSessions = totalSessions
+        self.totalMessages = totalMessages
+        self.activeDays = activeDays
+        self.hourCounts = hourCounts
+        self.firstSessionDate = firstSessionDate
+        self.longestSessionMessages = longestSessionMessages
         self.asOf = asOf
+    }
+
+    /// The hour of the day with the most messages, all time. Nil when the file records none.
+    ///
+    /// **Not the same thing as the hour chart's "peak"**, which is *today's* busiest hour from our own
+    /// transcripts. Two different figures; label this one "all time" wherever it appears or they read
+    /// as a contradiction.
+    public var busiestHour: Int? {
+        hourCounts.filter { $0.value > 0 }
+            .max { a, b in a.value != b.value ? a.value < b.value : a.key > b.key }?.key
+    }
+
+    /// The longest run of consecutive active days anywhere in the record.
+    public var longestStreak: Int { Self.streaks(activeDays).max() ?? 0 }
+
+    /// The run of consecutive active days ending at the **last day the cache knows about** — which is
+    /// not necessarily today. `MetricsStore.statsCurrentStreak()` extends it across the days the cache
+    /// hasn't folded in yet.
+    public var streakEndingAtLastDay: Int { Self.streaks(activeDays).last ?? 0 }
+
+    /// Run lengths of consecutive days, in order. Uses a fixed Gregorian calendar: these are the
+    /// file's own dates being compared against each other, so the user's locale is irrelevant here —
+    /// and on a Buddhist calendar `Calendar.current` would not even agree on the year.
+    private static func streaks(_ days: [DateComponents]) -> [Int] {
+        var g = Calendar(identifier: .gregorian)
+        g.timeZone = TimeZone(secondsFromGMT: 0)!
+        let dates = days.compactMap { g.date(from: $0) }.sorted()
+        guard !dates.isEmpty else { return [] }
+        var runs: [Int] = []
+        var run = 1
+        for (a, b) in zip(dates, dates.dropFirst()) {
+            if g.dateComponents([.day], from: a, to: b).day == 1 { run += 1 }
+            else { runs.append(run); run = 1 }
+        }
+        runs.append(run)
+        return runs
     }
 
     /// `/stats`' "Total tokens": input + output across every model, cache excluded.
@@ -119,6 +172,14 @@ public enum StatsCacheReader {
             .appendingPathComponent(".claude/stats-cache.json").path
     }
 
+    /// The file's `firstSessionDate` carries fractional seconds; the default `ISO8601DateFormatter`
+    /// rejects those, which silently yielded nil.
+    fileprivate static let statsFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
     /// The cache carries much more than we use (`dailyActivity`, `hourCounts`, `longestSession`, …);
     /// Codable ignores the rest. Note `costUSD` is present but always 0, so `PricingTable` stays the
     /// source for every `$` figure — don't be tempted by that field.
@@ -129,9 +190,16 @@ public enum StatsCacheReader {
             let cacheReadInputTokens: Int?
             let cacheCreationInputTokens: Int?
         }
+        struct DailyActivity: Decodable { let date: String? }
+        struct LongestSession: Decodable { let messageCount: Int? }
         let lastComputedDate: String?
         let modelUsage: [String: Usage]?
         let totalSessions: Int?
+        let totalMessages: Int?
+        let dailyActivity: [DailyActivity]?
+        let hourCounts: [String: Int]?
+        let firstSessionDate: String?
+        let longestSession: LongestSession?
     }
 
     /// `"2026-07-29"` → y/m/d components. No calendar or timezone involved, deliberately — see
@@ -164,7 +232,19 @@ public enum StatsCacheReader {
         guard models.contains(where: { $0.workTokens > 0 }) else { return nil }
 
         let mtime = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        let days = (raw.dailyActivity ?? []).compactMap { parseDay($0.date) }
+        let hours = (raw.hourCounts ?? [:]).reduce(into: [Int: Int]()) { out, kv in
+            if let h = Int(kv.key), (0...23).contains(h) { out[h] = kv.value }
+        }
         return StatsCache(models: models, lastComputedDay: parseDay(raw.lastComputedDate),
-                          totalSessions: raw.totalSessions ?? 0, asOf: mtime ?? Date())
+                          totalSessions: raw.totalSessions ?? 0,
+                          totalMessages: raw.totalMessages ?? 0,
+                          activeDays: days,
+                          hourCounts: hours,
+                          firstSessionDate: raw.firstSessionDate.flatMap {
+                              Self.statsFormatter.date(from: $0)
+                          },
+                          longestSessionMessages: raw.longestSession?.messageCount ?? 0,
+                          asOf: mtime ?? Date())
     }
 }
