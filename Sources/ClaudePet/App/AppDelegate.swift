@@ -174,6 +174,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Our own 5h window, so its alignment against Claude's `resets_at` is checkable.
                     "blockStart": m.activeBlock?.start.timeIntervalSince1970 ?? 0,
                     "blockEnd": m.activeBlock?.endsAt.timeIntervalSince1970 ?? 0,
+                    // The pace baselines, for the same reason as the budgets above: they're a
+                    // rolling 30-day mean that no other surface prints, and the caption deliberately
+                    // doesn't name its span, so this file is the only way to check them against a
+                    // direct scan of the transcripts.
+                    "dailyAverage": m.dailyAverage(unit: m.budgetUnit),
+                    "subagentDailyAverage": m.subagentDailyAverage(unit: m.budgetUnit),
+                    "allTimeDailyCount": m.allTimeDaily.count,
+                    "allTimeDailyFirst": m.allTimeDaily.first?.date.timeIntervalSince1970 ?? 0,
+                    "allTimeDailyLast": m.allTimeDaily.last?.date.timeIntervalSince1970 ?? 0,
                 ]
                 if let d = try? JSONSerialization.data(withJSONObject: obj) {
                     try? d.write(to: URL(fileURLWithPath: hb))

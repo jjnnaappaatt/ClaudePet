@@ -2,10 +2,12 @@ import SwiftUI
 import ClaudePetCore
 
 /// A 7-bar "this week" chart (all models combined), like the Screen Time widget.
-/// One bar per weekday of the weekly-limit window, so they sum to the figure the weekly bar shows
-/// while still being real weekdays; reset day's bar holds only the parts inside the window.
-/// Values follow the gauge unit ($ or tokens) and the work/total basis; today is highlighted and
-/// days still to come are dimmed.
+/// One bar per weekday of a **fixed Sunday-to-Saturday calendar week** — deliberately independent
+/// of the weekly usage-LIMIT window (`WeeklyLimitBar`, the "Week" footer figure), which keeps its
+/// own real reset schedule synced from Claude's servers. Since the calendar-week boundary is exact
+/// local midnight at both ends, a calendar day's tokens always land in exactly one bar; there is no
+/// reset-day split to fold. Values follow the gauge unit ($ or tokens) and the work/total basis;
+/// today is highlighted and days still to come are dimmed.
 ///
 /// The subagent slice of the same seven days is **not** a second instance of this view. It was, for
 /// exactly one build: `Series {total, subagents}` selecting the value and the title. Two identical
@@ -33,15 +35,15 @@ struct WeeklyBarChart: View {
     private var chartHelp: String {
         let basis = metrics.budgetUnit == .usd ? "Cost" : "\(metrics.tokenBasisLabel.capitalized) tokens"
         return """
-            \(basis) per day across the current weekly-limit window, so these bars add up to the \
-            weekly figure above rather than to a rolling seven days. Reset day counts only the \
-            hours inside the window, so its bar can look short. Today is highlighted; days still \
-            to come are dimmed.
+            \(basis) per day across a fixed Sunday-to-Saturday calendar week — independent of the \
+            weekly usage-limit window shown elsewhere, so a calendar day's usage always lands in \
+            exactly one bar and never straddles two weeks. Today is highlighted; days still to \
+            come are dimmed.
             """
     }
 
     var body: some View {
-        let days = metrics.weekDaily
+        let days = metrics.calendarWeekDaily
         let now = Date()
         let maxV = max(days.map(value).max() ?? 1, 1)
         let barMax = (fillsHeight ? 30 : 40) * scale

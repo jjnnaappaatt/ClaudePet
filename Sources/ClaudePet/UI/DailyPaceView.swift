@@ -2,12 +2,17 @@ import SwiftUI
 import ClaudePetCore
 
 /// "Today" daily-pace bar — the current day's tokens (or $) relative to your recent daily average.
-/// Claude has no daily limit, so this is informational, not a budget: the average day sits at
-/// the bar's midpoint, so a full bar ≈ 2× a usual day. Sits beneath the 5h + weekly gauges.
+/// Claude has no daily limit, so this is informational, not a budget. Sits beneath the 5h + weekly
+/// gauges.
 ///
-/// "Today" is the same bucket the chart highlights — a calendar day clipped to the weekly window —
-/// so this row and the chart's highlighted bar always agree. On reset day that means only the part
-/// since the reset, which the tooltip says.
+/// **A usual day fills the bar** (`MetricsStore.dailyPaceFraction`), so the fill and the "today N%"
+/// beside it always say the same thing. It used to put the average at the midpoint — full ≈ 2× a
+/// usual day — which nobody read that way: a day at 2/3 of normal drew a third of a bar.
+///
+/// Its two numbers come from two different series, and neither can stand in for the other:
+/// today's own value from `calendarWeekDaily` (which can't fold two calendar dates into one slot),
+/// the average from `allTimeDaily` (which a weekly reset can't empty). See the `// MARK: - Daily
+/// pace` block in `MetricsStore` for why each.
 struct DailyPaceView: View {
     /// Bar thickness. 7 suits the widget's compact card; the dashboard passes a fatter bar, where the
     /// same 7pt reads as a hairline next to figures three times the size.
@@ -32,9 +37,13 @@ struct DailyPaceView: View {
         Today's usage compared with your recent daily average. There's no daily limit, so this is \
         a pace check, not a budget: a usual day fills the bar, so the bar and the "today %" beside \
         it always say the same thing. A day heavier than usual fills it completely and turns \
-        coral — the % is then the one to read, since it keeps going past 100%. Days come from the \
-        chart below, which covers the weekly-limit window, so on reset day this counts only the \
-        part since the reset. Local data only — no token, no network.
+        coral — the % is then the one to read, since it keeps going past 100%.
+
+        "A usual day" is the average over your last 30 days that had any usage — days you didn't \
+        use Claude don't count as light days, they just don't count. It's a rolling window, so the \
+        baseline follows how you work now rather than being diluted by months of older history, \
+        and unlike the weekly limit above it nothing resets it. Today itself is never counted \
+        into its own average. Local data only — no token, no network.
         """
     }
 

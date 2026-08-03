@@ -3,6 +3,68 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.12.0] — 2026-08-03
+
+### Added
+- **The "N/day avg" pace baselines now average your last 30 active days**, not the current
+  rate-limit week. A weekly reset empties that week's buckets, so for the rest of reset day both pace
+  bars had no prior days to average and fell back to "building daily average…" beside a perfectly
+  correct figure — every week, by construction. The new lifetime series (`allTimeDaily`) has no such
+  cliff. Rolling rather than all-time so the baseline tracks how you work now: on real data all-time
+  read 3.11M against the window's 3.53M, and that gap only grows. Days with no usage don't count as
+  light days — they don't count at all — and the subagent baseline picks its own active days, so a
+  day you worked alone doesn't drag it down. The captions are unchanged; the span is in the tooltips.
+
+### Changed
+- **Two full copies of the entry list are no longer made every cycle**, by code whose comments already
+  claimed they weren't. On this corpus each is ~15.7 MB, and `vmmap` showed the residue as empty
+  `MALLOC_LARGE` regions of exactly that size.
+  - `UsageScanner.merge` now takes its parameter **`consuming`**. It always intended to sort in place,
+    but a plain parameter is *borrowed*: the caller's array stays live for the call, so
+    `var sorted = entries` left the buffer non-uniquely referenced and `sort()` quietly took a
+    copy-on-write copy. One allocation claimed, two made — on **every scan**, and FSEvents rescans on
+    every transcript write.
+  - `FiveHourBlockEngine` no longer re-sorts an already-sorted list. `merge` sorts before returning,
+    so its two `entries.sorted { }` calls were sorting sorted data — except `.sorted` allocates
+    unconditionally, twice per `recompute()`, on a 30-second idle timer.
+  - Observed peak **744.5 MB → 679.6 MB**, and empty `MALLOC_LARGE` regions of ≥10 MB down from 2 to 1
+    at matched uptime. Both figures sit inside the documented 526–790 MB band, so the allocation
+    counts — which are pinned by tests — are the solid result, not the footprint delta.
+  - These produce byte-identical output, so every functional test passes either way. `AllocationTests`
+    exists for exactly that reason: it compares buffer base addresses, and is the only thing in the
+    suite that fails if either copy comes back.
+- **Aggregation got ~15% faster despite gaining a series.** The new lifetime buckets need a day key
+  for every entry, and `recompute()` runs on the main actor on a 30s timer, so that could not be
+  paid naively. Caching one `startOfDay` per *day* — and reusing that key for the per-entry
+  `isDate(_:inSameDayAs:)` the "today" branch already called — more than covers it. Measured over 21
+  runs on 127k real entries (p50): **275.5 ms before the feature, 345.3 ms if added naively,
+  233.9 ms as shipped.**
+
+- **A layout button on the widget itself**, beside the existing expand and gear icons — switches
+  between the wide two-column card and the tall single-column one without opening Settings. Same call
+  Settings' own "Widget layout" picker makes (`saveConfigAndRecompute`), so the panel resizes to fit
+  exactly as it already did from there; this just gives it a second, faster door. The icon shows the
+  layout you're *in* — `rectangle.split.2x1` (side-by-side panes) for wide, `rectangle.split.1x2`
+  (stacked panes) for tall — with the destination spelled out in the tooltip so the icon doesn't have
+  to carry that on its own. Hidden in the dashboard, where "wide vs tall" has no visible effect.
+
+### Fixed
+- **A verification recipe in `CLAUDE.md` that quietly overcounted.** Claude Code symlinks a
+  workflow's agent directory into every session that resumed it, so one physical transcript is
+  reachable by several paths. A `**/*.jsonl` walk follows those symlinks; `FileManager`, which the
+  app uses, does not — so hand-checks read higher than the app and the app looked like it was
+  undercounting. Here it was 11 duplicate paths inflating one day by 113,808 tokens: small, stable,
+  and written off as "live drift" more than once. The recipe now says to dedupe by inode, and with
+  that the same scan matches the app to the token.
+- **The Week/Cycle line no longer truncates real numbers.** `Week 15.5M · Cycle 94.3M` was rendering
+  as `W... 15.... · Cy... 94....` in the widget's landscape layout — pre-existing in 0.11.0, not
+  something the new button caused, though a third icon in the same tight row made it slightly worse.
+  `.minimumScaleFactor` was hitting its floor and then truncating the token figures themselves, which
+  are the one thing on that line that must stay exact. Fixed the way the rest of the app already
+  handles a row that doesn't fit: `ViewThatFits` drops the least essential piece — the reset countdown
+  — instead of shrinking everything, and the token figures are `.fixedSize()` so they're never what
+  gives first. The dropped countdown is still in Cycle's own tooltip.
+
 ## [0.11.0] — 2026-08-01
 
 ### Added

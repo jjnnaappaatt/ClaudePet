@@ -87,6 +87,11 @@ public struct Aggregates: Sendable, Equatable {
     public var cycle: Totals = .init()         // current billing cycle
     public var todayByModel: [ModelTotal] = []
     public var weekDaily: [DayTotal] = []      // last 7 local days incl. today (all models)
+    public var calendarWeek: Totals = .init()
+    /// One bucket per date in the fixed Sunday-to-Saturday calendar week containing `now` — always
+    /// exactly 7 whole calendar dates (no reset-day fold, unlike `weekDaily`). Independent of the
+    /// rate-limit `weekWindow`; see CLAUDE.md.
+    public var calendarWeekDaily: [DayTotal] = []
     public var todayHourly: [HourTotal] = []   // today's usage in 24 local-hour buckets (all models)
     public var unknownModels: Set<String> = []
     /// One bucket per calendar date the billing cycle touches, and the same window split by
@@ -97,6 +102,15 @@ public struct Aggregates: Sendable, Equatable {
     /// cycle one is pinned by tests to sum exactly to `cycle`, which the dashboard's calendar card
     /// depends on. This one sums to `allTime` instead.
     public var allTimeByProject: [ProjectTotal] = []
+    /// The lifetime daily history, oldest first — one bucket per calendar date that has usage.
+    ///
+    /// **ACTIVE days only, and alone among the series here it is not pre-gridded.** The other three
+    /// build a fixed grid first because their span is known up front (7 slots, 7 dates, the cycle's
+    /// dates); this one's span isn't known until the entries have been seen, and pre-gridding it
+    /// would need a separate pass just to find the earliest. Gaps cost nothing: its consumer
+    /// (`MetricsStore.dailyAverage`) drops zero-value days anyway, since a day you didn't work is
+    /// not evidence about what a usual day looks like.
+    public var allTimeDaily: [DayTotal] = []
 }
 
 /// Rolls deduplicated entries into today / week / all-time totals plus a
@@ -156,6 +170,35 @@ public enum Aggregator {
             }
         }
 
+        // Fixed Sunday 00:00 → next Sunday 00:00 calendar week containing `now` — deliberately
+        // independent of `weekWindow` (the real rate-limit window, whatever day/time it resets).
+        // Unlike `weekDaily` above, this always has exactly 7 whole calendar dates: no optional/
+        // "no window" branch (there's nothing to fall back from — `now`/`calendar` are always
+        // enough), and no `% 7` fold (a midnight-aligned boundary can never split a day).
+        //
+        // Built from calendar-DAY arithmetic, NOT `WeeklyWindowEngine.window` — that steps a fixed
+        // 7×24h in raw SECONDS from an epoch anchor, which drifts up to ±1h off true local midnight
+        // for roughly half of every year in a DST-observing zone (its own doc comment admits this).
+        // For the rate-limit window that's tolerated (an approximation recalibrated against the
+        // server anyway), but it would silently exclude up to an hour of entries near the Sunday
+        // boundary from every bucket here — reintroducing a subtler version of the exact confusion
+        // this aggregate exists to remove. `calendar.date(byAdding: .day:)` absorbs DST by
+        // construction, so this boundary is always exactly local midnight.
+        let todayMidnight = calendar.startOfDay(for: now)
+        let weekdayToday = calendar.component(.weekday, from: todayMidnight)
+        let calWeekStart = calendar.date(byAdding: .day, value: -(weekdayToday - 1), to: todayMidnight)
+            ?? todayMidnight
+        let calWeekEnd = calendar.date(byAdding: .day, value: 7, to: calWeekStart)
+            ?? calWeekStart.addingTimeInterval(7 * 86_400)
+        var calWeekBuckets: [Date: DayTotal] = [:]
+        var calWeekOrder: [Date] = []
+        var cwDate = calWeekStart
+        for _ in 0..<7 {
+            calWeekBuckets[cwDate] = DayTotal(date: cwDate)
+            calWeekOrder.append(cwDate)
+            cwDate = calendar.date(byAdding: .day, value: 1, to: cwDate) ?? cwDate.addingTimeInterval(86_400)
+        }
+
         // Billing-cycle day grid: one bucket per calendar DATE the cycle touches, oldest → newest.
         // The cycle boundary is a mid-day instant (the subscription anniversary, e.g. 03:03 UTC), so
         // the first and last dates are partial. This deliberately does NOT copy `weekDaily`'s `% 7`
@@ -179,10 +222,53 @@ public enum Aggregator {
         var projectAcc: [String: ProjectAcc] = [:]
         var lifetimeProjectAcc: [String: ProjectAcc] = [:]
 
+        // Lifetime day buckets. No pre-built grid — see `Aggregates.allTimeDaily`.
+        var allTimeBuckets: [Date: DayTotal] = [:]
+
+        // One `startOfDay` per DAY rather than per ENTRY, reused by every branch below.
+        //
+        // **This is a speed cache, not a correctness one**, and the distinction matters: an
+        // out-of-order entry simply misses and recomputes, so the result is identical for any input
+        // ordering (`DailyBaselineTests.dayKeyCacheIsCorrectForUnsortedEntries` pins that). It hits
+        // ~99.9% in practice only because `LogScanner` sorts by timestamp — which makes that sort
+        // load-bearing for PERFORMANCE as well as for dedup determinism.
+        //
+        // Measured end to end on 127k real entries, p50 of 21 runs of this whole function:
+        // **275.5ms before `allTimeDaily` existed, 345.3ms with it added naively, 233.9ms as it
+        // stands.** `recompute()` is on the main actor on a 30s timer, so the naive +70ms was not
+        // payable — and the cached key also replaces the per-entry `isDate(_:inSameDayAs:)` below,
+        // which is what turns the feature's cost into a net saving.
+        //
+        // Benchmark the whole function, not these calls alone: an isolated microbenchmark of
+        // `isDate` over synthetic dates claimed 79ms, ~2× the ~42ms the substitution really nets
+        // here. Not wrong, just measuring something else.
+        var dayCacheStart = Date.distantPast
+        var dayCacheEnd = Date.distantPast
+
         for e in entries {
+            if e.timestamp < dayCacheStart || e.timestamp >= dayCacheEnd {
+                dayCacheStart = calendar.startOfDay(for: e.timestamp)
+                // `date(byAdding: .day:)`, never `+86_400` — same DST rule as the calendar-week
+                // block above: a raw-second step is an hour wrong twice a year.
+                dayCacheEnd = calendar.date(byAdding: .day, value: 1, to: dayCacheStart)
+                    ?? dayCacheStart.addingTimeInterval(86_400)
+            }
+            let day = dayCacheStart
+
             let cost = pricing.cost(for: e)
             let weight = pricing.weight(for: e.family)
             agg.allTime.add(e, cost: cost, weight: weight)
+
+            // Unconditional, exactly like `agg.allTime` above it — this series IS the lifetime one.
+            var lifeDay = allTimeBuckets[day] ?? DayTotal(date: day)
+            lifeDay.workTokens += e.workTokens
+            lifeDay.totalTokens += e.totalTokens
+            lifeDay.costUSD += cost
+            if e.isSidechain {
+                lifeDay.sidechainWorkTokens += e.workTokens
+                lifeDay.sidechainTotalTokens += e.totalTokens
+            }
+            allTimeBuckets[day] = lifeDay
 
             var lifeAcc = lifetimeProjectAcc[e.projectDir] ?? ProjectAcc()
             lifeAcc.work += e.workTokens
@@ -198,7 +284,6 @@ public enum Aggregator {
             if let cw = cycleWindow, e.timestamp >= cw.start, e.timestamp < cw.end {
                 agg.cycle.add(e, cost: cost, weight: weight)
 
-                let day = calendar.startOfDay(for: e.timestamp)
                 if cycleBuckets[day] != nil {
                     cycleBuckets[day]!.workTokens += e.workTokens
                     cycleBuckets[day]!.totalTokens += e.totalTokens
@@ -231,14 +316,13 @@ public enum Aggregator {
             let dayKey: Date?
             if let ww = weekWindow, let first = weekGridStart {
                 if e.timestamp >= ww.start && e.timestamp < ww.end {
-                    let day = calendar.startOfDay(for: e.timestamp)
                     let n = calendar.dateComponents([.day], from: first, to: day).day ?? 0
                     dayKey = dayOrder[((n % 7) + 7) % 7]
                 } else {
                     dayKey = nil
                 }
             } else {
-                dayKey = e.timestamp >= weekStart ? calendar.startOfDay(for: e.timestamp) : nil
+                dayKey = e.timestamp >= weekStart ? day : nil
             }
             if let key = dayKey, dayBuckets[key] != nil {
                 dayBuckets[key]!.workTokens += e.workTokens
@@ -250,7 +334,27 @@ public enum Aggregator {
                 }
             }
 
-            if calendar.isDate(e.timestamp, inSameDayAs: now) {
+            // Fixed Sunday-anchored calendar week — deliberately independent of `week`/`weekWindow`
+            // above. No fold needed: `calWeekBuckets` always has a key for every date this filter
+            // can produce, since the boundaries are exact calendar-day midnights.
+            if e.timestamp >= calWeekStart && e.timestamp < calWeekEnd {
+                agg.calendarWeek.add(e, cost: cost, weight: weight)
+                if calWeekBuckets[day] != nil {
+                    calWeekBuckets[day]!.workTokens += e.workTokens
+                    calWeekBuckets[day]!.totalTokens += e.totalTokens
+                    calWeekBuckets[day]!.costUSD += cost
+                    if e.isSidechain {
+                        calWeekBuckets[day]!.sidechainWorkTokens += e.workTokens
+                        calWeekBuckets[day]!.sidechainTotalTokens += e.totalTokens
+                    }
+                }
+            }
+
+            // `day == startOfToday` is exactly `calendar.isDate(e.timestamp, inSameDayAs: now)` —
+            // that call IS defined as comparing the two `startOfDay`s — but reuses the cached key
+            // instead of paying a Calendar round trip per entry. That substitution is what pays for
+            // the lifetime series; see the cache's own comment above for the measured split.
+            if day == startOfToday {
                 agg.today.add(e, cost: cost, weight: weight)
                 var mt = modelMap[e.family] ?? ModelTotal(family: e.family)
                 mt.workTokens += e.workTokens
@@ -274,8 +378,12 @@ public enum Aggregator {
             return $0.totalTokens > $1.totalTokens
         }
         agg.weekDaily = dayOrder.map { dayBuckets[$0] ?? DayTotal(date: $0) }
+        agg.calendarWeekDaily = calWeekOrder.map { calWeekBuckets[$0] ?? DayTotal(date: $0) }
         agg.todayHourly = hourBuckets
         agg.cycleDaily = cycleOrder.map { cycleBuckets[$0] ?? DayTotal(date: $0) }
+        // Ascending is part of the contract, not incidental: `MetricsStore.dailyAverage` takes a
+        // `.suffix` of this to mean "the most recent N active days".
+        agg.allTimeDaily = allTimeBuckets.values.sorted { $0.date < $1.date }
         // Resolve each directory to its real path, then merge: two directories CAN resolve to the
         // same project (a session started in the root and another in a subdirectory), and they are
         // genuinely the same project, so they belong in one row.

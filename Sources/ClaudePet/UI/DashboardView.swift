@@ -458,7 +458,7 @@ struct DashboardView: View {
             StatsKPIGrid()
             Spacer(minLength: 0)
             divider
-            WeekAllTimeView(showsExpandButton: false)
+            WeekAllTimeView(showsExpandButton: false, showsLayoutButton: false)
             BillingLineView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

@@ -33,9 +33,13 @@ struct SubagentPaceView: View {
         Today's subagent usage compared with your recent subagent days — turns the Task tool ran, \
         including workflow agents. A pace check, not a budget: there is no subagent limit, and a \
         heavy-delegation day is not a problem in itself. A usual day fills the bar; past that it \
-        pins full and the % keeps counting. For their *share* of each day, which is a different \
-        question, see the Subagents/day chart below. Turn "Include subagent usage" off in Settings \
-        and these turns leave every figure here.
+        pins full and the % keeps counting.
+
+        The baseline is your last 30 days that actually delegated something — a day you worked \
+        alone doesn't count as a zero-subagent day, so this compares like with like. That means it \
+        can reach further back than the Today bar's own 30-day window. For their *share* of each \
+        day, which is a different question, see the Subagents/day chart below. Turn "Include \
+        subagent usage" off in Settings and these turns leave every figure here.
         """
     }
 
