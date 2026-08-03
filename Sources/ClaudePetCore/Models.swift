@@ -91,32 +91,102 @@ public enum ModelFamily: String, Sendable, CaseIterable {
     }
 }
 
+// MARK: - Message key
+
+/// The dedup key, as 128 bits instead of a string.
+///
+/// `messageID` is unique per entry by construction, so — unlike `model` and `cwd` — interning it
+/// cannot help: 128k distinct values means 128k allocations however you store them. Measured, each
+/// one is a 28-character `String` (`"msg_01J3a4M2WvUVmAuX7RXpZkXU"`), past Swift's 15-byte inline
+/// limit, so it heap-allocates into the 64-byte malloc class: **129,692 `StringStorage` nodes,
+/// 8.3 MB**, purely to be compared for equality and then never read.
+///
+/// Hashing it to two `UInt64`s is the same 16 bytes inside `UsageEntry` but **zero heap and zero
+/// malloc nodes**. Nothing ever needs the original text back: the only readers are the two dedup
+/// `Set`s (`UsageScanner.merge`, `Deduplicator`).
+///
+/// **128 bits, not 64, because a collision here is silent and load-bearing.** Dedup keeps the first
+/// entry per key, so two distinct IDs colliding would *drop a real turn* — the same class of error
+/// CLAUDE.md warns tripling comes from, in the other direction. At 64 bits the birthday probability
+/// over 128k keys is ~4e-10; at 128 bits it is ~1e-29, i.e. never. The extra 8 bytes are free anyway,
+/// since `String` was 16 bytes too — this change buys heap, not stride.
+///
+/// Two independent lanes, not one hash split in half: deriving both from a single 64-bit value would
+/// carry only 64 bits of entropy and collide exactly as often as the 64-bit version.
+public struct MessageKey: Hashable, Sendable {
+    private let lo: UInt64
+    private let hi: UInt64
+
+    public init(hashing s: String) {
+        var a: UInt64 = 0xCBF2_9CE4_8422_2325          // FNV-1a 64 offset basis
+        var b: UInt64 = 0x9E37_79B9_7F4A_7C15          // a different basis for the second lane
+        for byte in s.utf8 {
+            a = (a ^ UInt64(byte)) &* 0x0000_0100_0000_01B3
+            b = (b ^ UInt64(byte)) &* 0x0000_0100_0000_01B3
+            b = b &+ 0x165667B19E3779F9                 // break the lanes' symmetry every round
+        }
+        lo = Self.avalanche(a)
+        hi = Self.avalanche(b)
+    }
+
+    /// splitmix64's finalizer — cheap, and it spreads FNV's weak high bits across the whole word.
+    private static func avalanche(_ x: UInt64) -> UInt64 {
+        var h = x
+        h = (h ^ (h >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        h = (h ^ (h >> 27)) &* 0x94D0_49BB_1331_11EB
+        return h ^ (h >> 31)
+    }
+}
+
 // MARK: - Normalized usage entry (post-parse, pre-dedup)
 
 /// One de-noised assistant turn's token usage. `messageID` is the dedup key.
+///
+/// **Field order and integer widths here are load-bearing, not style.** Two copies of this struct
+/// are resident for the life of the process — `UsageScanner.cache` (per file) and
+/// `MetricsStore.lastEntries` (merged) — at ~128k entries each, so every byte costs ~250 KB twice
+/// over. Declared in the obvious order with `Int` counts it measured **128 bytes**, of which 14 were
+/// pure alignment padding: `family` (1 byte) and `isSidechain` (1 byte) each sat between 8-aligned
+/// fields and each dragged 7 bytes of hole behind it.
+///
+/// Grouping the two 1-byte fields together at the end and narrowing the five counts to `Int32`
+/// brings it to **96 bytes**, a 25% cut, with no change to any figure. `ArtDistinctnessTests` has an
+/// equivalent for the mascot; this one is pinned by `AllocationTests.usageEntryStaysCompact`, because
+/// nothing else in the suite can see the layout regress.
 public struct UsageEntry: Sendable, Equatable, Identifiable {
-    public let messageID: String
+    // 16-byte, 8-aligned fields first, then the 4-byte counts, then the two 1-byte fields last.
+    public let messageID: MessageKey
     public let timestamp: Date
     public let model: String
-    public let family: ModelFamily
-    public let inputTokens: Int
-    public let outputTokens: Int
-    public let cacheReadTokens: Int
-    public let cacheWrite5mTokens: Int
-    public let cacheWrite1hTokens: Int
-    public let isSidechain: Bool
     /// The turn's own working directory (`cwd`), or "" when the line didn't carry one. This is the
     /// only exact source of a project's real *name*, but it is NOT the grouping key — it varies per
     /// turn across subdirectories and workflow worktrees (120 values for 11 projects on real data).
     public let project: String
     /// The `~/.claude/projects/<dir>` folder this transcript lives under — the exact grouping key,
     /// since Claude Code derives it from the session's original cwd. See `ProjectKey`.
-    ///
-    /// These two stay LAST, with defaulted init parameters, so every existing call site keeps
-    /// compiling — same reasoning as `Totals`' sidechain fields.
     public let projectDir: String
 
-    public var id: String { messageID }
+    /// **Stored as `Int32`, read as `Int`.** A single turn's counts are thousands to low millions;
+    /// `Int32` tops out at 2.1 billion, so the width is never the binding constraint on one entry —
+    /// but it halves 40 bytes to 20 across every resident copy. The accessors below keep the public
+    /// surface `Int`, so no caller, keypath or test had to change, and the sums they feed (which
+    /// genuinely can exceed `Int32`) are computed in `Int`.
+    private let _inputTokens: Int32
+    private let _outputTokens: Int32
+    private let _cacheReadTokens: Int32
+    private let _cacheWrite5mTokens: Int32
+    private let _cacheWrite1hTokens: Int32
+
+    public let family: ModelFamily
+    public let isSidechain: Bool
+
+    public var inputTokens: Int { Int(_inputTokens) }
+    public var outputTokens: Int { Int(_outputTokens) }
+    public var cacheReadTokens: Int { Int(_cacheReadTokens) }
+    public var cacheWrite5mTokens: Int { Int(_cacheWrite5mTokens) }
+    public var cacheWrite1hTokens: Int { Int(_cacheWrite1hTokens) }
+
+    public var id: MessageKey { messageID }
 
     /// Human-scale "work" tokens.
     public var workTokens: Int { inputTokens + outputTokens }
@@ -126,22 +196,29 @@ public struct UsageEntry: Sendable, Equatable, Identifiable {
         inputTokens + outputTokens + cacheReadTokens + cacheWrite5mTokens + cacheWrite1hTokens
     }
 
-    public init(messageID: String, timestamp: Date, model: String, family: ModelFamily,
+    /// Counts arrive as `Int` and are clamped, never truncated. A value past `Int32.max` can only
+    /// come from a corrupt line, and saturating there keeps that one entry visibly huge rather than
+    /// wrapping it negative and quietly subtracting from a total.
+    public init(messageID: MessageKey, timestamp: Date, model: String, family: ModelFamily,
                 inputTokens: Int, outputTokens: Int, cacheReadTokens: Int,
                 cacheWrite5mTokens: Int, cacheWrite1hTokens: Int, isSidechain: Bool,
                 project: String = "", projectDir: String = "") {
         self.messageID = messageID
         self.timestamp = timestamp
         self.model = model
-        self.family = family
-        self.inputTokens = inputTokens
-        self.outputTokens = outputTokens
-        self.cacheReadTokens = cacheReadTokens
-        self.cacheWrite5mTokens = cacheWrite5mTokens
-        self.cacheWrite1hTokens = cacheWrite1hTokens
-        self.isSidechain = isSidechain
         self.project = project
         self.projectDir = projectDir
+        self._inputTokens = Self.narrow(inputTokens)
+        self._outputTokens = Self.narrow(outputTokens)
+        self._cacheReadTokens = Self.narrow(cacheReadTokens)
+        self._cacheWrite5mTokens = Self.narrow(cacheWrite5mTokens)
+        self._cacheWrite1hTokens = Self.narrow(cacheWrite1hTokens)
+        self.family = family
+        self.isSidechain = isSidechain
+    }
+
+    private static func narrow(_ v: Int) -> Int32 {
+        Int32(clamping: v)
     }
 }
 

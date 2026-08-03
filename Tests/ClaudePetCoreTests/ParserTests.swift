@@ -10,7 +10,7 @@ import Foundation
 
     @Test func parsesAssistantTokensAndCacheSplit() throws {
         let e = try #require(JSONLParser.entry(fromLine: Self.assistantLine))
-        #expect(e.messageID == "msg_1")
+        #expect(e.messageID == MessageKey(hashing: "msg_1"))
         #expect(e.model == "claude-opus-4-8")
         #expect(e.family == .opus)
         #expect(e.inputTokens == 100)
@@ -68,7 +68,7 @@ import Foundation
         defer { try? FileManager.default.removeItem(at: url) }
         let entries = try JSONLParser.entries(inFileAt: url)
         #expect(entries.count == 2)            // user line skipped
-        #expect(entries.map(\.messageID) == ["msg_1", "msg_9"])
+        #expect(entries.map(\.messageID) == ["msg_1", "msg_9"].map(MessageKey.init(hashing:)))
     }
 
     /// The streaming reader must reassemble lines that straddle 1 MB chunk boundaries.
@@ -85,8 +85,8 @@ import Foundation
 
         let entries = try JSONLParser.entries(inFileAt: url)
         #expect(entries.count == count)
-        #expect(entries.first?.messageID == "msg_0")
-        #expect(entries.last?.messageID == "msg_\(count - 1)")
+        #expect(entries.first?.messageID == MessageKey(hashing: "msg_0"))
+        #expect(entries.last?.messageID == MessageKey(hashing: "msg_\(count - 1)"))
     }
 
     /// A single line longer than the chunk (e.g. a turn with a huge field) must still parse.
@@ -99,7 +99,7 @@ import Foundation
 
         let entries = try JSONLParser.entries(inFileAt: url)
         #expect(entries.count == 1)
-        #expect(entries.first?.messageID == "big")
+        #expect(entries.first?.messageID == MessageKey(hashing: "big"))
         #expect(entries.first?.workTokens == 7)
     }
 }

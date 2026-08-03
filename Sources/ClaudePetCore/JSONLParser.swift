@@ -70,7 +70,7 @@ public enum JSONLParser {
         // file, so every entry from that file already shares it.
         let cwd = record.cwd ?? ""
         return UsageEntry(
-            messageID: messageID,
+            messageID: MessageKey(hashing: messageID),
             timestamp: timestamp,
             model: interner?.intern(model) ?? model,
             family: ModelFamily(modelID: model),

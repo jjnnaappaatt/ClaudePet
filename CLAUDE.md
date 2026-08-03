@@ -112,6 +112,18 @@ functional test in the suite passes either way, so the only visible symptom is m
   read) when input is already ordered, and the O(n) check is real rather than a precondition comment
   because `ingestForTesting` assigns arbitrary arrays straight to `lastEntries`.
 
+**`UsageEntry` is 96 bytes and holds no per-entry string.** Two copies are resident for the process's
+life, so every byte costs ~250 KB twice at 128k entries. Field order is load-bearing: `family` and
+`isSidechain` are one byte each and, declared between 8-aligned fields, each dragged a 7-byte hole —
+14 bytes of the original 128 were padding. Grouped at the end, with the five counts narrowed to
+`Int32` (stored `Int32`, read `Int`, summed in `Int`, clamped on construction so a corrupt value
+saturates instead of wrapping negative), it is 96. `messageID` is a 128-bit `MessageKey`: unique per
+entry so interning cannot help it, and as a 28-char `String` it cost a 64-byte heap node each —
+129,692 nodes, 8.3 MB, allocated only to be compared. 128 bits rather than 64 because dedup keeps the
+first entry per key, so a collision silently drops a real turn; verified 0 collisions over 129,806
+real ids. Measured settled: live set 73.3 → 40.6 MB, malloc nodes 215,283 → 86,206. Pinned by
+`AllocationTests` — both changes leave every figure identical, so nothing else can see them regress.
+
 **Two more that looked obvious and measured WORSE — do not re-propose:**
 
 - **Exact-sizing the per-file arrays** (`reserveCapacity` + copy at the end of `JSONLParser.entries`).

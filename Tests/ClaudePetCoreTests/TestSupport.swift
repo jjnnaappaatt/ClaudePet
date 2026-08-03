@@ -34,7 +34,7 @@ enum TestSupport {
                       sidechain: Bool = false,
                       project: String = "",
                       projectDir: String? = nil) -> UsageEntry {
-        UsageEntry(messageID: id, timestamp: date, model: model,
+        UsageEntry(messageID: MessageKey(hashing: id), timestamp: date, model: model,
                    family: ModelFamily(modelID: model),
                    inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead,
                    cacheWrite5mTokens: cw5m, cacheWrite1hTokens: cw1h, isSidechain: sidechain,

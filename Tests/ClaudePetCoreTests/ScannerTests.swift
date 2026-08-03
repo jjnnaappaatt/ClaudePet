@@ -30,7 +30,7 @@ import Foundation
         let scanner = UsageScanner(root: root)
         let first = await scanner.scan()
         #expect(first.count == 3)                                    // msg_1 deduped across files
-        #expect(Set(first.map(\.messageID)) == ["msg_1", "msg_2", "msg_3"])
+        #expect(Set(first.map(\.messageID)) == Set(["msg_1", "msg_2", "msg_3"].map(MessageKey.init(hashing:))))
 
         // Append a new entry to b -> only b is re-parsed, new entry appears.
         let appended = try String(contentsOf: b, encoding: .utf8) + "\n" +
@@ -39,7 +39,7 @@ import Foundation
 
         let second = await scanner.scan()
         #expect(second.count == 4)
-        #expect(Set(second.map(\.messageID)) == ["msg_1", "msg_2", "msg_3", "msg_4"])
+        #expect(Set(second.map(\.messageID)) == Set(["msg_1", "msg_2", "msg_3", "msg_4"].map(MessageKey.init(hashing:))))
     }
 
     /// A transient read failure must not be cached. The cache key is (mtime, size) and a finished
@@ -96,7 +96,7 @@ import Foundation
 
         let raw = await scanner.scan(deduplicated: false)
         #expect(raw.count == 3)
-        #expect(raw.filter { $0.messageID == "msg_1" }.count == 2)     // the repeat is kept
+        #expect(raw.filter { $0.messageID == MessageKey(hashing: "msg_1") }.count == 2)     // the repeat is kept
         #expect(raw.map(\.inputTokens).reduce(0, +) == 210)            // …and its tokens counted twice
 
         // The mode only changes the merge: the per-file parse cache is shared, so switching back
