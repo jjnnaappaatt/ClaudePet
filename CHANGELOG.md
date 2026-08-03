@@ -3,6 +3,29 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [0.13.0] — 2026-08-03
+
+### Changed
+- **`UsageEntry` is 96 bytes instead of 128, and no longer allocates a string per entry.** Two copies
+  of every entry stay resident for the life of the process — the scanner's per-file cache and the
+  merged list — so at ~128k entries each byte costs ~250 KB twice over.
+  - **14 of those 128 bytes were alignment padding.** `family` and `isSidechain` are one byte each and
+    each sat between 8-aligned fields, dragging a 7-byte hole behind it. Grouping them at the end,
+    and narrowing the five token counts to `Int32` (a single turn's counts are thousands to low
+    millions; `Int32` reaches 2.1 billion), gives **96 bytes — 25% off**. The counts are still read as
+    `Int` and their sums still computed in `Int`, so no caller changed, and a corrupt oversized value
+    saturates rather than wrapping negative and quietly subtracting from a total.
+  - **`messageID` is a 128-bit `MessageKey` rather than a `String`.** It is unique per entry, so
+    unlike `model` and `cwd` interning can't help it — and measured, each was a 28-character string
+    landing in the 64-byte malloc class: **129,692 heap nodes, 8.3 MB**, allocated only to be compared
+    for equality and never read. Nothing needs the text back; the only readers are the two dedup sets.
+    128 bits, not 64, because dedup keeps the *first* entry per key — a collision would silently drop
+    a real turn. Verified against all **129,806 message ids** in a real corpus: **0 collisions**.
+  - Measured, settled, at matched uptime: live set **73.3 MB → 40.6 MB**, entry arrays 39.6 → 28.3 MB,
+    `StringStorage` 8.3 MB → 21.7 KB, total malloc nodes **215,283 → 86,206**, peak 679.6 → 629.7 MB.
+  - Neither change moves any figure, so the suite passes either way. `AllocationTests` pins the
+    stride and the key's distinctness for the same reason it pins the copy elimination.
+
 ## [0.12.0] — 2026-08-03
 
 ### Added

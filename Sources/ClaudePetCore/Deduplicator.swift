@@ -18,7 +18,7 @@ public enum Deduplicator {
     /// was a measurable part of the scan's peak. Kept as the readable statement of what dedup means,
     /// and as what the unit tests exercise.
     public static func deduplicated(_ entries: [UsageEntry]) -> [UsageEntry] {
-        var seen = Set<String>()
+        var seen = Set<MessageKey>()
         seen.reserveCapacity(entries.count)
         return entries.filter { seen.insert($0.messageID).inserted }
     }

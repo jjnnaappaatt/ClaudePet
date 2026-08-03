@@ -112,7 +112,7 @@ public actor UsageScanner {
         // In place, not `filter`. `Deduplicator.deduplicated` returns a NEW array, so at the moment
         // it returned there were two full copies live; `removeAll(where:)` compacts the one we
         // already own. Same earliest-wins semantics — `removeAll(where:)` visits in order.
-        var seen = Set<String>()
+        var seen = Set<MessageKey>()
         seen.reserveCapacity(sorted.count)
         sorted.removeAll { !seen.insert($0.messageID).inserted }
         return sorted

@@ -109,6 +109,51 @@ import Foundation
         #expect(merged.map(\.timestamp) == fixture().map(\.timestamp))   // and it really did sort
     }
 
+    // MARK: - `UsageEntry`'s size
+
+    /// Two copies of every entry are resident for the process's life — `UsageScanner.cache` and
+    /// `MetricsStore.lastEntries` — so at ~128k entries each byte of this struct costs ~250 KB twice.
+    /// Declared in the obvious order with `Int` counts it was **128 bytes, 14 of them alignment
+    /// padding**; grouping the two 1-byte fields and narrowing the counts to `Int32` gives **96**.
+    ///
+    /// Pinned because nothing else can see it: re-ordering the fields back, or widening a count to
+    /// `Int`, changes no figure anywhere and passes the entire rest of the suite.
+    @Test func usageEntryStaysCompact() {
+        #expect(MemoryLayout<UsageEntry>.stride == 96)
+        #expect(MemoryLayout<MessageKey>.stride == 16)   // 128 bits, no heap
+    }
+
+    /// Counts are stored `Int32` but read `Int`, and the sums they feed are computed in `Int`.
+    /// A corrupt line past `Int32.max` must saturate, never wrap negative — a wrapped value would
+    /// silently *subtract* from a total.
+    @Test func tokenCountsClampRatherThanWrap() {
+        let e = TestSupport.entry(at: at(2026, 7, 10), input: Int(Int32.max) + 1000, output: 5)
+        #expect(e.inputTokens == Int(Int32.max))
+        #expect(e.inputTokens > 0)
+        #expect(e.workTokens == Int(Int32.max) + 5)      // the sum widens back to Int
+    }
+
+    // MARK: - The dedup key
+
+    /// `MessageKey` replaced a 28-character `String` that cost a 64-byte heap node per entry
+    /// (129,692 nodes, 8.3 MB) and was never read for anything but equality. A collision would make
+    /// dedup drop a real turn, so distinctness is the property that matters — verified separately
+    /// against all 129,806 message ids in a real corpus: 0 collisions.
+    @Test func messageKeyIsStableAndDistinct() {
+        #expect(MessageKey(hashing: "msg_1") == MessageKey(hashing: "msg_1"))
+        #expect(MessageKey(hashing: "msg_1") != MessageKey(hashing: "msg_2"))
+        // Realistic shape: `msg_` + 24 base32-ish chars, differing in one position.
+        let base = "msg_01J3a4M2WvUVmAuX7RXpZkX"
+        var keys = Set<MessageKey>()
+        for c in "0123456789ABCDEFGHJKMNPQRSTVWXYZabcdefghijklmnopqrstuvwxyz" {
+            keys.insert(MessageKey(hashing: base + String(c)))
+        }
+        #expect(keys.count == 58)
+        // Anagrams must not collide — a weak positional-blind hash would map these together.
+        #expect(MessageKey(hashing: "abc") != MessageKey(hashing: "cba"))
+        #expect(MessageKey(hashing: "") != MessageKey(hashing: "\0"))
+    }
+
     /// Edge cases the O(n) scan has to survive — both callers guard `!entries.isEmpty`, but the
     /// helper must not depend on that.
     @Test func timeOrderedHandlesEmptyAndSingleAndEqualTimestamps() {

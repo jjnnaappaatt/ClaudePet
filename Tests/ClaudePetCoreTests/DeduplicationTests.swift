@@ -5,7 +5,7 @@ import Foundation
 @Suite struct DeduplicationTests {
 
     private func entry(_ id: String, work: Int) -> UsageEntry {
-        UsageEntry(messageID: id, timestamp: Date(), model: "claude-opus-4-8", family: .opus,
+        UsageEntry(messageID: MessageKey(hashing: id), timestamp: Date(), model: "claude-opus-4-8", family: .opus,
                    inputTokens: work, outputTokens: 0, cacheReadTokens: 0,
                    cacheWrite5mTokens: 0, cacheWrite1hTokens: 0, isSidechain: false)
     }
@@ -16,7 +16,7 @@ import Foundation
                    entry("msg_1", work: 100), entry("msg_2", work: 50)]
         let unique = Deduplicator.deduplicated(raw)
         #expect(unique.count == 2)
-        #expect(unique.map(\.messageID) == ["msg_1", "msg_2"])
+        #expect(unique.map(\.messageID) == ["msg_1", "msg_2"].map(MessageKey.init(hashing:)))
         #expect(unique.reduce(0) { $0 + $1.workTokens } == 150)   // NOT 350
     }
 
@@ -30,7 +30,7 @@ import Foundation
         let batchA = [entry("a", work: 1), entry("b", work: 1)]
         let batchB = [entry("b", work: 1), entry("c", work: 1)]
         let merged = UsageScanner.merge(batchA + batchB)
-        #expect(merged.map(\.messageID) == ["a", "b", "c"])
+        #expect(merged.map(\.messageID) == ["a", "b", "c"].map(MessageKey.init(hashing:)))
         #expect(merged.reduce(0) { $0 + $1.workTokens } == 3)   // b counted once, not twice
     }
 

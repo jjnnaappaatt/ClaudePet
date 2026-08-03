@@ -120,7 +120,7 @@ import Foundation
         try body.write(to: f, atomically: true, encoding: .utf8)
 
         let got = try JSONLParser.entries(inFileAt: f, projectDir: "p")
-        #expect(got.map(\.messageID) == ["msg_1", "msg_2"])
+        #expect(got.map(\.messageID) == ["msg_1", "msg_2"].map(MessageKey.init(hashing:)))
         #expect(got.reduce(0) { $0 + $1.workTokens } == 42)
     }
 
