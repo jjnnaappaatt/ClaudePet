@@ -27,13 +27,35 @@ public struct UsageBlock: Sendable, Equatable {
 public enum FiveHourBlockEngine {
     public static let blockDuration: TimeInterval = 5 * 3600
 
+    /// Timestamp-ordered `entries` — **without allocating when they already are.**
+    ///
+    /// Both functions below opened with `entries.sorted { … }`, and `UsageScanner.merge` had already
+    /// sorted by timestamp before returning (`recompute`'s subagent filter preserves order). So this
+    /// was re-sorting sorted data — except `.sorted` allocates unconditionally, which made it two
+    /// fresh ~16 MB buffers per `recompute()`, on a 30s idle timer. Nothing reclaimed them in
+    /// between: `malloc_zone_pressure_relief` runs only after a *scan*, deliberately. `vmmap` showed
+    /// the result as empty `MALLOC_LARGE` regions of exactly 15.6 MB — `128,101 entries × 128 bytes`.
+    ///
+    /// Returning `entries` unchanged shares its buffer (copy-on-write; both callers only read), which
+    /// is the whole point. The O(n) check walks data the very next loop walks anyway.
+    ///
+    /// **The check is real, not a precondition comment**: `ingestForTesting` assigns arbitrary arrays
+    /// straight to `lastEntries`, so unsorted input reaches here in tests and must still be correct.
+    static func timeOrdered(_ entries: [UsageEntry]) -> [UsageEntry] {
+        guard entries.count > 1 else { return entries }
+        for i in 1..<entries.count where entries[i].timestamp < entries[i - 1].timestamp {
+            return entries.sorted { $0.timestamp < $1.timestamp }
+        }
+        return entries
+    }
+
     /// The active session containing `now`, or nil if the session has expired (idle >=5h).
     public static func activeSession(from entries: [UsageEntry],
                                      pricing: PricingTable,
                                      now: Date = Date(),
                                      resetOffset: TimeInterval = 0) -> UsageBlock? {
         guard !entries.isEmpty else { return nil }
-        let sorted = entries.sorted { $0.timestamp < $1.timestamp }
+        let sorted = timeOrdered(entries)
 
         // Anchor = first message after the most recent >=5h gap, shifted by the user's
         // reset calibration (Claude anchors to the first prompt, ~minutes before our first
@@ -86,7 +108,7 @@ public enum FiveHourBlockEngine {
                                      now: Date = Date(), resetOffset: TimeInterval = 0)
         -> (work: Int, weighted: Double, cost: Double) {
         guard !entries.isEmpty else { return (0, 0, 0) }
-        let sorted = entries.sorted { $0.timestamp < $1.timestamp }
+        let sorted = timeOrdered(entries)
 
         struct Cell { var work = 0; var weighted = 0.0; var cost = 0.0; var end = Date.distantPast }
         var cells: [Date: Cell] = [:]

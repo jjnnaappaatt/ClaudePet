@@ -92,10 +92,21 @@ public actor UsageScanner {
         return out
     }
 
-    static func merge(_ entries: [UsageEntry], deduplicated: Bool = true) -> [UsageEntry] {
-        // Sort by time so dedup keeps the earliest copy deterministically. Sort in place
-        // (the caller's array is a fresh concatenation) to avoid a second full-set copy.
-        var sorted = entries
+    /// `consuming`, and that keyword is the whole point.
+    ///
+    /// The intent below was always to sort in place — the caller hands over a fresh concatenation
+    /// that nobody else wants. But a plain parameter is *borrowed*: the caller's temporary stays live
+    /// for the duration of the call, so `var sorted = entries` made the buffer non-uniquely
+    /// referenced and `sort()` silently took a full copy-on-write copy anyway. The comment claimed
+    /// one allocation; the code made two.
+    ///
+    /// On a real 128k-entry corpus that copy is ~15.7 MB, allocated and freed on **every scan** —
+    /// and FSEvents rescans on every transcript write. `vmmap` showed the residue as empty
+    /// `MALLOC_LARGE` regions of exactly that size, several of them, holding ~100 MB dirty.
+    /// `consuming` transfers ownership so the buffer is uniquely referenced and the sort is genuinely
+    /// in place.
+    static func merge(_ entries: consuming [UsageEntry], deduplicated: Bool = true) -> [UsageEntry] {
+        var sorted = consume entries
         sorted.sort { $0.timestamp < $1.timestamp }
         guard deduplicated else { return sorted }
         // In place, not `filter`. `Deduplicator.deduplicated` returns a NEW array, so at the moment

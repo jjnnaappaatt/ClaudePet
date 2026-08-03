@@ -25,10 +25,27 @@ import Foundation
                  workTokens: work, totalTokens: work * 100, costUSD: cost)
     }
 
+    /// The pace math reads THREE series and these fixtures aren't testing which — so they populate
+    /// all three from one array and let the individual tests assert on the arithmetic:
+    ///
+    ///   - `dailyAverage`     → `allTimeDaily`      (a lifetime series; the rate-limit week empties
+    ///                                               on reset and left the bar with no baseline)
+    ///   - `dailyTodayValue`  → `calendarWeekDaily` (can never fold two calendar dates into a slot)
+    ///   - `weekDaily`        → the rate-limit window, still read by the /stats day extension
+    ///
+    /// `allTimeDaily` is stored oldest-first because `dailyAverage` takes a `.suffix` of it; `days`
+    /// is written newest-first here, hence the reverse. It makes no difference at these sizes — the
+    /// window is 30 and no fixture has more than 4 days — but the contract is the contract.
+    private func seed(_ store: MetricsStore, _ days: [DayTotal]) {
+        store.weekDaily = days
+        store.calendarWeekDaily = days
+        store.allTimeDaily = days.reversed()
+    }
+
     @Test func averageExcludesTodayAndZeroDays() {
         let store = freshStore()
         // today=1000; priors 300, 0 (skipped), 900 → avg over the two non-zero priors = 600.
-        store.weekDaily = [day(0, work: 1000), day(1, work: 300), day(2, work: 0), day(3, work: 900)]
+        seed(store, [day(0, work: 1000), day(1, work: 300), day(2, work: 0), day(3, work: 900)])
         #expect(store.dailyAverage(unit: .tokens, now: now, calendar: cal) == 600)
         #expect(store.dailyTodayValue(unit: .tokens, now: now, calendar: cal) == 1000)
         #expect(store.hasDailyHistory(now: now, calendar: cal))
@@ -36,7 +53,7 @@ import Foundation
 
     @Test func fractionIsFullAtAverage() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 600), day(1, work: 600)]   // today == a usual day → full
+        seed(store, [day(0, work: 600), day(1, work: 600)])   // today == a usual day → full
         #expect(abs(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) - 1.0) < 0.0001)
         #expect(!store.dailyPaceExceedsAverage(unit: .tokens, now: now, calendar: cal))
     }
@@ -45,26 +62,26 @@ import Foundation
     /// the midpoint, so a day at 2/3 of normal drew a third of a bar and the two disagreed.
     @Test func fractionEqualsShareOfAUsualDay() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 400), day(1, work: 600)]   // today is 2/3 of a usual day
+        seed(store, [day(0, work: 400), day(1, work: 600)])   // today is 2/3 of a usual day
         #expect(abs(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) - 2.0 / 3.0) < 0.0001)
     }
 
     @Test func fractionClampsAndFlagsAboveAverage() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 5000), day(1, work: 500)]   // 10× a usual day → pinned full
+        seed(store, [day(0, work: 5000), day(1, work: 500)])   // 10× a usual day → pinned full
         #expect(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) == 1.0)
         #expect(store.dailyPaceExceedsAverage(unit: .tokens, now: now, calendar: cal))
     }
 
     @Test func zeroTodayGivesEmptyBar() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 0), day(1, work: 800)]
+        seed(store, [day(0, work: 0), day(1, work: 800)])
         #expect(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) == 0)
     }
 
     @Test func noPriorHistoryIsZeroAndFlagged() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 1200)]   // only today has data
+        seed(store, [day(0, work: 1200)])   // only today has data
         #expect(store.dailyAverage(unit: .tokens, now: now, calendar: cal) == 0)
         #expect(store.dailyPaceFraction(unit: .tokens, now: now, calendar: cal) == 0)
         #expect(!store.hasDailyHistory(now: now, calendar: cal))
@@ -72,7 +89,7 @@ import Foundation
 
     @Test func usdUnitUsesCost() {
         let store = freshStore()
-        store.weekDaily = [day(0, work: 1, cost: 4.0), day(1, work: 1, cost: 2.0)]
+        seed(store, [day(0, work: 1, cost: 4.0), day(1, work: 1, cost: 2.0)])
         #expect(store.dailyTodayValue(unit: .usd, now: now, calendar: cal) == 4.0)
         #expect(store.dailyAverage(unit: .usd, now: now, calendar: cal) == 2.0)
     }
@@ -80,7 +97,7 @@ import Foundation
     @Test func todayValueFallsBackToTotalsWhenNoBucket() {
         let store = freshStore()
         store.today = Totals(workTokens: 777, totalTokens: 7770, costUSD: 1.5)
-        store.weekDaily = [day(1, work: 500), day(2, work: 700)]   // no bucket for today
+        seed(store, [day(1, work: 500), day(2, work: 700)])   // no bucket for today
         #expect(store.dailyTodayValue(unit: .tokens, now: now, calendar: cal) == 777)
         #expect(store.dailyTodayValue(unit: .usd, now: now, calendar: cal) == 1.5)
     }
@@ -105,7 +122,7 @@ import Foundation
         #expect(store.totalsTokens(t) == 100_000)
 
         // The daily-pace "today" value follows the basis too (via dayValue over the series).
-        store.weekDaily = [d]
+        seed(store, [d])
         store.tokenBasis = .work
         #expect(store.dailyTodayValue(unit: .tokens, now: now, calendar: cal) == 1000)
         store.tokenBasis = .total

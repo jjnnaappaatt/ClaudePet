@@ -16,11 +16,15 @@ public final class MetricsStore {
     public var cycle = Totals()                  // current billing cycle
     public var todayByModel: [ModelTotal] = []
     public var weekDaily: [DayTotal] = []
+    public var calendarWeek = Totals()
+    public var calendarWeekDaily: [DayTotal] = []
     public var todayHourly: [HourTotal] = []      // today's usage in 24 local-hour buckets
     public var cycleDaily: [DayTotal] = []        // one bucket per calendar date the billing cycle
     public var cycleByProject: [ProjectTotal] = []  // touches, and that same window split by project
     public var allTimeByProject: [ProjectTotal] = []
                                                  // — each sums exactly to `cycle` (dashboard only)
+    public var allTimeDaily: [DayTotal] = []      // lifetime per-day history, oldest first, active
+                                                 // days only — the pace baselines' source
     public var unknownModels: Set<String> = []
     public var activeBlock: UsageBlock?
     public var weekReset: Date?                   // end of the current fixed weekly window
@@ -270,10 +274,13 @@ public final class MetricsStore {
         cycleReset = cycleBounds.end
         todayByModel = agg.todayByModel
         weekDaily = agg.weekDaily
+        calendarWeek = agg.calendarWeek
+        calendarWeekDaily = agg.calendarWeekDaily
         todayHourly = agg.todayHourly
         cycleDaily = agg.cycleDaily
         cycleByProject = agg.cycleByProject
         allTimeByProject = agg.allTimeByProject
+        allTimeDaily = agg.allTimeDaily
         unknownModels = agg.unknownModels
         activeBlock = FiveHourBlockEngine.activeSession(from: entries, pricing: pricing, now: now,
                                                         resetOffset: sessionResetOffset)
@@ -601,11 +608,54 @@ public final class MetricsStore {
 
     // MARK: - Daily pace
     // Today's tokens vs your recent daily average. Claude has no daily limit, so this bar is
-    // informational: the average day sits at the midpoint (full ≈ 2× a usual day). All values
-    // come from the `weekDaily` series so today and the average stay on one consistent basis.
+    // informational, not a budget: a usual day fills it (see `dailyPaceFraction`).
+    //
+    // **The two halves read different series, and each choice is load-bearing.** This used to say
+    // "all values come from `weekDaily` so today and the average stay on one consistent basis" —
+    // which sounded like an invariant and was really just where the data happened to be:
+    //
+    //   - today's own value  → `calendarWeekDaily`, because `weekDaily`'s reset-day bucket folds two
+    //     calendar dates into one slot and reported last week's tail as today's usage.
+    //   - the average        → `allTimeDaily`, because `weekDaily` is wiped by every weekly reset,
+    //     leaving no prior days and blanking the bar to "building daily average…" several times a
+    //     month.
+    //
+    // Neither series can substitute for the other here. What keeps them consistent is that both are
+    // whole calendar days on the same clock — not that they come from one array.
+
+    /// How many prior ACTIVE days the "/day avg" baselines average over.
+    ///
+    /// Active, not calendar: a day you didn't use Claude at all is not evidence about what a usual
+    /// day looks like, so it doesn't consume a slot. A rolling window rather than all history so the
+    /// baseline follows current habits — on real data all-time read 3.11M against this window's
+    /// 3.53M, and the gap only widens as history accumulates.
+    public static let dailyBaselineDays = 30
 
     private func dayValue(_ d: DayTotal, unit: BudgetUnit) -> Double {
         unit == .usd ? d.costUSD : Double(dayTokens(d))
+    }
+
+    /// The baseline sample: the most recent `dailyBaselineDays` prior days that were active *in the
+    /// caller's own terms*, oldest first.
+    ///
+    /// **Today is excluded by DATE, never by `isCurrentDayBucket`.** That helper matches on
+    /// *weekday*, which is correct for a 7-slot week array — 7 slots are 7 distinct weekdays — and
+    /// silently wrong over a long series, where it drops every same-weekday day instead of one.
+    /// Measured on a real 61-day corpus it discarded 4 extra days and moved the average +4.8%, and
+    /// because the count of same-weekday days changes with the calendar the error wandered −6.6% to
+    /// +3.5% depending only on which day you happened to look. It never errors and never looks wrong.
+    ///
+    /// **`> 0` filters before `.suffix`, not after**, so this is "the last N days that had usage",
+    /// not "the last N days, some of which were empty". It also means the work and subagent
+    /// baselines legitimately span different dates: on real data 07-01…08-01 against 06-28…07-31,
+    /// because a day with no delegated turns must not use up a subagent slot.
+    private func priorDayValues(_ pick: (DayTotal) -> Double,
+                                now: Date, calendar: Calendar) -> [Double] {
+        allTimeDaily
+            .filter { !calendar.isDate($0.date, inSameDayAs: now) }
+            .map(pick)
+            .filter { $0 > 0 }
+            .suffix(Self.dailyBaselineDays)
     }
 
     /// Is this the `weekDaily` bucket holding `now` — i.e. the "today" bar?
@@ -620,22 +670,33 @@ public final class MetricsStore {
         calendar.component(.weekday, from: d.date) == calendar.component(.weekday, from: now)
     }
 
-    /// Today's tokens (or $) from the 7-day series — falls back to the canonical `today`
-    /// totals only if the series has no bucket covering `now`.
+    /// Today's tokens (or $) — falls back to the canonical `today` totals only if the series has no
+    /// bucket covering `now`.
+    ///
+    /// **`calendarWeekDaily`, not `weekDaily`** — reading `weekDaily` here duplicated last week's
+    /// tail into today's own figure. `weekDaily`'s reset-day bucket folds two different calendar
+    /// dates together (the rate-limit window's closing fragment and its opening one); on the reset
+    /// weekday itself, before the reset instant, that bucket is "today" per `isCurrentDayBucket`, so
+    /// this returned last week's post-reset evening PLUS today's own usage as one inflated number —
+    /// measured on a real Monday, 1.6M + 432k read as "2M today" against an actual 415k. A calendar
+    /// day can only ever belong to one `calendarWeekDaily` bucket, so there's nothing left to fold.
+    /// `dailyAverage` below is NOT changed the same way — it's a different question (the historical
+    /// baseline, not today's own reading) and was deliberately left on the rate-limit window.
     public func dailyTodayValue(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
-        if let t = weekDaily.first(where: { isCurrentDayBucket($0, now: now, calendar: calendar) }) {
+        if let t = calendarWeekDaily.first(where: { isCurrentDayBucket($0, now: now, calendar: calendar) }) {
             return dayValue(t, unit: unit)
         }
         return unit == .usd ? today.costUSD : Double(totalsTokens(today))
     }
 
-    /// Average over the prior buckets in the window (excludes the current one and zero-usage
-    /// buckets, so not-yet-started cells can't drag the average down). 0 = no history.
+    /// A usual day: the mean over the last `dailyBaselineDays` prior active days. 0 = no history.
+    ///
+    /// Reads `allTimeDaily`, not `weekDaily`. The rate-limit window is emptied by its own reset, so
+    /// on the reset weekday this had no priors at all and the bar fell back to "building daily
+    /// average…" while the figure above it was perfectly correct — reported live, several times a
+    /// month. A lifetime series has no such cliff.
     public func dailyAverage(unit: BudgetUnit, now: Date = Date(), calendar: Calendar = .current) -> Double {
-        let priors = weekDaily
-            .filter { !isCurrentDayBucket($0, now: now, calendar: calendar) }
-            .map { dayValue($0, unit: unit) }
-            .filter { $0 > 0 }
+        let priors = priorDayValues({ dayValue($0, unit: unit) }, now: now, calendar: calendar)
         guard !priors.isEmpty else { return 0 }
         return priors.reduce(0, +) / Double(priors.count)
     }
@@ -684,19 +745,19 @@ public final class MetricsStore {
         return all > 0 ? d.costUSD * Double(daySidechainTokens(d)) / all : 0
     }
 
+    /// Same source and same window as `dailyAverage`, over the subagent slice — but it selects its
+    /// OWN active days, so a day that ran turns and delegated none of them doesn't use up a slot.
     public func subagentDailyAverage(unit: BudgetUnit, now: Date = Date(),
                                      calendar: Calendar = .current) -> Double {
-        let priors = weekDaily
-            .filter { !isCurrentDayBucket($0, now: now, calendar: calendar) }
-            .map { daySidechainValue($0, unit: unit) }
-            .filter { $0 > 0 }
+        let priors = priorDayValues({ daySidechainValue($0, unit: unit) }, now: now, calendar: calendar)
         guard !priors.isEmpty else { return 0 }
         return priors.reduce(0, +) / Double(priors.count)
     }
 
+    /// Same fix as `dailyTodayValue`, same reason: `calendarWeekDaily`, not `weekDaily`.
     public func subagentTodayValue(unit: BudgetUnit, now: Date = Date(),
                                    calendar: Calendar = .current) -> Double {
-        if let t = weekDaily.first(where: { isCurrentDayBucket($0, now: now, calendar: calendar) }) {
+        if let t = calendarWeekDaily.first(where: { isCurrentDayBucket($0, now: now, calendar: calendar) }) {
             return daySidechainValue(t, unit: unit)
         }
         return unit == .usd ? today.costUSD * sidechainShare(today) : Double(sidechainTokens(today))
@@ -1429,9 +1490,59 @@ public final class MetricsStore {
                                  weightedTokens: 1_700_000)
         weekReset = now.addingTimeInterval(3 * 86_400 + 4 * 3600)   // ~3d 4h until weekly reset
         let work = [600_000, 900_000, 400_000, 1_100_000, 700_000, 1_300_000, 1_500_000]
+        // A subagent slice, varied per day and zero on one of them. Neither weekday series has ever
+        // carried one, so `SubagentPaceView` and `SubagentShareChart` both rendered as "no data" in
+        // every preview — the two views hardest to check by reading the code were the two the sample
+        // couldn't exercise.
+        let side = [90_000, 135_000, 0, 260_000, 105_000, 190_000, 300_000]
         weekDaily = (0..<7).map { i in
             DayTotal(date: now.addingTimeInterval(Double(i - 6) * 86_400),
-                     workTokens: work[i], totalTokens: work[i] * 200, costUSD: Double(work[i]) / 7000)
+                     workTokens: work[i], totalTokens: work[i] * 200, costUSD: Double(work[i]) / 7000,
+                     sidechainWorkTokens: side[i], sidechainTotalTokens: side[i] * 200)
+        }
+        // Unlike `weekDaily` above, this one's whole visible point is "always starts on Sunday" —
+        // the same `i - 6` rolling-from-today trick would only actually land on Sunday when `now`
+        // happens to be a Saturday, showing something like "Th Fr Sa Su Mo Tu We" any other day,
+        // which would read as a bug in exactly the feature this is previewing.
+        let cal = Calendar.current
+        let todayMidnight = cal.startOfDay(for: now)
+        let weekdayToday = cal.component(.weekday, from: todayMidnight)
+        let calWeekStart = cal.date(byAdding: .day, value: -(weekdayToday - 1), to: todayMidnight)
+            ?? todayMidnight
+        calendarWeekDaily = (0..<7).map { i in
+            let d = cal.date(byAdding: .day, value: i, to: calWeekStart) ?? calWeekStart
+            return DayTotal(date: d, workTokens: work[i], totalTokens: work[i] * 200,
+                            costUSD: Double(work[i]) / 7000,
+                            sidechainWorkTokens: side[i], sidechainTotalTokens: side[i] * 200)
+        }
+        calendarWeek = Totals(workTokens: work.reduce(0, +), totalTokens: work.reduce(0, +) * 200,
+                              costUSD: Double(work.reduce(0, +)) / 7000)
+        // The pace baselines read `allTimeDaily`, so without this both bars would render
+        // "building daily average…" in every sample preview — the exact placeholder the switch to a
+        // lifetime series exists to remove, showing up in the screenshots used to check it.
+        // 35 days so the 30-day window is genuinely windowing rather than taking everything.
+        //
+        // A sidechain slice is included deliberately: the hand-built `weekDaily` above has never had
+        // one, so `SubagentPaceView` has always read "building subagent average…" in previews and
+        // its bar has never actually been exercised by a non-`CLAUDEPET_REAL` render.
+        var sampleCal = Calendar(identifier: .gregorian)   // never bare `.current`: Buddhist here
+        sampleCal.timeZone = .current
+        let sampleMidnight = sampleCal.startOfDay(for: now)
+        allTimeDaily = (0..<35).compactMap { i in
+            // Oldest first. Weekends lighter, and a slow upward drift, so the rolling window sits
+            // visibly above the older days rather than looking like flat noise.
+            guard let d = sampleCal.date(byAdding: .day, value: i - 34, to: sampleMidnight) else { return nil }
+            let weekday = sampleCal.component(.weekday, from: d)
+            let light = weekday == 1 || weekday == 7
+            // Scaled so today lands around two-thirds of a usual day. At the first values tried the
+            // mean came out at 848.7k against a 900k Monday, which pinned the sample bar full and
+            // coral — the "heavier than usual" state, shown as the default every preview. Fine as a
+            // state, misleading as the resting one, since coral means "near a limit" everywhere else.
+            let w = (light ? 400_000 : 1_350_000) + i * 15_000
+            let s = i % 5 == 0 ? 0 : w / 6         // some days delegate nothing at all
+            return DayTotal(date: d, workTokens: w, totalTokens: w * 200,
+                            costUSD: Double(w) / 7000,
+                            sidechainWorkTokens: s, sidechainTotalTokens: s * 200)
         }
         // A representative morning-peak day (~9–11am busiest) for the "Today by hour" sparkline.
         let hourWork = [0, 0, 0, 0, 0, 0, 500, 3_000, 8_000, 18_000, 22_000, 20_000,

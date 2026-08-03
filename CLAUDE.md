@@ -98,6 +98,41 @@ are easy to undo by accident:
   anyway, a false negative is impossible. It bought **scan speed, not footprint** — the peak did not
   move — so don't cite it as a memory fix.
 
+**Two full-array copies were being made per cycle by code whose comments said otherwise.** Both are
+now pinned by `AllocationTests`, which exists because these produce *byte-identical output* — every
+functional test in the suite passes either way, so the only visible symptom is memory:
+
+- **`UsageScanner.merge` takes its parameter `consuming`.** It always meant to sort in place, but a
+  plain parameter is *borrowed*: the caller's array stays live for the call, so `var sorted = entries`
+  left the buffer non-uniquely referenced and `sort()` silently took a full COW copy. ~15.7 MB
+  allocated and freed on **every scan**, and FSEvents rescans on every transcript write.
+- **`FiveHourBlockEngine.timeOrdered` replaces two `entries.sorted { }` calls.** `merge` had already
+  sorted, so those were re-sorting sorted data — but `.sorted` allocates unconditionally, twice per
+  `recompute()`, on a 30s idle timer. It returns the same array (copy-on-write; both callers only
+  read) when input is already ordered, and the O(n) check is real rather than a precondition comment
+  because `ingestForTesting` assigns arbitrary arrays straight to `lastEntries`.
+
+**Two more that looked obvious and measured WORSE — do not re-propose:**
+
+- **Exact-sizing the per-file arrays** (`reserveCapacity` + copy at the end of `JSONLParser.entries`).
+  The premise was geometric-doubling slack. Measured on the real corpus: natural `append` growth is
+  only **1.09×** count, while `reserveCapacity(count)` rounds up to **1.21×** — the "fix" was **1 MB
+  worse**. Swift's growth and malloc's size classes already land tighter than an explicit reserve.
+- **Routing `scanOnce` through `concatenated`.** Correct for the *cached* path, wrong here: `scanOnce`
+  has no cache, so collecting `[[UsageEntry]]` to count them holds every per-file array alive
+  *alongside* the merged result, where the unreserved `append(contentsOf:)` frees each as it goes.
+  Measured **+20.6 MB**.
+
+**Three measurement traps, all hit while doing the above:**
+
+- `grep`ing `vmmap` for a literal region size (`"15.6M"`) reported the regions as *gone* when the
+  corpus had merely grown and they were now `15.7M`. Match the shape, not the number.
+- Hand-rolled `awk` over `vmmap` mis-parsed the columns twice (`$2` is `(empty)`, not the address).
+  Parse it in Python and print what you matched.
+- Instantaneous `Physical footprint` swings **123–527 MB at the same uptime** depending on where in
+  the scan cycle you sample. Single samples cannot support a delta; the snapshot path's peak is set
+  during *parsing*, so it cannot see a 15 MB transient at merge time at all.
+
 Measure with `vmmap -summary <pid>`, not `ps` — RSS counts clean resident pages and still reads
 ~709 MB against a 181 MB footprint. `heap <pid>` is the one that ends arguments: it put the live set
 at 82.5 MB (41.9 MB of per-file entry arrays, 8.1 MB of interned strings), which is what proved the
@@ -122,6 +157,18 @@ figure that looks too large.** With it on, ClaudePet's all-time work reads 185.6
 Verify a token figure against the transcripts directly rather than against another figure in the app:
 sum `input_tokens + output_tokens` over `~/.claude/projects/**/*.jsonl`, keyed on
 `message.id ?? requestId`. That is what settled it, and it takes about a minute.
+
+**But dedupe the walk by inode, or the check is wrong and looks right.** Claude Code **symlinks a
+workflow's agent directory into every session that resumed it** — e.g.
+`<sessionA>/subagents/workflows/wf_…` → `<sessionB>/subagents/workflows/wf_…`, one physical file
+(same inode, byte-identical) reachable by two paths. Python's `glob(recursive=True)` follows those
+directory symlinks and counts the file once per path; `FileManager`'s enumerator, which the app uses,
+does not. A scan built the obvious way therefore reports MORE than the app and the app looks like it
+is undercounting. Measured here: 11 duplicate paths, one day (2026-07-29) inflated by 113,808
+sidechain tokens, which moved a 30-day mean by 3,794/day — small, stable, and easy to write off as
+"live drift", which is exactly what happened for several verifications before it was caught. Skip any
+path whose `(st_dev, st_ino)` you have already read; with that one line the same scan matched the app
+**to the token** on both pace baselines.
 
 ### MetricsStore
 
@@ -227,6 +274,81 @@ Two traps, both hit in practice:
   holding `now` then begins the previous afternoon, so the chart labels and highlights the wrong
   weekday (Saturday on a Sunday, flipping at 15:00). Weekday letters have to mean weekdays.
 
+**`calendarWeek`/`calendarWeekDaily` are a second, deliberately independent pair** — a fixed
+Sunday-00:00-to-Sunday-00:00 calendar week, read only by `WeeklyBarChart` and `SubagentShareChart`.
+They exist because viewing the fold-back window described above on its own reset weekday, before the
+reset instant, shows *last* week's Tue–Fri under labels that read as "future days already have
+usage" — real data, correctly counted, but confusing. A midnight-aligned boundary can't split a day,
+so there's nothing to fold: unlike `weekDaily`, `calendarWeekDaily` needs no `% 7` and no "no window"
+fallback branch (`now`/`calendar` are always enough). `isCurrentDayBucket` still works unmodified
+here, not by luck — a Sun–Sat calendar week's 7 buckets are, by construction, 7 *distinct* weekdays,
+so weekday-matching and date-matching coincide.
+
+**Built from `calendar.date(byAdding: .day:)`, never from `WeeklyWindowEngine`.** That engine steps a
+fixed 7×24h in raw *seconds* from an epoch anchor (its own doc comment admits it "may drift ±1h
+across a DST change"), which is tolerated for the rate-limit window — an approximation recalibrated
+against the server anyway — but would silently exclude up to an hour of entries near the Sunday
+boundary from every bucket here, for roughly half of every year in a DST zone. Calendar-day
+arithmetic absorbs DST by construction; don't "simplify" this back to a `WeeklyWindowEngine` call.
+
+The weekly gauge, its countdown, and the "Week" footer figure stay on the rate-limit window,
+untouched. Two independent aggregates, same as `week` vs `cycle`.
+
+**The pace bars split down the middle, and it matters which half moved.** `dailyTodayValue`/
+`subagentTodayValue` — today's own reading, e.g. the "Today: 2M" line in `DailyPaceView` — read
+`calendarWeekDaily`, same reason as the two charts: on the reset weekday, before the reset instant,
+`weekDaily`'s folded bucket combined last week's post-reset evening with today's own usage. Measured
+live on a real Monday: 1,612,803 (last Monday's tail) + 432,336 (this Monday, actual) read as
+"2,045,139 today." See `Tests/ClaudePetCoreTests/CalendarWeekTests.swift`'s
+`todayValueDoesNotFoldLastWeeksPostResetTailIntoTodaysFigure` for the reproduction.
+
+`dailyAverage`/`subagentDailyAverage` — the "N/day avg" baseline — then moved **separately and for a
+different reason**, to `allTimeDaily` windowed to the last `MetricsStore.dailyBaselineDays` (30)
+active days. On `weekDaily` a weekly reset emptied every prior bucket, so for the rest of reset day
+there were no priors at all and the bar read "building daily average…" beside a perfectly correct
+figure — reported live an hour after a Monday 15:00 reset, and recurring weekly. Rolling rather than
+all-time so the baseline follows current habits: all-time read 3.11M against the window's 3.53M, and
+that gap only widens as history accumulates. **Three series, three reasons; none is a substitute for
+another, and what keeps them consistent is that all are whole calendar days, not that they share an
+array.** `weekDaily` now has exactly one reader left, the `/stats` day extension.
+
+Two traps here, both silent, both pinned by `DailyBaselineTests`:
+
+- **Exclude today by DATE, never with `isCurrentDayBucket`.** That helper matches on *weekday*, which
+  is right for a 7-slot week (7 slots are 7 distinct weekdays) and wrong over a long series, where it
+  drops every same-weekday day instead of one. On the real corpus it discarded 4 extra days and moved
+  the mean +4.8% — and since the number of same-weekday days shifts with the calendar, the error
+  wandered −6.6%…+3.5% by nothing but which day you looked at.
+- **Filter `> 0` before `.suffix`, not after.** The window is "the last 30 days that had usage", not
+  "the last 30 slots, some empty". It also means the two baselines legitimately span different dates —
+  measured live, 07-01…08-01 for work against 06-28…07-31 for subagents — because a day that ran turns
+  and delegated none must not consume a subagent slot.
+
+`allTimeDaily` itself is the one series here with **no pre-built grid** (its span isn't known until the
+entries are read) and **active days only** (a day you didn't work is not evidence about a usual day).
+It is built oldest-first, and that ordering is a contract, not incidental — `.suffix` depends on it.
+
+**The loop that fills it made `Aggregator.compute` cheaper, not dearer** — it caches one `startOfDay`
+per day instead of per entry, and that cached key also replaced the per-entry
+`calendar.isDate(_:inSameDayAs:)` the "today" branch used to call. Measured end to end, 21 runs on
+127k real entries, p50: **275.5 ms before the series existed, 345.3 ms with it added naively, 233.9 ms
+as shipped.** `recompute()` is on the main actor on a 30s timer, so the naive +70 ms was not payable.
+
+**Benchmark the whole function, not the Calendar calls in isolation.** A microbenchmark of
+`isDate(_:inSameDayAs:)` over 126k synthetic dates said 79 ms, which suggested the substitution alone
+would nearly pay for the feature; against the real loop the true saving was ~42 ms net. The isolated
+figure was not wrong, it was measuring something else — and quoting it as the end-to-end result
+overstated the win by an order of magnitude before an A/B on the real corpus caught it. Also: a
+`git stash` of one file here reverts *all* its uncommitted work, which silently produced a
+"before" binary identical to the "after" one; verify the build actually changed before trusting a
+comparison.
+
+The cache assumes ascending input for *speed* only — `LogScanner`
+sorts, which makes the sort load-bearing for performance as well as dedup determinism — but an
+out-of-order entry just misses and recomputes, so results are identical for any ordering
+(`dayKeyCacheIsCorrectForUnsortedEntries`). Step it with `calendar.date(byAdding: .day:)`, never
+`+86_400`; same DST rule as the calendar week.
+
 ### Pricing
 
 `PricingTable` is user-editable and persisted. `defaultOverrides` handles version-specific rates
@@ -323,8 +445,14 @@ applied consistently or the figures contradict each other. `statsCurrentStreak`,
 and `statsActiveDays` all extend across the same span — the days after `lastComputedDay` that our own
 `weekDaily`/`cycleDaily` show as active — via one private helper. Extending only the streak produced a
 26-day streak beside a cached "longest" of 24, and then a 27-day streak beside 26 active days: both
-impossible, both shipped to a render before being caught. There is no all-time daily series, so the
-extension reaches only as far back as those two windows; past that the cached figure stands unchanged.
+impossible, both shipped to a render before being caught. The extension reaches only as far back as
+those two windows; past that the cached figure stands unchanged.
+
+`allTimeDaily` (below) **is** a lifetime daily series and would let that extension reach the whole
+history — this note used to say no such series existed, and that is no longer why the limit is there.
+It stays on `weekDaily`/`cycleDaily` deliberately: widening it moves three shipped KPI figures at once
+and needs its own reconciliation against `/stats`, which is a separate piece of work from the pace
+baseline the series was added for.
 
 The cache lags up to a day, so `statsTotalTokens` adds today's own count **only** when the cache ends
 exactly yesterday (`endsYesterday`) — `covers` guards the double-count, and a cache two or more days

@@ -2,7 +2,8 @@ import SwiftUI
 import ClaudePetCore
 
 /// How much of each day you delegated — the subagent slice as a **share of that day**, on a fixed
-/// 0…100% axis.
+/// 0…100% axis, over the same fixed Sunday-to-Saturday calendar week `WeeklyBarChart` uses (see its
+/// doc comment) rather than the weekly usage-limit window.
 ///
 /// **The fixed axis is the whole point, and it replaced a second bar chart.** For one build this was
 /// `WeeklyBarChart(series: .subagents)`: the same mark, the same seven slots, sitting beside the total
@@ -37,8 +38,11 @@ struct SubagentShareChart: View {
         metrics.budgetUnit == .usd ? "% of each day" : "% of \(metrics.tokenBasisLabel)"
     }
 
+    /// `metrics.calendarWeek`, not `metrics.week` — the same fixed Sunday-to-Saturday span the bars
+    /// below sum over. Reading the rate-limit `week` here instead would print a percentage for one
+    /// window over bars drawn from a different one, in the same card.
     private var weekShare: String {
-        let pct = Int((metrics.sidechainShare(metrics.week) * 100).rounded())
+        let pct = Int((metrics.sidechainShare(metrics.calendarWeek) * 100).rounded())
         return "\(pct)% this week"
     }
 
@@ -58,7 +62,7 @@ struct SubagentShareChart: View {
     }
 
     var body: some View {
-        let days = metrics.weekDaily
+        let days = metrics.calendarWeekDaily
         let now = Date()
 
         VStack(alignment: .leading, spacing: 4 * scale) {
