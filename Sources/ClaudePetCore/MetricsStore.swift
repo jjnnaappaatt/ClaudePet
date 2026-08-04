@@ -1464,10 +1464,14 @@ public final class MetricsStore {
         // Split that same total across plausible projects; the last one absorbs the rounding
         // remainder so the list sums to `cycle` to the token, as the real one does.
         var remWork = cycle.workTokens, remTotal = cycle.totalTokens, remCost = cycle.costUSD
-        let shares: [(String, Double)] = [("/Users/you/ClaudePet", 0.46),
-                                          ("/Users/you/Desktop/AAI", 0.27),
-                                          ("/Users/you/Desktop/LiDAR + HPE", 0.18),
-                                          ("/Users/you/pookie-gym", 0.09)]
+        // Generic names on purpose. These are shipped in every build and rendered into the README's
+        // screenshots, so they must not be anyone's actual projects. "Data pipeline" keeps a space
+        // and a capital, which is what `ProjectKey`'s lossy folder encoding mangles — worth keeping
+        // one of those in the fixture.
+        let shares: [(String, Double)] = [("/Users/you/my-app", 0.46),
+                                          ("/Users/you/Desktop/notes-cli", 0.27),
+                                          ("/Users/you/Desktop/Data pipeline", 0.18),
+                                          ("/Users/you/scratch", 0.09)]
         cycleByProject = shares.enumerated().map { i, share in
             let isLast = i == shares.count - 1
             let w = isLast ? remWork : Int(Double(cycle.workTokens) * share.1)
@@ -1476,6 +1480,16 @@ public final class MetricsStore {
             remWork -= w; remTotal -= t; remCost -= c
             return ProjectTotal(path: share.0, workTokens: w, totalTokens: t, costUSD: c)
         }
+        // `ProjectBreakdownView` reads the LIFETIME split, not the cycle one, so without this the
+        // sample rendered a card reading "no usage recorded yet" — an empty panel in every preview,
+        // which is exactly the state a layout check can't learn anything from. ~4× the cycle, and one
+        // extra project that predates it, so the "+N more" row has something to fold.
+        allTimeByProject = (cycleByProject.map {
+            ProjectTotal(path: $0.path, workTokens: $0.workTokens * 4,
+                         totalTokens: $0.totalTokens * 4, costUSD: $0.costUSD * 4)
+        } + [ProjectTotal(path: "/Users/you/Desktop/archive", workTokens: 2_100_000,
+                          totalTokens: 402_000_000, costUSD: 61)])
+            .sorted { $0.totalTokens > $1.totalTokens }
         monthlyPrice = 100; creditSpent = 13.47; creditLimit = 60; creditBalance = 5.60
         todayByModel = [
             ModelTotal(family: .fable,  workTokens: 22_000, totalTokens: 9_000_000,  costUSD: 2.80),
@@ -1494,7 +1508,7 @@ public final class MetricsStore {
         // carried one, so `SubagentPaceView` and `SubagentShareChart` both rendered as "no data" in
         // every preview — the two views hardest to check by reading the code were the two the sample
         // couldn't exercise.
-        let side = [90_000, 135_000, 0, 260_000, 105_000, 190_000, 300_000]
+        var side = [90_000, 135_000, 145_000, 260_000, 105_000, 190_000, 300_000]
         weekDaily = (0..<7).map { i in
             DayTotal(date: now.addingTimeInterval(Double(i - 6) * 86_400),
                      workTokens: work[i], totalTokens: work[i] * 200, costUSD: Double(work[i]) / 7000,
@@ -1509,6 +1523,12 @@ public final class MetricsStore {
         let weekdayToday = cal.component(.weekday, from: todayMidnight)
         let calWeekStart = cal.date(byAdding: .day, value: -(weekdayToday - 1), to: todayMidnight)
             ?? todayMidnight
+        // One day with no delegation at all, so a preview shows the "0%" state next to the "–" one —
+        // they mean different things (ran turns but delegated none, versus nothing logged) and the
+        // chart is the only place that distinction is visible. Placed three days off today so it can
+        // never land on the current slot, which would render "Subagents today: 0" as the sample's
+        // resting state; `weekdayToday` is 1-based, hence the -1.
+        side[((weekdayToday - 1) + 3) % 7] = 0
         calendarWeekDaily = (0..<7).map { i in
             let d = cal.date(byAdding: .day, value: i, to: calWeekStart) ?? calWeekStart
             return DayTotal(date: d, workTokens: work[i], totalTokens: work[i] * 200,

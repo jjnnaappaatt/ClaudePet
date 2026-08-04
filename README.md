@@ -8,7 +8,7 @@ The pet's design is an original code-drawn homage to **Clawd**, the Claude Code 
 (Anthropic) — no artwork assets are copied or bundled.
 
 <p align="center">
-  <img src="docs/dashboard.png" width="820" alt="ClaudePet dashboard — limits, models, billing cycle calendar and per-project usage">
+  <img src="docs/dashboard.png" width="820" alt="ClaudePet dashboard — limits, lifetime stats, subagent share, billing cycle calendar and per-project usage">
 </p>
 
 <p align="center">
@@ -25,15 +25,24 @@ The pet's design is an original code-drawn homage to **Clawd**, the Claude Code 
 - **5-hour session** — a gauge toward your limit (live from Claude's real numbers when available),
   burn rate, and a reset countdown.
 - **Weekly (all models)** — your 7-day usage with its own reset countdown.
-- **Today's pace** against your usual day, **by model**, **this week** per day, and **today by hour**.
+- **Today's pace** against your usual day — the average of your last 30 days that had any usage, so
+  it doesn't go blank every time the weekly limit resets.
+- **By model**, **this week** per day, and **today by hour**.
 - Week & cycle totals with a billing line.
 
 **In the dashboard** (the ⤢ button, or a real full-screen window)
 
-- Claude Code's own lifetime **`/stats` total**, with each model's share and in/out split.
+- Claude Code's own lifetime **`/stats` total**, with each model's share and in/out split, plus
+  lifetime **KPI tiles** — sessions, messages, active days, current and longest streak, busiest hour.
 - **This billing cycle as a calendar** — one shaded cell per day, denser where you worked harder.
-- **By project** — which projects burned the cycle's tokens, resolved from each turn's own working
-  directory rather than guessed from folder names.
+- **Subagents today** as a pace bar, and **Subagents/day** as each day's delegated share on a fixed
+  0–100% axis — turns run by the Task tool, including workflow agents.
+- **By project** — which projects burned your tokens **all time**, resolved from each turn's own
+  working directory rather than guessed from folder names.
+
+> **This week** and **Subagents/day** run on a fixed **Sunday-to-Saturday calendar week**, on purpose
+> — so a day's tokens always land in exactly one bar. That's deliberately *not* the weekly-limit
+> window above them, which keeps its own real reset schedule (e.g. Monday 3 PM).
 
 **The pet reads two numbers at once**
 
@@ -60,7 +69,8 @@ its position. Enable **Launch at login** in Settings to keep it around.
 
 - **Drag** the pet to reposition. Hover to reveal resize handles.
 - Click the **⚙ gear** for Settings.
-- Two layouts (Settings → Appearance): **tall** single-column and **wide** two-column.
+- Two layouts — **tall** single-column and **wide** two-column. Switch them from the widget's own
+  layout button, or Settings → Appearance.
 - Click **⤢** to open the **dashboard** — a real resizable window that goes full screen (⌃⌘F).
 - Hover the gauges/numbers for tooltips explaining each value.
 
@@ -92,8 +102,20 @@ touches your token or the network.
 
 Budget source (auto-peak / plan / custom), tokens-vs-US$ unit, live-data toggle (reads
 [claude-statusline](https://github.com/andrewii23/claude-statusline)'s local cache when present
-for Claude's *real* numbers), manual calibration, billing-this-cycle, widget size, layout,
-launch-at-login, and an editable pricing table.
+for Claude's *real* numbers), manual calibration, weekly reset day & time, billing-this-cycle,
+widget size, layout, launch-at-login, and an editable pricing table.
+
+Three that change what the numbers *mean*, not just how they look:
+
+- **Count tokens as — Work or Total.** Work is input + output; Total also counts cache reads and
+  writes, which under always-on prompt caching are the overwhelming majority. The same week can read
+  31% delegated on Work and 11% on Total, because a subagent's short-lived context re-reads far less
+  cache than the main conversation does.
+- **Include subagent usage.** Off removes every Task-tool and workflow-agent turn from every figure
+  in the app.
+- **Count repeated log lines (match `/stats`).** Transcripts re-log one API response several times;
+  by default ClaudePet keeps the first per `message.id`. Turning this on counts every line instead,
+  which is what Claude Code's own `/stats` does — and roughly triples the totals.
 
 ## Privacy
 

@@ -3,6 +3,27 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [Unreleased]
+
+### Fixed
+- **README said "By project — which projects burned the cycle's tokens".** That card moved to
+  lifetime in 0.11.0 and its own header reads "all time"; the README had been wrong for three
+  releases. Also documents the lifetime KPI tiles, the Subagents today / Subagents/day pair, the
+  widget's own layout button, the 30-day pace baseline, and the fact that **This week** and
+  **Subagents/day** run on a fixed Sunday-to-Saturday calendar week rather than the weekly-limit
+  window. Screenshots regenerated — the old ones predate all of it.
+- **The preview fixture shipped real project names.** `loadSampleForPreview` hard-coded four of the
+  developer's own directories, which are rendered into every screenshot and into `claude.ai/design`
+  imports. Generic now.
+- **The preview's "By project" card read "no usage recorded yet".** The fixture set
+  `cycleByProject` but never `allTimeByProject`, which is what `ProjectBreakdownView` actually
+  reads — so every non-`CLAUDEPET_REAL` render showed an empty panel, the one state a layout check
+  can learn nothing from.
+- **The preview's "Subagents today" bar read 0.** The fixture's one no-delegation day was pinned to
+  a fixed index, so it landed on "today" whenever the sample was rendered on that weekday. It is now
+  placed relative to the current day, keeping the "0%" vs "–" distinction visible without making
+  zero the resting state.
+
 ## [0.13.0] — 2026-08-03
 
 ### Changed
