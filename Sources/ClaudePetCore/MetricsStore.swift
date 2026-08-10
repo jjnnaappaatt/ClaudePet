@@ -31,6 +31,10 @@ public final class MetricsStore {
     public private(set) var cycleStart: Date?      // start of the current billing cycle
     public private(set) var cycleReset: Date?      // end of the current billing cycle (next anniversary)
     public private(set) var serverUsage: StatuslineUsage?   // real 5h/7d from the statusline cache (local file read; no token/network)
+    /// Codex's own quota windows, from the statusline's Codex cache. Empty on a machine with no
+    /// Codex — the UI hides the row rather than drawing it at 0%, which would be a claim about a
+    /// tool that isn't installed.
+    public private(set) var codexUsage: [CodexLimit] = []
 
     // Config (user-editable; persisted to UserDefaults)
     public var pricing = PricingTable.default
@@ -113,6 +117,14 @@ public final class MetricsStore {
                                                   // other, which is rare and cosmetic.
     public var useStatuslineData = true          // drive gauges from the statusline's local usage cache when present
     public var statuslineCachePath = StatuslineUsageReader.defaultPath   // injectable for tests
+    /// The statusline's Codex quota cache. Injectable for the same reason as the two paths around
+    /// it: it defaults to the REAL file, so a test that asserts on it without overriding the path
+    /// passes or fails by how recently the developer ran Codex.
+    ///
+    /// Deliberately NOT gated on `useStatuslineData`. That toggle reads "Use Claude's live usage",
+    /// and silently switching off a Codex row with it would be a surprise; the row already hides
+    /// itself whenever the file is missing, which is the case the toggle would be standing in for.
+    public var codexUsageCachePath = CodexUsageReader.defaultPath
     /// Claude Code's own `/stats` cache. Injectable, and — exactly like `statuslineCachePath` — it
     /// defaults to the REAL file, so any test touching these figures must go through
     /// `TestSupport.store(defaults:)` or it reads the developer's own usage and passes by machine.
@@ -293,6 +305,9 @@ public final class MetricsStore {
         // Real server-side 5h/7d numbers, read from the statusline's local cache (no token,
         // no network — ClaudePet only reads the file the user's statusline already wrote).
         serverUsage = useStatuslineData ? StatuslineUsageReader.read(path: statuslineCachePath) : nil
+        // A few dozen bytes on the same 30s tick — no new timer, and nothing here that the
+        // allocation budget notices.
+        codexUsage = CodexUsageReader.read(path: codexUsageCachePath)
         // Cheap (22 KB) and it only changes when Claude Code recomputes, so a plain re-read per
         // recompute is fine — no need for the mtime/size cache `UsageScanner` needs for 100 MB files.
         statsCache = StatsCacheReader.read(path: statsCachePath)

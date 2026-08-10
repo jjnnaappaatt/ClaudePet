@@ -64,17 +64,32 @@ enum Theme {
         (1.00, 192.0 / 255,  71.0 / 255,  66.0 / 255),   // held — see above
     ]
 
-    /// The ramp sampled at one point, as raw components. Single source of the interpolation — both
-    /// `gaugeColor` and `gaugeTrack` go through here, because two copies of one lerp are two things
-    /// that can drift apart.
-    private static func rampRGB(_ fraction: Double) -> (r: Double, g: Double, b: Double) {
+    /// Codex's ramp — cyan into blue, sampled from Codex's own mark for the terminal statusline and
+    /// carried here for the same reason the warm ramp is: two readouts of one number in two places
+    /// should not disagree about its colour.
+    ///
+    /// It is a *different* ramp rather than the warm one re-used because the two quotas are
+    /// different quotas. A Codex bar in Claude gold reads as a fourth Claude limit.
+    private static let codexRampStops: [(p: Double, r: Double, g: Double, b: Double)] = [
+        (0.00, 56.0 / 255, 239.0 / 255, 255.0 / 255),
+        (0.50, 69.0 / 255, 207.0 / 255, 252.0 / 255),
+        (1.00, 78.0 / 255, 175.0 / 255, 252.0 / 255),
+    ]
+
+    /// The ramp sampled at one point, as raw components. Single source of the interpolation — every
+    /// fill and track goes through here, because two copies of one lerp are two things that can
+    /// drift apart.
+    private static func rampRGB(_ fraction: Double,
+                                stops: [(p: Double, r: Double, g: Double, b: Double)] = rampStops)
+        -> (r: Double, g: Double, b: Double)
+    {
         let f = min(1, max(0, fraction))
-        for i in 1 ..< rampStops.count where f <= rampStops[i].p {
-            let a = rampStops[i - 1], b = rampStops[i]
+        for i in 1 ..< stops.count where f <= stops[i].p {
+            let a = stops[i - 1], b = stops[i]
             let t = b.p == a.p ? 0 : (f - a.p) / (b.p - a.p)
             return (a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t)
         }
-        let last = rampStops[rampStops.count - 1]
+        let last = stops[stops.count - 1]
         return (last.r, last.g, last.b)
     }
 
@@ -120,6 +135,35 @@ enum Theme {
         return Color(red:   c.r * 0.12 + 49.0 / 255,
                      green: c.g * 0.12 + 40.0 / 255,
                      blue:  c.b * 0.12 + 36.0 / 255)
+    }
+
+    /// The Codex gauge's fill — same rule as `gaugeFill`: one flat colour for the whole bar.
+    static func codexGaugeFill(_ fraction: Double) -> Color {
+        let c = rampRGB(fraction, stops: codexRampStops)
+        return Color(red: c.r, green: c.g, blue: c.b)
+    }
+
+    /// The Codex gauge's track. Same `fill × 12% + floor` shape as `gaugeTrack`, with the warm
+    /// floor **mirrored** — `(49,40,36)` → `(36,40,49)` — rather than re-used.
+    ///
+    /// Re-used is the bug that already happened, in the terminal: the warm floor is warm-biased, and
+    /// only 12% of the fill survives it, so a cyan fill still produced a grey-brown track that
+    /// visibly did not belong to its bar. Mirroring is the same formula reflected, not a new tuning.
+    ///
+    /// Measured across 0…100 against this card's `rgb(14,14,16)`:
+    ///
+    /// |                     | warm ramp, (49,40,36) | codex ramp, (36,40,49) | invariant  |
+    /// |---------------------|-----------------------|------------------------|------------|
+    /// | track vs card       | 1.77–1.92:1           | 1.74–1.89:1            | 1.6–2.1:1  |
+    /// | fill vs track (min) | 4.59:1                | 4.68:1                 | ≥ 1.55:1   |
+    ///
+    /// Re-measure if a stop moves. The warm floor happens to pass with these stops too, which is
+    /// exactly why the check has to be run rather than reasoned about.
+    static func codexGaugeTrack(_ fraction: Double) -> Color {
+        let c = rampRGB(min(1, max(0, fraction)), stops: codexRampStops)
+        return Color(red:   c.r * 0.12 + 36.0 / 255,
+                     green: c.g * 0.12 + 40.0 / 255,
+                     blue:  c.b * 0.12 + 49.0 / 255)
     }
 
     static let corner: CGFloat = 18

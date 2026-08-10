@@ -30,6 +30,9 @@ CLAUDEPET_SNAPSHOT=/tmp/w.png CLAUDEPET_REAL=1 ...                       # real 
 CLAUDEPET_LAYOUT=vertical CLAUDEPET_SCALE=1.5 ...                        # override without touching saved prefs
 CLAUDEPET_BASIS=total ...           # render work-vs-total side by side, saved pref untouched
 CLAUDEPET_UTIL=96,40 ...            # fake statusline utilization → force gauge/weather/mood states
+CLAUDEPET_CODEX=47 ...              # fake the Codex row: "<pct>[,<age_seconds>]", or "none" for a
+                                    # machine without Codex. Writes its own temp file — never point
+                                    # anything at the live /tmp/claude/codex-usage-cache.tsv.
 CLAUDEPET_HANDLES=1 ...             # force resize grips visible
 CLAUDEPET_NOLIVE=1 ...              # ignore the statusline + drop the calibration anchor, so the
                                     # local-history budget estimate is what you're looking at
@@ -63,7 +66,7 @@ the snapshot vars it runs in the normal app flow rather than rendering and exiti
 From `CONTRIBUTING.md` — these are why the app is trustworthy, not style preferences:
 
 1. **Local files only.** Reads `~/.claude/projects/**/*.jsonl`, `~/.claude.json`, and optionally
-   `/tmp/claude/statusline-usage-cache.json`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
+   `/tmp/claude/statusline-usage-cache.json`, `/tmp/claude/codex-usage-cache.tsv`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
    request. A feature needing data that isn't already local is out of scope.
 2. **Original art only.** The mascot is code-drawn in `MascotArt.swift` / `PixelMatrixRenderer.swift`
    as an homage to Clawd. Don't bundle third-party art.

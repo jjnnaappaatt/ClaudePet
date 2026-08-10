@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 metrics.loadSampleForPreview()
             }
             applyUtilOverride()      // so gauge colours/states can be forced here too, not just in the widget
+            applyCodexOverride()
             var size = CGSize(width: 1728, height: 1117)
             if let raw = ProcessInfo.processInfo.environment["CLAUDEPET_DASHSIZE"] {
                 let parts = raw.lowercased().split(separator: "x").compactMap { Double($0) }
@@ -98,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 metrics.tokenBasis = b         // ditto — lets a snapshot show work vs total side by side
             }
             applyUtilOverride()
+            applyCodexOverride()
             Snapshot.render(ContentView().environment(metrics).environment(panelVisibility), to: snapPath)
             NSApp.terminate(nil)
             return
@@ -291,6 +293,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? json.write(toFile: path, atomically: true, encoding: .utf8)
         metrics.useStatuslineData = true
         metrics.statuslineCachePath = path
+        metrics.recompute()
+    }
+
+    /// Debug-only: force the Codex row by faking its cache. `CLAUDEPET_CODEX=<pct>[,<age_seconds>]`
+    /// — "47" is a live 47%, "47,90000" is the same figure gone stale past a day.
+    /// `CLAUDEPET_CODEX=none` writes no file at all, which is how a machine without Codex renders.
+    ///
+    /// It writes to its **own** temp file. Never point this at
+    /// `/tmp/claude/codex-usage-cache.tsv` — that is the live file the terminal statusline reads,
+    /// and a snapshot run would leave a fake percentage on the user's real status bar.
+    private func applyCodexOverride() {
+        guard let raw = ProcessInfo.processInfo.environment["CLAUDEPET_CODEX"] else { return }
+        let path = NSTemporaryDirectory() + "cp-snap-codex.tsv"
+        try? FileManager.default.removeItem(atPath: path)
+        if raw != "none" {
+            let parts = raw.split(separator: ",").compactMap { Double($0) }
+            let pct = parts.first ?? 0
+            let age = parts.count > 1 ? parts[1] : 0
+            let reset = Int(Date().addingTimeInterval(7 * 86_400).timeIntervalSince1970)
+            let recorded = Int(Date().addingTimeInterval(-age).timeIntervalSince1970)
+            // A third component fakes the token count; omit it for the four-field cache an older
+            // statusline writes, which is a state worth being able to look at.
+            let tokens = parts.count > 2 ? "\t\(Int(parts[2]))" : "\t21682073"
+            try? "10080\t\(pct)\t\(reset)\t\(recorded)\(tokens)\n"
+                .write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        metrics.codexUsageCachePath = path
         metrics.recompute()
     }
 

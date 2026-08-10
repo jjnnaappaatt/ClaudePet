@@ -5,6 +5,45 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **A Codex quota bar, under the two Claude gauges, in the widget and the dashboard.** Read from
+  `/tmp/claude/codex-usage-cache.tsv`, the same class of local-file read as the Claude limits — no
+  token, no network, and nothing new asked of the machine. Cyan rather than the Claude ramp,
+  because it is a different quota and a Codex bar in Claude gold reads as a fourth Claude limit;
+  the track floor is the warm one **mirrored**, `(49,40,36)` → `(36,40,49)`, which keeps the
+  measured relationships (track 1.74–1.89:1 on the card, fill ≥4.68:1 above the track) instead of
+  the grey-brown a warm floor produces under a cyan fill.
+- **The row hides itself when there is no Codex reading.** A 0% bar for a tool that isn't installed
+  is a claim, not a default — and the dashboard's divider is hidden with it, so no orphaned rule
+  is left behind.
+- **Three age bands, because the number only moves when Codex runs.** Under an hour it reads like
+  the rows above it; past an hour the text drops a tier; past a day it shows how old it is instead
+  of when the window resets. That last one is not cosmetic: a 65-hour-old reading was promising a
+  reset that had already happened, behind a percentage that had since gone 47% → 0%. The reset is
+  also dropped whenever it lies in the past, whatever the reading's age.
+- **Tokens spent in the window, on the same line as the reset**, matching the Weekly row above
+  (`21.7M used this week`). Codex reports a percentage and never a count, so the statusline sums it
+  from Codex's own session rollouts and passes it through as a fifth field in the cache — the app
+  keeps reading one small file rather than scanning 22 MB of rollouts every 30 seconds. The count
+  is optional: a four-field cache from an older statusline still renders the row without it, and a
+  0 means "could not tell" and shows nothing rather than claiming a week of zero usage.
+- `CLAUDEPET_CODEX=<pct>[,<age>[,<tokens>]]` (or `none`) for the snapshot paths, so all four states
+  are checkable headlessly.
+
+### Fixed
+- **`Format.relativeAge` understated the day bucket.** It truncated, so 65 hours printed "2d ago".
+  Days are 24 hours wide, so truncation there loses most of a day — and a staleness label that
+  undersells its own staleness is the one thing it must not do. Rounds now; minutes and hours still
+  truncate, where the error is inside the noise. Affects the two calibration-age tooltips as well.
+
+### Changed
+- **`DashboardView.refHeight` takes a conditional `+70` while the Codex row is on screen.** The
+  left card had already spent its slack: uncompensated, the bottom-most card pixel at 1990×820 went
+  from 12px clear of the edge to 0, and 1470×923 did the same. It is a conditional term rather than
+  a bigger `refHeight` so that anyone without Codex keeps the type size they have today. 28 and 45
+  were both still clipping; 60 cleared every size but left real data 4px tighter than sample at
+  1470×923, and 70 closes that.
+
 ### Fixed
 - **README said "By project — which projects burned the cycle's tokens".** That card moved to
   lifetime in 0.11.0 and its own header reads "all time"; the README had been wrong for three

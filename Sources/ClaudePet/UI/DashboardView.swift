@@ -69,6 +69,35 @@ struct DashboardView: View {
     private static let refWidth: CGFloat = 900
     private static let refHeight: CGFloat = 745
 
+    /// What the optional Codex row costs `refHeight` when it is on screen.
+    ///
+    /// Added as a **conditional** term rather than folded into `refHeight`, because the row itself is
+    /// conditional: baking it in would shrink the type for everyone who has no Codex installed, to
+    /// buy room for a row they will never see.
+    ///
+    /// Measured, not estimated. Uncompensated, the row clipped: at 1990×820 with real data the
+    /// bottom-most card pixel went from 12px off the canvas edge to **0**, and 1470×923 did the same.
+    /// 28 and 45 were both still clipping — this row costs far more than the 23 the subagent pace bar
+    /// did, because it lands on a card that had already spent its slack.
+    ///
+    /// Bottom margin at the five sizes `refHeight` is fitted against, real data / sample data:
+    ///
+    /// |            | no row | 60      | **70**  |
+    /// |------------|--------|---------|---------|
+    /// | 900×800    | 11     | 11 / 11 | 11 / 11 |
+    /// | 1470×923   | 14     |  9 / 13 | 13 / 13 |
+    /// | 1990×820   | 12     | 11 / 11 | 11 / 11 |
+    /// | 1990×1256  | 19     | 18 / 18 | 17 / 17 |
+    /// | 2560×1440  | 22     | 20 / 20 | 20 / 20 |
+    ///
+    /// 60 clears every size but leaves 1470×923 4px tighter on real data than on sample — real data is
+    /// the stricter dataset there, which is exactly the divergence that has caused two of this
+    /// constant's past mistakes. 70 closes it and restores the no-row margins everywhere.
+    ///
+    /// Re-measure the same way if the row changes shape: every gauge in that card stretches, so
+    /// nothing looks tight until it suddenly clips. Measure the bottom-most *card* pixel, not the text.
+    private static let codexRowHeight: CGFloat = 70
+
     /// The boosts are named for **cards**, not for content: the two top panels have swapped sides
     /// once already, and whichever card is *taller* sets the row height — so a boost is free on one
     /// side and expensive on the other purely by position. Re-measure both after any swap.
@@ -141,13 +170,14 @@ struct DashboardView: View {
     /// in the layout — the mascot's sky, the bar heights — as the window widened, so a wide-but-short
     /// window clipped the billing footer despite having horizontal room to spare. That isn't an edge
     /// case: it is exactly the shape native full screen produces on a 16:10 display (1470×923 here).
-    static func scale(for size: CGSize) -> CGFloat {
-        min(2.4, max(1.0, min(size.width / refWidth, size.height / refHeight)))
+    static func scale(for size: CGSize, extraHeight: CGFloat = 0) -> CGFloat {
+        min(2.4, max(1.0, min(size.width / refWidth, size.height / (refHeight + extraHeight))))
     }
 
     var body: some View {
         GeometryReader { geo in
-            let scale = Self.scale(for: geo.size)
+            let scale = Self.scale(for: geo.size,
+                                   extraHeight: metrics.codexUsage.isEmpty ? 0 : Self.codexRowHeight)
             // Every one of these gaps and paddings is vertical budget, and vertical budget IS type
             // size here — see `refHeight`. They're deliberately tight so the text can be large.
             // TWO rows. The billing footer used to own a full-width strip of its own; folding it into
@@ -404,6 +434,13 @@ struct DashboardView: View {
             divider
             WeeklyLimitBar(barThickness: Self.barThickness)
             Spacer(minLength: 0)
+            // Its own divider rather than one inside `CodexLimitBars`, so a machine without Codex
+            // gets no orphaned rule where the row would have been.
+            if !metrics.codexUsage.isEmpty {
+                divider
+                CodexLimitBars(barThickness: Self.barThickness)
+                Spacer(minLength: 0)
+            }
             divider
             DailyPaceView(barThickness: Self.barThickness)
             Spacer(minLength: 0)
