@@ -29,12 +29,15 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   0 means "could not tell" and shows nothing rather than claiming a week of zero usage.
 - `CLAUDEPET_CODEX=<pct>[,<age>[,<tokens>]]` (or `none`) for the snapshot paths, so all four states
   are checkable headlessly.
-
-### Fixed
-- **`Format.relativeAge` understated the day bucket.** It truncated, so 65 hours printed "2d ago".
-  Days are 24 hours wide, so truncation there loses most of a day — and a staleness label that
-  undersells its own staleness is the one thing it must not do. Rounds now; minutes and hours still
-  truncate, where the error is inside the noise. Affects the two calibration-age tooltips as well.
+- **An age chip on the `/stats` "Total tokens" headline.** `+4d` when ClaudePet has extended the
+  figure past Claude Code's cache — which also explains why the headline no longer equals the
+  per-model rows beneath it, since those are the cache alone — or `to 4 Aug` in coral when it
+  couldn't, meaning the number genuinely stops there. Measured off the render at 6.3:1 and 9.6:1
+  against the card. Nothing showed before, which is the entire reason a week-old figure went
+  unnoticed.
+- `CLAUDEPET_STATSAGE=<days>` re-dates a **copy** of the `/stats` cache (never the real file) so
+  both of those states can be rendered. Neither happens on demand: the dated one needs Claude Code
+  to be further behind than the local history reaches.
 
 ### Changed
 - **`DashboardView.refHeight` takes a conditional `+70` while the Codex row is on screen.** The
@@ -43,8 +46,25 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   a bigger `refHeight` so that anyone without Codex keeps the type size they have today. 28 and 45
   were both still clipping; 60 cleared every size but left real data 4px tighter than sample at
   1470×923, and 70 closes that.
+- **The `/stats` headline now fills every day Claude Code's cache is missing, not just today.** The
+  old rule added today alone, and only when the cache stopped exactly at yesterday; anything staler
+  showed the cache's own figure unchanged. Claude Code recomputes that file when it feels like it,
+  not daily — measured here it sat at 4 August through seven days of continuous use, so the panel
+  read **151.4M against Claude Code's own 160.9M**. Six days were missing, not one. The added days
+  are ClaudePet's accounting, which ran within ~±7% of `/stats`' on a full measured day: over a
+  six-day gap that is ±0.4M on a 157M headline (±0.26%), against 3.7% low for not filling it.
+- **The fill is refused, and the figure marked dated, when local history doesn't reach the cache.**
+  Claude Code deletes transcripts past `cleanupPeriodDays`, so a cache left un-recomputed long
+  enough outlives the days it would be extended with; adding only what survives would give a total
+  that is neither the cache's nor ours.
+- **`StatsCache.endsYesterday` is gone.** It encoded the one-day-gap-only rule and now has no
+  caller, and a predicate like that left lying around is an invitation to wire the rule back in.
 
 ### Fixed
+- **`Format.relativeAge` understated the day bucket.** It truncated, so 65 hours printed "2d ago".
+  Days are 24 hours wide, so truncation there loses most of a day — and a staleness label that
+  undersells its own staleness is the one thing it must not do. Rounds now; minutes and hours still
+  truncate, where the error is inside the noise. Affects the two calibration-age tooltips as well.
 - **README said "By project — which projects burned the cycle's tokens".** That card moved to
   lifetime in 0.11.0 and its own header reads "all time"; the README had been wrong for three
   releases. Also documents the lifetime KPI tiles, the Subagents today / Subagents/day pair, the

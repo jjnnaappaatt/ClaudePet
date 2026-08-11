@@ -45,10 +45,13 @@ struct StatsModelBreakdownView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
                     Text("Total tokens").scaledFont(13.5, weight: .semibold)
                         .foregroundStyle(Theme.textPrimary)
-                    Spacer()
+                        .lineLimit(1).fixedSize()
+                    ageChip
+                    Spacer(minLength: 4 * scale)
                     Text(Format.tokens(total))
                         .scaledFont(21, weight: .bold, design: .rounded)
                         .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).fixedSize()
                 }
                 .help(headlineHelp(total: total))
 
@@ -76,6 +79,27 @@ struct StatsModelBreakdownView: View {
                           + rest.map(\.displayName).joined(separator: ", "))
                 }
             }
+        }
+    }
+
+    /// What the headline covers that the cache doesn't — the fix for a total that could sit a week
+    /// stale while rendering pixel-identical to a current one.
+    ///
+    /// Two states, because they need opposite reactions. `to 4 Aug` means the figure genuinely stops
+    /// there and only running `/stats` will move it; `+2d` means ClaudePet closed the gap itself, and
+    /// is also the standing explanation for why the headline no longer equals the model rows below it
+    /// (those are pure cache — only the total is extended).
+    @ViewBuilder private var ageChip: some View {
+        if metrics.statsIsDated(), let asOf = metrics.statsAsOfDescription {
+            Text("to \(asOf)")
+                .scaledFont(9.5, weight: .medium)
+                .foregroundStyle(Theme.highlight)
+                .lineLimit(1).fixedSize()
+        } else if metrics.statsFilledDays() > 0 {
+            Text("+\(metrics.statsFilledDays())d")
+                .scaledFont(9.5, weight: .medium)
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1).fixedSize()
         }
     }
 
@@ -110,14 +134,22 @@ struct StatsModelBreakdownView: View {
 
     private func headlineHelp(total: Int) -> String {
         let asOf = metrics.statsAsOfDescription.map { " Claude Code last recomputed its cache on \($0)." } ?? ""
-        let today = metrics.statsIncludesToday()
-            ? " Today's usage is added from ClaudePet's own count, which uses different accounting — "
-              + "measured on one full day it ran within about ±7% of Claude Code's, so treat today's "
-              + "slice as approximate."
-            : " Today's usage is not included yet."
-        return "Input + output across every model, all time, exactly as Claude Code's /stats reports it "
-            + "— read from its own local cache, because the figure can't be reproduced from the "
-            + "transcripts. Cache tokens are excluded, so this won't match the other token figures here."
-            + asOf + today
+        let filled = metrics.statsFilledDays()
+        let gap: String
+        if metrics.statsIsDated() {
+            gap = " Days since then are NOT included: ClaudePet's own history doesn't reach back that "
+                + "far, so filling the gap would undercount. Run /stats in Claude Code to refresh it."
+        } else if filled > 0 {
+            gap = " The \(filled == 1 ? "day" : "\(filled) days") since then \(filled == 1 ? "is" : "are") "
+                + "added from ClaudePet's own count, which uses different accounting — measured on one "
+                + "full day the two ran within about ±7% of each other, so treat that slice as "
+                + "approximate. The per-model rows below are the cache alone and stop at that date."
+        } else {
+            gap = " Nothing has been logged since, so the figure is current."
+        }
+        return "Input + output across every model, all time, as Claude Code's /stats reports it — read "
+            + "from its own local cache, because the figure can't be reproduced from the transcripts. "
+            + "Cache tokens are excluded, so this won't match the other token figures here."
+            + asOf + gap
     }
 }

@@ -1223,21 +1223,66 @@ public final class MetricsStore {
 
     // MARK: - Claude Code's /stats figures
 
-    /// `/stats`' "Total tokens", with today's usage added when the cache stops at yesterday.
+    /// Our own daily history for the days the cache hasn't folded in yet — nil when it can't be
+    /// trusted to cover them.
     ///
-    /// The delta is ClaudePet's own count, which is NOT the same accounting — measured on one complete
-    /// day it ran within about ±7% of `/stats`. It's added only when the cache ends exactly yesterday:
-    /// if the cache already covers today, adding it would double-count; if it's older than that, whole
-    /// days are missing and inventing them would be worse than showing a dated figure.
-    public func statsTotalTokens(now: Date = Date(), calendar: Calendar = .current) -> Int? {
-        guard let c = statsCache else { return nil }
-        guard c.endsYesterday(now, calendar: calendar) else { return c.totalWorkTokens }
-        return c.totalWorkTokens + today.workTokens
+    /// Built from `allTimeDaily`, deliberately **not** from the `weekDaily`/`cycleDaily` pair
+    /// `statsLocalDaysAfterCache` uses. Those answer "which dates were active", which is all the
+    /// streak needs, but they cannot be summed: `weekDaily`'s reset-day bucket folds the window's
+    /// trailing hours back onto its opening slot (`% 7`), so one bucket can hold two calendar dates'
+    /// tokens — measured live at 1,612,803 + 432,336 reading as a single day. `allTimeDaily` is one
+    /// bucket per real date, which is exactly what makes it addable.
+    ///
+    /// The guard is the part that matters. Our history has to reach back to the cache's own last day;
+    /// if it starts *after* that day, the days in between are absent from both sides and adding only
+    /// what we hold would produce a total that is neither the cache's nor ours. That is a real state,
+    /// not a defensive one: Claude Code deletes transcripts past `cleanupPeriodDays`, so a cache left
+    /// un-recomputed for months outlives the local history it would need to be extended with.
+    private func statsGapDays(now: Date, calendar: Calendar) -> [DayTotal]? {
+        guard let c = statsCache, let lastCached = c.lastComputedDate(calendar: calendar),
+              let earliest = allTimeDaily.first?.date else { return nil }
+        let cutoff = calendar.startOfDay(for: lastCached)
+        guard earliest <= cutoff else { return nil }
+        let today = calendar.startOfDay(for: now)
+        return allTimeDaily.filter { $0.date > cutoff && $0.date <= today }
     }
 
-    /// Whether the figure above includes an estimated slice for today, so the UI can say so.
-    public func statsIncludesToday(now: Date = Date(), calendar: Calendar = .current) -> Bool {
-        statsCache?.endsYesterday(now, calendar: calendar) ?? false
+    /// `/stats`' "Total tokens", extended across every day the cache hasn't folded in yet.
+    ///
+    /// This used to add today alone, and only when the cache stopped exactly at yesterday — anything
+    /// staler showed the cache's own figure unchanged. That is honest but it goes quietly wrong the
+    /// moment Claude Code stops recomputing, and it does: the file sat at 4 August for seven days of
+    /// daily use, so the panel read **151.4M against Claude Code's own 160.9M** with nothing on screen
+    /// to say the number was a week old. Six days of usage were missing, not one.
+    ///
+    /// The added days are ClaudePet's accounting, not `/stats`' — measured on one complete day the two
+    /// ran within about ±7% of each other. Over a six-day gap that is ±0.4M on a 157M headline
+    /// (±0.26%), against 3.7% low for refusing to fill it. Better, and `statsFilledDays` lets the UI
+    /// say which part is ours.
+    public func statsTotalTokens(now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let c = statsCache else { return nil }
+        guard let gap = statsGapDays(now: now, calendar: calendar) else { return c.totalWorkTokens }
+        // `workTokens`, never `dayTokens`: `/stats`' figure excludes cache, while `dayTokens` routes
+        // through the user's display basis — which defaults to `.total`, and would splice a
+        // cache-inclusive slice onto a cache-excluded total. Roughly a 200× error per added day.
+        return c.totalWorkTokens + gap.reduce(0) { $0 + $1.workTokens }
+    }
+
+    /// How many days of our own the figure above carries on top of the cache. Zero when the cache is
+    /// already current, and zero when the gap couldn't be filled — `statsIsDated` separates those.
+    public func statsFilledDays(now: Date = Date(), calendar: Calendar = .current) -> Int {
+        statsGapDays(now: now, calendar: calendar)?.count ?? 0
+    }
+
+    /// True when the headline stops at the cache's date instead of reaching today.
+    ///
+    /// The one state the panel has to say **on screen**: a seven-day-old total renders pixel-identical
+    /// to a current one, which is the whole reason the 151.4M above went unnoticed. Note that a cache
+    /// which simply predates a stretch of idle days is *not* dated — its figure is still current, and
+    /// `statsGapDays` returns an empty gap rather than nil for that.
+    public func statsIsDated(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let c = statsCache, !c.covers(now, calendar: calendar) else { return false }
+        return statsGapDays(now: now, calendar: calendar) == nil
     }
 
     /// The current run of consecutive active days, **extended past the cache** with days it hasn't
