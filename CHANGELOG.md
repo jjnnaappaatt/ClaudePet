@@ -50,6 +50,27 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   to be further behind than the local history reaches.
 
 ### Changed
+- **Idle CPU: 45–100% of a core → ~6.5%.** The widget floats on screen all day, and every prior
+  optimisation round here was about memory, so nobody had ever profiled it. The cause was not the
+  animation — the main thread was blocked in `mach_msg2_trap` for 3110 of 3178 samples — it was the
+  scanner: the per-file cache is keyed `(mtime, size)`, so **one appended line re-parsed the whole
+  file**. Transcripts are append-only and huge; measured live, one line cost a **180 MB** re-parse on
+  one session and **682 MB** on another, against ~220 KB of genuinely new data over twelve minutes.
+- **Parsing resumes from a byte offset instead of restarting.** Guarded by an FNV-1a fingerprint of
+  the 4 KB ending at that offset, so a truncated, rotated or rewritten file falls back to a full
+  re-parse — being wrong there costs the old behaviour and never correctness. An unterminated final
+  line is parsed but not counted as consumed, so a line split across two scans isn't counted twice.
+- **Timestamps are decoded arithmetically.** `ISO8601DateFormatter` runs through ICU and measured
+  **19% of the scan**, and it tried the fractional formatter *first* with a fallback, so any
+  timestamp without a fraction paid two ICU parses. 6,014 timestamps across 120 random files were
+  **100.0%** one fixed layout; anything else still goes to the formatters, checked bit-for-bit.
+- **Line splitting and the `"usage"` probe are byte scans** (`memchr`/`memcmp`) rather than
+  `Data.split` (28% of the scan) and `Data.range(of:)`, which bridged to `NSData` Boyer-Moore per
+  line (7%). The probe's semantics are unchanged.
+- **`String.contains` is gone from the two hottest string paths.** On a `String` argument it resolves
+  to locale-aware NSString searching; it sat in `ModelFamily.init` (per parsed line) and
+  `PricingTable.effectivePrice` (per entry, from three full-history loops per recompute — order 384k
+  calls every 30s), each after a `lowercased()` allocation.
 - **`DashboardView.refHeight` takes a conditional `+70` while the Codex row is on screen.** The
   left card had already spent its slack: uncompensated, the bottom-most card pixel at 1990×820 went
   from 12px clear of the edge to 0, and 1470×923 did the same. It is a conditional term rather than
@@ -69,6 +90,16 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   that is neither the cache's nor ours.
 - **`StatsCache.endsYesterday` is gone.** It encoded the one-day-gap-only rule and now has no
   caller, and a predicate like that left lying around is an invitation to wire the rule back in.
+
+Measured back-to-back on the same 2.29 GB corpus: cold scan **12.4–13.0s → 2.25–3.78s** wall clock
+and **11.7–12.3s → 1.79–1.80s** of CPU; `JSONLParser` went from ~2941 profile samples to **0**. Max
+RSS is unchanged at ~785 MB — this was never a memory problem. Equivalence checked on real data:
+27,561 lines and 14,666 timestamps A/B'd against the old code with **0 mismatches**, and old and new
+binaries render pixel-identical dashboards apart from the burn rate, whose denominator is wall clock.
+
+### Removed
+- `AccountInfo.weeklyAnchorBase()` and `WeatherEngine.debugCloudCount` — no callers anywhere,
+  including tests. A sweep of all 343 public `ClaudePetCore` symbols found only those two.
 
 ### Fixed
 - **`Format.relativeAge` understated the day bucket.** It truncated, so 65 hours printed "2d ago".

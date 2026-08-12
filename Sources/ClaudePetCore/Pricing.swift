@@ -108,8 +108,11 @@ public struct PricingTable: Codable, Sendable, Equatable {
     /// The rate for a specific entry: a matching version override (respecting its date window)
     /// wins over the family rate. `calendar` is injectable for tests.
     func effectivePrice(for e: UsageEntry, calendar: Calendar = .current) -> ModelPrice? {
-        let id = e.model.lowercased()
-        for o in overrides where id.contains(o.idContains) {
+        // `asciiContains` rather than `lowercased()` + `contains`: this is called once per entry from
+        // three separate full-history loops per `recompute()`, so the old form allocated a fresh
+        // lowercased `String` and ran a locale-aware search ~384k times every 30 seconds. See
+        // `String.asciiContains`.
+        for o in overrides where e.model.asciiContains(o.idContains) {
             guard let through = o.throughDate else { return o.price }
             if let end = Self.endOfDay(through, calendar: calendar), e.timestamp <= end {
                 return o.price

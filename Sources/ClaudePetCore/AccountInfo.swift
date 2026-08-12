@@ -63,14 +63,6 @@ public struct AccountInfo: Sendable, Equatable {
                            subscriptionStart: start, extraUsageEnabled: extraEnabled)
     }
 
-    /// Default anchor for the fixed 7-day weekly-limit grid. Uses the subscription start
-    /// (so the grid lines up with account timing) or, lacking that, a fixed reference
-    /// Monday (2024-01-01 00:00 UTC) for a reproducible grid. This is an estimate — the
-    /// user calibrates an offset on top to match the Claude app's "resets in".
-    public func weeklyAnchorBase() -> Date {
-        subscriptionStart ?? Date(timeIntervalSince1970: 1_704_067_200)
-    }
-
     /// The current billing cycle as `[start, end)`: the monthly anniversary of the subscription
     /// instant, walked on a **UTC** calendar (matching `subscriptionCreatedAt`, which is UTC and
     /// the only billing-zone signal we have). `Calendar.date(byAdding: .month:)` clamps short

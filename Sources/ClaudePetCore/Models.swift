@@ -67,16 +67,56 @@ public enum TokenBasis: String, Codable, Sendable, CaseIterable {
 
 // MARK: - Model family
 
+extension String {
+    /// Case-insensitive substring test over ASCII bytes.
+    ///
+    /// **`String.contains(_:)` on a string argument is not a byte scan.** It resolves to
+    /// `StringProtocol.range(of:options:range:locale:)` — locale-aware NSString searching, with the
+    /// ICU machinery behind it. Profiled on the live app, those calls together with the
+    /// `lowercased()` that fed them measured ~350 samples: `ModelFamily.init` runs once per parsed
+    /// line, and `PricingTable.effectivePrice` runs once per entry from three separate full-history
+    /// loops per recompute — order 384k calls every 30 seconds.
+    ///
+    /// Both inputs here are machine-generated ASCII identifiers (`claude-opus-4-8`, `opus-4-1`), so
+    /// folding only A–Z is exactly equivalent to `lowercased()` for them, with no allocation and no
+    /// locale. Non-ASCII bytes are compared verbatim, which can only make this stricter.
+    ///
+    /// **It folds `A...Z` explicitly rather than with `| 0x20`.** The bit trick is the obvious way to
+    /// write this and it is wrong in a way that passes every realistic test: `|` also maps `@`→`` ` ``
+    /// and `[`→`{`, so `"A@B"` matched `` "a`b" ``. Harmless for the needles used here, and precisely
+    /// the kind of "sound for current inputs" reasoning that stops being true when someone adds an
+    /// override containing an underscore. `StringScanningTests` pins the punctuation cases.
+    func asciiContains(_ needle: String) -> Bool {
+        @inline(__always) func fold(_ c: UInt8) -> UInt8 {
+            (c >= 0x41 && c <= 0x5A) ? c | 0x20 : c        // 'A'...'Z' -> 'a'...'z'
+        }
+        var haystack = self, needle = needle
+        return haystack.withUTF8 { h in
+            needle.withUTF8 { n in
+                guard !n.isEmpty, h.count >= n.count else { return false }
+                let first = fold(n[0])
+                for start in 0...(h.count - n.count) where fold(h[start]) == first {
+                    var k = 1
+                    while k < n.count, fold(h[start + k]) == fold(n[k]) { k += 1 }
+                    if k == n.count { return true }
+                }
+                return false
+            }
+        }
+    }
+}
+
 public enum ModelFamily: String, Sendable, CaseIterable {
     case fable, opus, sonnet, haiku, other
 
     public init(modelID: String) {
-        let m = modelID.lowercased()
+        // `asciiContains`, not `lowercased()` + `contains` — see its own comment. This runs once per
+        // parsed line, so on a cold scan of the real corpus it ran ~290k times.
         // Mythos shares Fable's specs and pricing (Project Glasswing), so price it as Fable.
-        if m.contains("fable") || m.contains("mythos") { self = .fable }
-        else if m.contains("opus") { self = .opus }
-        else if m.contains("sonnet") { self = .sonnet }
-        else if m.contains("haiku") { self = .haiku }
+        if modelID.asciiContains("fable") || modelID.asciiContains("mythos") { self = .fable }
+        else if modelID.asciiContains("opus") { self = .opus }
+        else if modelID.asciiContains("sonnet") { self = .sonnet }
+        else if modelID.asciiContains("haiku") { self = .haiku }
         else { self = .other }
     }
 
@@ -225,6 +265,22 @@ public struct UsageEntry: Sendable, Equatable, Identifiable {
 // MARK: - Timestamp parsing
 
 /// Parses ISO8601 timestamps that may or may not carry fractional seconds.
+///
+/// **The formatters are the fallback, not the path.** `ISO8601DateFormatter` runs through
+/// `CFDateFormatter` into ICU's `SimpleDateFormat::parse`, which builds locale and calendar symbol
+/// tables per call — profiled on the live app it was **676 of 3103 samples inside the scan, 19%**,
+/// the second-largest cost in the whole pipeline. Worse, `date(from:)` used to try the *fractional*
+/// formatter first and fall back, so any timestamp without a fraction paid two full ICU parses.
+///
+/// Every real transcript uses exactly one layout: sampling 6,014 timestamps across 120 random files
+/// gave **100.0% `NNNN-NN-NNTNN:NN:NN.NNNZ`** — fixed width, UTC, 3-digit fraction. So that shape is
+/// decoded arithmetically and everything else still goes to the formatters.
+///
+/// One-directional by construction, which is what makes it safe to add: `fastPath` returns nil
+/// unless every byte matches the layout, so a false negative costs the formatter call that was
+/// happening anyway and a false positive cannot occur. It is pinned against the formatters over the
+/// whole corpus by `TimestampParserTests` — a faster parser that shifts one date is not an
+/// optimisation, it is a corruption.
 enum TimestampParser {
     nonisolated(unsafe) private static let withFraction: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -238,6 +294,53 @@ enum TimestampParser {
     }()
 
     static func date(from string: String) -> Date? {
-        withFraction.date(from: string) ?? plain.date(from: string)
+        var s = string
+        if let fast = s.withUTF8({ fastPath($0) }) { return fast }
+        return withFraction.date(from: string) ?? plain.date(from: string)
+    }
+
+    /// `2026-08-12T10:40:21.019Z` (24 bytes) or the same without the fraction (20 bytes), UTC only.
+    /// Any deviation — a non-Z zone, a 6-digit fraction, a stray byte — returns nil for the caller
+    /// to hand to the formatters.
+    static func fastPath(_ b: UnsafeBufferPointer<UInt8>) -> Date? {
+        let hasFraction: Bool
+        switch b.count {
+        case 24 where b[19] == UInt8(ascii: ".") && b[23] == UInt8(ascii: "Z"): hasFraction = true
+        case 20 where b[19] == UInt8(ascii: "Z"):                               hasFraction = false
+        default: return nil
+        }
+        guard b[4] == UInt8(ascii: "-"), b[7] == UInt8(ascii: "-"), b[10] == UInt8(ascii: "T"),
+              b[13] == UInt8(ascii: ":"), b[16] == UInt8(ascii: ":") else { return nil }
+
+        func num(_ i: Int, _ n: Int) -> Int? {
+            var v = 0
+            for k in i..<(i + n) {
+                let d = Int(b[k]) &- 48
+                guard d >= 0, d <= 9 else { return nil }
+                v = v * 10 + d
+            }
+            return v
+        }
+        guard let year = num(0, 4), let month = num(5, 2), let day = num(8, 2),
+              let hour = num(11, 2), let minute = num(14, 2), let second = num(17, 2),
+              month >= 1, month <= 12, day >= 1, day <= 31,
+              hour <= 23, minute <= 59, second <= 60      // 60 = leap second, as ISO permits
+        else { return nil }
+        let millis = hasFraction ? num(20, 3) : 0
+        guard let millis else { return nil }
+
+        let secs = daysFromCivil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second
+        return Date(timeIntervalSince1970: Double(secs) + Double(millis) / 1000)
+    }
+
+    /// Days from 1970-01-01 to the given proleptic-Gregorian date. Howard Hinnant's `days_from_civil`
+    /// — branch-free apart from the March-based year shift, and exact for any year the parser accepts.
+    private static func daysFromCivil(_ y: Int, _ m: Int, _ d: Int) -> Int {
+        let y = y - (m <= 2 ? 1 : 0)
+        let era = (y >= 0 ? y : y - 399) / 400
+        let yoe = y - era * 400                                        // [0, 399]
+        let doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1       // [0, 365]
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy                // [0, 146096]
+        return era * 146_097 + doe - 719_468
     }
 }

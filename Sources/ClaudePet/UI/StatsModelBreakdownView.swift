@@ -38,6 +38,12 @@ struct StatsModelBreakdownView: View {
             let pairs = stride(from: 0, to: shown.count, by: 2).map {
                 Array(shown[$0 ..< min($0 + 2, shown.count)])
             }
+            // Derived once and threaded down. Both of these re-filter `allTimeDaily` through
+            // `statsGapDays`, and between the chip and the tooltip the body asked for them five
+            // times per render. The array is one entry per active day, so this is tidiness, not a
+            // measurable saving.
+            let dated = metrics.statsIsDated()
+            let filled = metrics.statsFilledDays()
 
             VStack(alignment: .leading, spacing: 5 * scale) {
                 // A hero figure, sized like the cost and token counts above it — this is the headline
@@ -46,14 +52,14 @@ struct StatsModelBreakdownView: View {
                     Text("Total tokens").scaledFont(13.5, weight: .semibold)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).fixedSize()
-                    ageChip
+                    ageChip(dated: dated, filled: filled)
                     Spacer(minLength: 4 * scale)
                     Text(Format.tokens(total))
                         .scaledFont(21, weight: .bold, design: .rounded)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).fixedSize()
                 }
-                .help(headlineHelp(total: total))
+                .help(headlineHelp(dated: dated, filled: filled))
 
                 ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                     HStack(alignment: .top, spacing: 14 * scale) {
@@ -89,14 +95,14 @@ struct StatsModelBreakdownView: View {
     /// there and only running `/stats` will move it; `+2d` means ClaudePet closed the gap itself, and
     /// is also the standing explanation for why the headline no longer equals the model rows below it
     /// (those are pure cache — only the total is extended).
-    @ViewBuilder private var ageChip: some View {
-        if metrics.statsIsDated(), let asOf = metrics.statsAsOfDescription {
+    @ViewBuilder private func ageChip(dated: Bool, filled: Int) -> some View {
+        if dated, let asOf = metrics.statsAsOfDescription {
             Text("to \(asOf)")
                 .scaledFont(9.5, weight: .medium)
                 .foregroundStyle(Theme.highlight)
                 .lineLimit(1).fixedSize()
-        } else if metrics.statsFilledDays() > 0 {
-            Text("+\(metrics.statsFilledDays())d")
+        } else if filled > 0 {
+            Text("+\(filled)d")
                 .scaledFont(9.5, weight: .medium)
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1).fixedSize()
@@ -132,11 +138,10 @@ struct StatsModelBreakdownView: View {
               + "\(Format.tokens(m.cacheReadTokens)) cache reads (not counted in the total).")
     }
 
-    private func headlineHelp(total: Int) -> String {
+    private func headlineHelp(dated: Bool, filled: Int) -> String {
         let asOf = metrics.statsAsOfDescription.map { " Claude Code last recomputed its cache on \($0)." } ?? ""
-        let filled = metrics.statsFilledDays()
         let gap: String
-        if metrics.statsIsDated() {
+        if dated {
             gap = " Days since then are NOT included: ClaudePet's own history doesn't reach back that "
                 + "far, so filling the gap would undercount. Run /stats in Claude Code to refresh it."
         } else if filled > 0 {

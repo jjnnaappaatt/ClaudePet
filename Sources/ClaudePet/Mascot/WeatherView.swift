@@ -3,7 +3,8 @@ import ClaudePetCore
 
 /// The ambient weather behind the pet — sun, clouds, rain and lightning that follow your usage,
 /// drawn by the same pixel renderer as the mascot so the two layers line up. Purely decorative and
-/// non-interactive. Pauses on occlusion / Reduce Motion / Low Power, exactly like `MascotView`.
+/// non-interactive. Pauses on occlusion or Reduce Motion, exactly like `MascotView` — and, like it,
+/// NOT under Low Power, which only halves the frame rate. See `MascotView` for the measurement.
 ///
 /// The `WeatherEngine` is injected (owned by the parent) so the parent can be the single point that
 /// drains one-shot events and fans them out — to this ambient engine and to the full-card overlay.

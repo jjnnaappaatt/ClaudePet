@@ -147,7 +147,6 @@ public final class WeatherEngine {
     // Diagnostics (used by tests).
     public var debugRainCount: Int { rain.count }
     public var debugConfettiCount: Int { confetti.count }
-    public var debugCloudCount: Int { clouds.count }
     public var debugFlashCount: Int { flashCount }
     public var debugFlashing: Bool { flashTTL > 0 }
 
