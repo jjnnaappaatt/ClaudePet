@@ -45,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 metrics.loadSampleForPreview()
             }
             applyUtilOverride()      // so gauge colours/states can be forced here too, not just in the widget
+            applyCodexOverride()
+            applyStatsAgeOverride()
             var size = CGSize(width: 1728, height: 1117)
             if let raw = ProcessInfo.processInfo.environment["CLAUDEPET_DASHSIZE"] {
                 let parts = raw.lowercased().split(separator: "x").compactMap { Double($0) }
@@ -54,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // cache plus today?), so state them.
             let statsLine = "stats: total=\(metrics.statsTotalTokens().map(String.init) ?? "nil") "
                 + "cacheTotal=\(metrics.statsCache?.totalWorkTokens.description ?? "nil") "
-                + "includesToday=\(metrics.statsIncludesToday()) "
+                + "filledDays=\(metrics.statsFilledDays()) dated=\(metrics.statsIsDated()) "
                 + "asOf=\(metrics.statsAsOfDescription ?? "nil") todayWork=\(metrics.today.workTokens)\n"
             FileHandle.standardError.write(Data(statsLine.utf8))
 
@@ -98,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 metrics.tokenBasis = b         // ditto — lets a snapshot show work vs total side by side
             }
             applyUtilOverride()
+            applyCodexOverride()
+            applyStatsAgeOverride()
             Snapshot.render(ContentView().environment(metrics).environment(panelVisibility), to: snapPath)
             NSApp.terminate(nil)
             return
@@ -291,6 +295,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? json.write(toFile: path, atomically: true, encoding: .utf8)
         metrics.useStatuslineData = true
         metrics.statuslineCachePath = path
+        metrics.recompute()
+    }
+
+    /// Debug-only: force the Codex row by faking its cache. `CLAUDEPET_CODEX=<pct>[,<age_seconds>]`
+    /// — "47" is a live 47%, "47,90000" is the same figure gone stale past a day.
+    /// `CLAUDEPET_CODEX=none` writes no file at all, which is how a machine without Codex renders.
+    ///
+    /// It writes to its **own** temp file. Never point this at
+    /// `/tmp/claude/codex-usage-cache.tsv` — that is the live file the terminal statusline reads,
+    /// and a snapshot run would leave a fake percentage on the user's real status bar.
+    /// `CLAUDEPET_STATSAGE=<days>` re-dates a **copy** of the `/stats` cache, so both freshness states
+    /// of the "Total tokens" headline can be looked at instead of reasoned about.
+    ///
+    /// Neither occurs on demand: `+Nd` needs Claude Code to be a few days behind, and the dated
+    /// `to 4 Aug` chip needs it behind by more than the local history reaches — months of never running
+    /// `/stats`, by which point transcript cleanup has removed the days that would fill the gap. The
+    /// chip is the whole point of the feature, and a state that can't be rendered can't be checked.
+    ///
+    /// Pair with `CLAUDEPET_REAL=1`: sample mode builds its own frozen `statsCache`, and the
+    /// `recompute()` below would overwrite it (along with every other sample aggregate). Writes its own
+    /// temp file — `~/.claude/stats-cache.json` is Claude Code's, and nothing here may write to it.
+    private func applyStatsAgeOverride() {
+        guard let raw = ProcessInfo.processInfo.environment["CLAUDEPET_STATSAGE"],
+              let days = Int(raw),
+              let data = FileManager.default.contents(atPath: metrics.statsCachePath),
+              var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return }
+        var g = Calendar(identifier: .gregorian)
+        g.timeZone = .current
+        guard let back = g.date(byAdding: .day, value: -days, to: Date()) else { return }
+        let c = g.dateComponents([.year, .month, .day], from: back)
+        guard let y = c.year, let m = c.month, let d = c.day else { return }
+        obj["lastComputedDate"] = String(format: "%04d-%02d-%02d", y, m, d)
+        let path = NSTemporaryDirectory() + "cp-snap-stats.json"
+        guard let out = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        try? out.write(to: URL(fileURLWithPath: path))
+        metrics.statsCachePath = path
+        metrics.recompute()
+    }
+
+    private func applyCodexOverride() {
+        guard let raw = ProcessInfo.processInfo.environment["CLAUDEPET_CODEX"] else { return }
+        let path = NSTemporaryDirectory() + "cp-snap-codex.tsv"
+        try? FileManager.default.removeItem(atPath: path)
+        if raw != "none" {
+            let parts = raw.split(separator: ",").compactMap { Double($0) }
+            let pct = parts.first ?? 0
+            let age = parts.count > 1 ? parts[1] : 0
+            let reset = Int(Date().addingTimeInterval(7 * 86_400).timeIntervalSince1970)
+            let recorded = Int(Date().addingTimeInterval(-age).timeIntervalSince1970)
+            // A third component fakes the token count; omit it for the four-field cache an older
+            // statusline writes, which is a state worth being able to look at.
+            let tokens = parts.count > 2 ? "\t\(Int(parts[2]))" : "\t21682073"
+            try? "10080\t\(pct)\t\(reset)\t\(recorded)\(tokens)\n"
+                .write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        metrics.codexUsageCachePath = path
         metrics.recompute()
     }
 

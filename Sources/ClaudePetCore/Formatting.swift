@@ -118,13 +118,18 @@ public enum Format {
     }()
 
     /// Compact "time since": "just now", "5m ago", "2h ago", "3d ago".
+    ///
+    /// The day bucket **rounds**; the minute and hour buckets truncate. Not an inconsistency — a
+    /// bucket that truncates understates by up to one of its own units, which is inside the noise
+    /// for minutes and hours and is most of a day for days. 65 hours printed as "2d ago", and a
+    /// staleness label that undersells its own staleness is the one thing it must not do.
     public static func relativeAge(from date: Date, now: Date = Date()) -> String {
         let s = Int(max(0, now.timeIntervalSince(date)))
         switch s {
         case ..<60:     return "just now"
         case ..<3600:   return "\(s / 60)m ago"
         case ..<86_400: return "\(s / 3600)h ago"
-        default:        return "\(s / 86_400)d ago"
+        default:        return "\((s + 43_200) / 86_400)d ago"
         }
     }
 

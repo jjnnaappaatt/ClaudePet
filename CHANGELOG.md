@@ -5,7 +5,76 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **A Codex quota bar, under the two Claude gauges, in the widget and the dashboard.** Read from
+  `/tmp/claude/codex-usage-cache.tsv`, the same class of local-file read as the Claude limits — no
+  token, no network, and nothing new asked of the machine. Cyan rather than the Claude ramp,
+  because it is a different quota and a Codex bar in Claude gold reads as a fourth Claude limit;
+  the track floor is the warm one **mirrored**, `(49,40,36)` → `(36,40,49)`, which keeps the
+  measured relationships (track 1.74–1.89:1 on the card, fill ≥4.68:1 above the track) instead of
+  the grey-brown a warm floor produces under a cyan fill.
+- **The row hides itself when there is no Codex reading.** A 0% bar for a tool that isn't installed
+  is a claim, not a default — and the dashboard's divider is hidden with it, so no orphaned rule
+  is left behind.
+- **Three age bands, because the number only moves when Codex runs.** Under an hour it reads like
+  the rows above it; past an hour the text drops a tier; past a day it shows how old it is instead
+  of when the window resets. That last one is not cosmetic: a 65-hour-old reading was promising a
+  reset that had already happened, behind a percentage that had since gone 47% → 0%. The reset is
+  also dropped whenever it lies in the past, whatever the reading's age.
+- **Tokens spent in the window, on the same line as the reset**, matching the Weekly row above
+  (`2M work used this week`). Codex reports a percentage and never a count, so the statusline sums
+  it from Codex's own session rollouts and passes it through as a fifth field in the cache — the app
+  keeps reading one small file rather than scanning 22 MB of rollouts every 30 seconds. The count
+  is optional: a four-field cache from an older statusline still renders the row without it, and a
+  0 means "could not tell" and shows nothing rather than claiming a week of zero usage.
+- **That count excludes cache reads, which took subtracting them explicitly.** Codex reports tokens
+  the opposite way round from Anthropic — its `input_tokens` is gross, with `cached_input_tokens` a
+  *subset* of it — so the rollouts' `total_tokens` is `input + output` with cache **included**.
+  Measured over a real week that is **93.6% cache reads: 28.2M against a work-equivalent 2.0M**.
+  Left alone, a row sitting directly beneath the Claude weekly gauge (which prints work, cache
+  excluded) would have read 7× the Claude figure while actually being under half of it. The
+  statusline differences `input_tokens - cached_input_tokens + output_tokens` instead, and the row
+  spells "work" out literally rather than taking the basis label — this figure is always
+  cache-excluded, while the Claude rows follow the setting, so under `.total` the row above names a
+  different unit instead of inviting a comparison it can't support.
+- `CLAUDEPET_CODEX=<pct>[,<age>[,<tokens>]]` (or `none`) for the snapshot paths, so all four states
+  are checkable headlessly.
+- **An age chip on the `/stats` "Total tokens" headline.** `+4d` when ClaudePet has extended the
+  figure past Claude Code's cache — which also explains why the headline no longer equals the
+  per-model rows beneath it, since those are the cache alone — or `to 4 Aug` in coral when it
+  couldn't, meaning the number genuinely stops there. Measured off the render at 6.3:1 and 9.6:1
+  against the card. Nothing showed before, which is the entire reason a week-old figure went
+  unnoticed.
+- `CLAUDEPET_STATSAGE=<days>` re-dates a **copy** of the `/stats` cache (never the real file) so
+  both of those states can be rendered. Neither happens on demand: the dated one needs Claude Code
+  to be further behind than the local history reaches.
+
+### Changed
+- **`DashboardView.refHeight` takes a conditional `+70` while the Codex row is on screen.** The
+  left card had already spent its slack: uncompensated, the bottom-most card pixel at 1990×820 went
+  from 12px clear of the edge to 0, and 1470×923 did the same. It is a conditional term rather than
+  a bigger `refHeight` so that anyone without Codex keeps the type size they have today. 28 and 45
+  were both still clipping; 60 cleared every size but left real data 4px tighter than sample at
+  1470×923, and 70 closes that.
+- **The `/stats` headline now fills every day Claude Code's cache is missing, not just today.** The
+  old rule added today alone, and only when the cache stopped exactly at yesterday; anything staler
+  showed the cache's own figure unchanged. Claude Code recomputes that file when it feels like it,
+  not daily — measured here it sat at 4 August through seven days of continuous use, so the panel
+  read **151.4M against Claude Code's own 160.9M**. Six days were missing, not one. The added days
+  are ClaudePet's accounting, which ran within ~±7% of `/stats`' on a full measured day: over a
+  six-day gap that is ±0.4M on a 157M headline (±0.26%), against 3.7% low for not filling it.
+- **The fill is refused, and the figure marked dated, when local history doesn't reach the cache.**
+  Claude Code deletes transcripts past `cleanupPeriodDays`, so a cache left un-recomputed long
+  enough outlives the days it would be extended with; adding only what survives would give a total
+  that is neither the cache's nor ours.
+- **`StatsCache.endsYesterday` is gone.** It encoded the one-day-gap-only rule and now has no
+  caller, and a predicate like that left lying around is an invitation to wire the rule back in.
+
 ### Fixed
+- **`Format.relativeAge` understated the day bucket.** It truncated, so 65 hours printed "2d ago".
+  Days are 24 hours wide, so truncation there loses most of a day — and a staleness label that
+  undersells its own staleness is the one thing it must not do. Rounds now; minutes and hours still
+  truncate, where the error is inside the noise. Affects the two calibration-age tooltips as well.
 - **README said "By project — which projects burned the cycle's tokens".** That card moved to
   lifetime in 0.11.0 and its own header reads "all time"; the README had been wrong for three
   releases. Also documents the lifetime KPI tiles, the Subagents today / Subagents/day pair, the

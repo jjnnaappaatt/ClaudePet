@@ -30,6 +30,14 @@ CLAUDEPET_SNAPSHOT=/tmp/w.png CLAUDEPET_REAL=1 ...                       # real 
 CLAUDEPET_LAYOUT=vertical CLAUDEPET_SCALE=1.5 ...                        # override without touching saved prefs
 CLAUDEPET_BASIS=total ...           # render work-vs-total side by side, saved pref untouched
 CLAUDEPET_UTIL=96,40 ...            # fake statusline utilization → force gauge/weather/mood states
+CLAUDEPET_CODEX=47 ...              # fake the Codex row: "<pct>[,<age_seconds>]", or "none" for a
+                                    # machine without Codex. Writes its own temp file — never point
+                                    # anything at the live /tmp/claude/codex-usage-cache.tsv.
+CLAUDEPET_STATSAGE=6 ...            # re-date a COPY of ~/.claude/stats-cache.json N days back, to
+                                    # render the "Total tokens" age chip: "+4d" when the gap was
+                                    # filled from local history, "to 4 Aug" when it couldn't be
+                                    # (try 200). Pair with CLAUDEPET_REAL=1 — it recomputes, which
+                                    # wipes sample data. Never writes the real file.
 CLAUDEPET_HANDLES=1 ...             # force resize grips visible
 CLAUDEPET_NOLIVE=1 ...              # ignore the statusline + drop the calibration anchor, so the
                                     # local-history budget estimate is what you're looking at
@@ -63,7 +71,7 @@ the snapshot vars it runs in the normal app flow rather than rendering and exiti
 From `CONTRIBUTING.md` — these are why the app is trustworthy, not style preferences:
 
 1. **Local files only.** Reads `~/.claude/projects/**/*.jsonl`, `~/.claude.json`, and optionally
-   `/tmp/claude/statusline-usage-cache.json`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
+   `/tmp/claude/statusline-usage-cache.json`, `/tmp/claude/codex-usage-cache.tsv`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
    request. A feature needing data that isn't already local is out of scope.
 2. **Original art only.** The mascot is code-drawn in `MascotArt.swift` / `PixelMatrixRenderer.swift`
    as an homage to Clawd. Don't bundle third-party art.
@@ -269,6 +277,20 @@ time of day, on the developer's own live usage.
   token figure must route through `MetricsStore.tokens(work:total:)` and friends. Cost is always
   cache-inclusive and never routed through it.
 
+**Codex counts cache the opposite way round, and its row sits directly under the Claude gauges.**
+Codex's `input_tokens` is **gross** — `cached_input_tokens` is a *subset* of it — where Anthropic's
+excludes cache and reports `cache_read_input_tokens` separately. So the rollouts' `total_tokens` is
+exactly `input_tokens + output_tokens` (295 of 295 records over a real week, no exceptions) and is
+**cache-inclusive**: measured, 93.6% of it was cache reads, 28.2M against a work-equivalent 2.0M.
+Shipped as-is the row read **7× the Claude weekly figure while actually being under half of it**.
+`~/.claude/codex-week-tokens.py` therefore differences a derived cumulative,
+`input_tokens - cached_input_tokens + output_tokens`, and the fifth TSV field means work tokens. Two
+consequences: the app must **not** route that field through `TokenBasis` (it is already and always
+cache-excluded), and `CodexLimitBar` spells "work" out literally rather than using
+`tokenBasisLabel`, so that under `.total` the Claude row above names a different unit instead of
+inviting a comparison it can't support. The statusline and the app are coupled through that field's
+meaning — change one and the other mislabels silently.
+
 Also: `week` is the **fixed weekly-reset window** total (mirrors the Claude app, resets to zero at
 each boundary), and `weekDaily` is the **seven weekday slots of that window** — so the chart bars sum to `week`
 while staying real weekdays. A mid-day reset makes the window touch 8 calendar dates, so the
@@ -436,6 +458,18 @@ subdirectory); they're one project, so `Aggregator` merges them after resolving.
 `/stats`' "Total tokens" is **read from `~/.claude/stats-cache.json`, never derived** — see `StatsCache`.
 It is `Σ(inputTokens + outputTokens)` over `modelUsage`, with **cache tokens excluded**.
 
+**Claude Code prints two different figures under that one label, ~200× apart, and only one of them is
+the one we mirror.** Its terminal `/stats` shows `in + out + cache read + cache write` — verified
+against its own detail line, `24.3m + 135.5m + 31.3b + 771.2m = 32.2b`, of which cache *read* alone is
+**97.2%**. Its desktop app shows `in + out` (160.9M for the same account, same day). ClaudePet follows
+the app, which is also what the file's own `modelUsage` sums to. So "ClaudePet says 160M, /stats says
+32.2b" is not a discrepancy to chase — it is two definitions, and the ratio between them is just prompt
+caching re-reading the conversation prefix every turn (measured 195× on this corpus).
+
+The terminal's figures are also the cache **plus the live day**: against the file at the same moment,
+sessions +1 (the open one), output +2.5m, cache read +0.72b — each matching that day's own usage. The
+file itself stops at `lastComputedDate`.
+
 Don't try to recompute it. Measured against one complete day where `/stats` read 3,063,775: every logged
 line gives **+7.2%**, lines excluding subagents **−3.3%**, dedup by `message.id` **×0.36** globally and
 **×0.46** per file. Nothing lands on it. (ClaudePet's own all-time work was 181.9M against `/stats`'
@@ -460,16 +494,43 @@ and `statsActiveDays` all extend across the same span — the days after `lastCo
 impossible, both shipped to a render before being caught. The extension reaches only as far back as
 those two windows; past that the cached figure stands unchanged.
 
-`allTimeDaily` (below) **is** a lifetime daily series and would let that extension reach the whole
-history — this note used to say no such series existed, and that is no longer why the limit is there.
-It stays on `weekDaily`/`cycleDaily` deliberately: widening it moves three shipped KPI figures at once
-and needs its own reconciliation against `/stats`, which is a separate piece of work from the pace
-baseline the series was added for.
+That day/streak extension stays on `weekDaily`/`cycleDaily` deliberately. `allTimeDaily` **is** a
+lifetime daily series and would let it reach the whole history, but widening it moves three shipped KPI
+figures at once and needs its own reconciliation against `/stats` — separate work.
 
-The cache lags up to a day, so `statsTotalTokens` adds today's own count **only** when the cache ends
-exactly yesterday (`endsYesterday`) — `covers` guards the double-count, and a cache two or more days
-behind shows the dated figure alone rather than inventing the missing days. That delta is ClaudePet's
-accounting, ~±7% off `/stats`', and the tooltip says so.
+**The headline total is extended on a different series, and the split is not an inconsistency.**
+`statsGapDays` sums `allTimeDaily`, because those two are asking different questions: the streak asks
+*which dates were active*, which `weekDaily` answers fine, while the total has to be **summed** — and
+`weekDaily`'s reset-day bucket folds the window's trailing hours back onto its opening slot (`% 7`), so
+one bucket can hold two calendar dates' tokens (measured live at 1,612,803 + 432,336 reading as one
+day). `allTimeDaily` is one bucket per real date, which is exactly what makes it addable.
+
+**Sum `workTokens`, never `dayTokens`.** `/stats`' figure excludes cache; `dayTokens` routes through the
+user's `TokenBasis`, which defaults to `.total`. Splicing a cache-inclusive slice onto a cache-excluded
+total inflates every added day by the cache ratio — ~200× — and nothing else in the app can see it: the
+panel renders, the figure stays internally consistent, it is simply wrong. Pinned by
+`StatsGapFillTests.fillUsesWorkTokensRegardlessOfTheDisplayBasis`, which was watched failing at 62.3M
+against 5.3M before it was trusted.
+
+**Don't narrow the fill back to "today only".** That was the rule until it was measured: it added today
+and only when the cache ended exactly yesterday, so anything staler showed the cache's figure unchanged
+*and unmarked*. Claude Code recomputes that file when it feels like it, not daily — it sat at 4 August
+through seven days of continuous use, and the panel read 151.4M beside Claude Code's own 160.9M. Six
+days missing, not one. The added days are our accounting (~±7% of `/stats`'), so a six-day gap costs
+±0.26% on the headline against 3.7% low for refusing it.
+
+**But the fill has a real refusal case, and it is not defensive.** `statsGapDays` returns nil unless
+`allTimeDaily` reaches back to the cache's own last day. Claude Code deletes transcripts past
+`cleanupPeriodDays`, so a cache left un-recomputed for long enough outlives the history it would be
+extended with, and adding only the surviving days gives a total that is neither the cache's nor ours.
+`statsIsDated` then puts `to 4 Aug` on the card — and note that an old cache followed by *idle* days is
+**not** dated: the gap is empty rather than nil, and the figure is still current.
+
+`covers` still guards the double-count at the cache's own day. Its `endsYesterday` companion is gone;
+it encoded the one-day rule and a caller-less predicate is an invitation to wire that rule back in.
+
+Neither chip state occurs on demand, so `CLAUDEPET_STATSAGE=<days>` re-dates a **copy** of the cache
+(the real file is Claude Code's — never write to it) to render them.
 
 ### Cycle breakdowns
 

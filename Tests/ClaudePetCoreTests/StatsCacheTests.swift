@@ -99,36 +99,13 @@ import Foundation
 
     // MARK: - Freshness: when may today's own count be added?
 
-    @Test func todayIsAddedOnlyWhenTheCacheStopsAtYesterday() throws {
+    @Test func coversIsHalfOpenAtTheCachesOwnDay() throws {
         let c = try #require(StatsCacheReader.read(path: try write(Self.json)))
-        // Cache ends 2026-07-29.
-        #expect(c.endsYesterday(day(2026, 7, 30), calendar: cal))          // → add today
-        #expect(c.covers(day(2026, 7, 29), calendar: cal))                 // → already counted, don't
-        #expect(!c.endsYesterday(day(2026, 7, 29), calendar: cal))
-        // Two or more days behind: whole days are missing, so adding only today would invent a wrong
-        // total. Neither predicate fires, and the caller shows the dated figure alone.
-        #expect(!c.endsYesterday(day(2026, 8, 1), calendar: cal))
+        // Cache ends 2026-07-29. Its own day is already counted — a caller adding a delta there
+        // double-counts.
+        #expect(c.covers(day(2026, 7, 29), calendar: cal))
+        #expect(!c.covers(day(2026, 7, 30), calendar: cal))
         #expect(!c.covers(day(2026, 8, 1), calendar: cal))
-    }
-
-    @MainActor
-    @Test func storeAddsTodaysDeltaOnlyForTheYesterdayCase() throws {
-        let name = "claudepet-test-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
-        let store = TestSupport.store(defaults: defaults)
-        store.statsCachePath = try write(Self.json)
-        store.ingestForTesting([TestSupport.entry(at: Date(), input: 700, output: 300)])
-        #expect(store.today.workTokens == 1000)
-
-        // Cache ends 2026-07-29, so on the 30th the total gains today's 1000.
-        #expect(store.statsTotalTokens(now: day(2026, 7, 30), calendar: cal) == 140_542_663)
-        #expect(store.statsIncludesToday(now: day(2026, 7, 30), calendar: cal))
-        // On the 29th the cache already covers the day — bare total, no double count.
-        #expect(store.statsTotalTokens(now: day(2026, 7, 29), calendar: cal) == 140_541_663)
-        #expect(!store.statsIncludesToday(now: day(2026, 7, 29), calendar: cal))
-        // Badly stale — dated figure only.
-        #expect(store.statsTotalTokens(now: day(2026, 8, 5), calendar: cal) == 140_541_663)
     }
 
     /// Regression: the cache's `"2026-07-29"` is Gregorian, but `Calendar.current` need not be. On a Thai
@@ -142,9 +119,9 @@ import Foundation
         // Sanity: this calendar really does report a different year for the same instant.
         #expect(buddhist.dateComponents([.year], from: day(2026, 7, 30)).year == 2569)
 
-        #expect(c.endsYesterday(day(2026, 7, 30, 6), calendar: buddhist))
         #expect(c.covers(day(2026, 7, 29, 6), calendar: buddhist))
-        #expect(!c.endsYesterday(day(2026, 8, 5), calendar: buddhist))
+        #expect(!c.covers(day(2026, 7, 30, 6), calendar: buddhist))
+        #expect(!c.covers(day(2026, 8, 5), calendar: buddhist))
         // And the display date must not land in the 15th century.
         let shown = try #require(c.lastComputedDate(calendar: buddhist))
         var g = Calendar(identifier: .gregorian); g.timeZone = TimeZone(identifier: "Asia/Bangkok")!

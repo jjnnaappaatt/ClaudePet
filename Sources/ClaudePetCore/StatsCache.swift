@@ -147,20 +147,14 @@ public struct StatsCache: Sendable, Equatable {
         return last >= today
     }
 
-    /// True when the cache stops exactly at yesterday — the one case where adding today's own count
-    /// closes the gap without inventing whole missing days.
-    public func endsYesterday(_ now: Date, calendar: Calendar = .current) -> Bool {
-        let g = Self.gregorian(calendar)
-        guard let last = lastComputedDay.flatMap(Self.ymd),
-              let y = g.date(byAdding: .day, value: -1, to: now),
-              let yesterday = Self.ymd(g.dateComponents([.year, .month, .day], from: y))
-        else { return false }
-        return last == yesterday
-    }
-
-    /// The cache's last day as an instant, for display. Built on a Gregorian calendar for the same
-    /// reason as above — `Calendar.current.date(from:)` would read 2026 as a Buddhist year and land in
-    /// the 15th century.
+    /// The cache's last day as an instant, for display **and for bounding the gap** that
+    /// `MetricsStore.statsGapDays` fills from local history. There was an `endsYesterday` companion to
+    /// `covers` here; it is gone deliberately. It encoded the rule that only a one-day gap could be
+    /// closed, which left a seven-day-old total on screen unmarked, and a predicate with no caller is
+    /// an invitation to wire that rule back in.
+    ///
+    /// Built on a Gregorian calendar for the same reason as above — `Calendar.current.date(from:)`
+    /// would read 2026 as a Buddhist year and land in the 15th century.
     public func lastComputedDate(calendar: Calendar = .current) -> Date? {
         lastComputedDay.flatMap { Self.gregorian(calendar).date(from: $0) }
     }
