@@ -190,6 +190,78 @@ sidechain tokens, which moved a 30-day mean by 3,794/day — small, stable, and 
 path whose `(st_dev, st_ino)` you have already read; with that one line the same scan matched the app
 **to the token** on both pace baselines.
 
+### CPU — the scan, not the animation
+
+Every optimisation round before this one was about memory, so the first CPU measurement found the
+widget burning **45–100% of a core, sustained, while Claude Code was in use**. Memory was fine at the
+time (93.6 MB settled) and is not the lever here.
+
+**Profile before touching anything, and split by thread.** `sample <pid> 5` showed the main thread
+**blocked in `mach_msg2_trap` for 3110 of 3178 samples** while the scanner's cooperative queue was
+on-CPU for **3619 of 3621**. A UI review had concluded the mascot's `TimelineView` was the top cost;
+it was not, and after the fixes below the whole animation stack measures **0.8% of main-thread
+samples on a thread that is 90.7% blocked**. Don't optimise the mascot — gating it further risks
+freezing the pet for a saving that does not exist.
+
+**Root cause: an append re-parsed the whole file.** The per-file cache is keyed `(mtime, size)`, so
+one new line invalidated everything. Transcripts are append-only and huge — measured live, one
+appended line cost a **180 MB** re-parse on one live session and **682 MB** on another, against
+~220 KB of genuinely new data over twelve minutes. `JSONLParser.parse(fileAt:from:)` now resumes from
+a byte offset, guarded by an FNV-1a fingerprint of the 4 KB ending at that offset.
+
+Four things about that guard, all of which have already caught something:
+
+- **`parsedUpTo` stops at the last complete *newline*.** An unterminated final line is still parsed
+  and returned, but not counted as consumed — and `FileParse.tailCount` says how many entries came
+  from it, so the scanner drops them before appending. Without that, a line split across two scans is
+  counted twice; dedup hides it in the default mode while `countRepeatedLogLines` shows a doubled
+  figure. Verified: 400 of 400 sampled transcripts end with a newline, so this is the mid-write case.
+- **`size >= hit.size` is a cheap early-out, not the truncation guard.** Mutation testing says so —
+  deleting it leaves every test green, because a file shorter than `parsedUpTo` cannot produce a
+  fingerprint there. The fingerprint is what makes this safe.
+- **The `StringInterner` moved onto the actor.** It was per-scan, correctly, while every changed file
+  was re-parsed whole. Now a file's head is parsed once and its tail by hundreds of later scans, so a
+  per-scan table would hand out a fresh `String` per append and the sharing would decay as the app ran.
+- **Transcripts really are append-only**, verified rather than assumed: the first line is
+  `type: last-prompt` and looks like a mutable header, but there are **822 of them at strictly
+  increasing offsets**, and a file with 12 compaction markers still held all 180 MB.
+
+Three hot spots inside the parse, each replaced by a byte scan, each one-directional:
+
+- **`TimestampParser` used `ISO8601DateFormatter`** — ICU `SimpleDateFormat::parse`, **676 of 3103
+  samples (19%)** — and tried the *fractional* formatter first with a fallback, so any timestamp
+  without a fraction paid two ICU parses. 6,014 timestamps sampled across 120 random files were
+  **100.0% `NNNN-NN-NNTNN:NN:NN.NNNZ`**, so that shape is decoded arithmetically and everything else
+  still goes to the formatters. Pinned bit-for-bit against them.
+- **`Data.split(separator:)`** for lines — **1015 samples (28%)** — is now a `memchr` walk.
+- **`Data.range(of:)`** for the `"usage"` probe — **261 samples (7%)** — bridged to `NSData`
+  Boyer-Moore per line; now `memchr` + `memcmp`. The probe itself is unchanged and still earns its keep.
+
+**`String.contains(_:)` on a `String` argument is not a byte scan** — it resolves to
+`range(of:options:range:locale:)`, locale-aware NSString searching. It sat in `ModelFamily.init`
+(once per parsed line) and `PricingTable.effectivePrice` (once per entry, from three full-history
+loops per recompute — order 384k calls every 30s), each preceded by a `lowercased()` allocation.
+`String.asciiContains` replaces both. **Fold `A...Z` explicitly, not with `| 0x20`:** the bit trick is
+the obvious way to write it and it also maps `@`→`` ` `` and `[`→`{`, so `"A@B"` matched `` "a`b" ``.
+Harmless for today's needles and exactly the "sound for current inputs" reasoning that stops being
+true when someone adds an override with an underscore.
+
+Measured end to end, matched back-to-back runs on the same 2.29 GB corpus:
+
+| | before | after |
+|---|---|---|
+| cold scan, wall clock | 12.4–13.0 s | **2.25–3.78 s** |
+| cold scan, user CPU | 11.7–12.3 s | **1.79–1.80 s** |
+| live steady-state CPU | 45–100% | **6.3–26.5%, mostly ~6.5%** |
+| `UsageScanner.scan` samples | 3103 | **52** |
+| `JSONLParser` samples | ~2941 | **0** |
+| max RSS | 794 MB | 785 MB (unchanged — this was never a memory fix) |
+
+Equivalence was checked on real data, not just fixtures: 27,561 lines and 14,666 timestamps A/B'd
+against the old implementations with **0 mismatches** (and 0 falling back to the formatter), and the
+old and new binaries rendered **pixel-identical dashboards** apart from the burn-rate figure, whose
+denominator is elapsed wall clock.
+
 ### MetricsStore
 
 `@MainActor @Observable`, the single view model. `recompute()` re-aggregates `lastEntries` against a

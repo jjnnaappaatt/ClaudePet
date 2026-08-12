@@ -10,8 +10,37 @@ public actor UsageScanner {
     }
 
     private let root: URL
-    private struct CachedFile { let mtime: Date; let size: Int; let entries: [UsageEntry] }
+    private struct CachedFile {
+        let mtime: Date
+        let size: Int
+        /// Byte offset this file has been parsed up to — where a resumed parse starts.
+        let parsedUpTo: UInt64
+        /// Fingerprint of the bytes immediately before `parsedUpTo`, so a rewritten or truncated
+        /// file cannot be mistaken for an appended one.
+        let boundaryHash: UInt64
+        /// Trailing entries that came from a line with no newline yet; dropped before appending.
+        let tailCount: Int
+        let entries: [UsageEntry]
+    }
     private var cache: [URL: CachedFile] = [:]
+
+    /// Kept on the actor rather than per-scan, **because entries now outlive the scan that parsed
+    /// them.** Its doc comment used to say the opposite, and that was right while every changed file
+    /// was re-parsed whole: the table existed only to stop 250k allocations inside one pass. With
+    /// incremental appends, a file's head is parsed by one scan and its tail by hundreds of later
+    /// ones, so a per-scan table would hand out a fresh `String` for the same model id on every
+    /// append and the sharing would decay as the app ran. It holds ~130 distinct values, all of
+    /// which the entries retain anyway, so keeping it costs the dictionary and nothing else.
+    private let interner = StringInterner()
+
+    /// How the last scan split its work: files read whole vs files resumed from an offset.
+    ///
+    /// These exist because the incremental path is **invisible from its output** — a resumed parse
+    /// and a full re-parse produce identical entries, so every functional test in the suite passes
+    /// either way and the only symptom of losing it is the app going back to burning a core. Same
+    /// reasoning as `AllocationTests`: when correctness can't see a regression, something else has to.
+    public private(set) var lastScanFullParses = 0
+    public private(set) var lastScanTailParses = 0
 
     public init(root: URL = UsageScanner.defaultRoot) {
         self.root = root
@@ -26,16 +55,54 @@ public actor UsageScanner {
     public func scan(deduplicated: Bool = true) -> [UsageEntry] {
         let files = Self.jsonlFiles(under: root)
         var present = Set<URL>()
-        // One table for the whole scan, so `model` and `cwd` are shared across FILES and not merely
-        // within one. Held locally rather than on the actor: it exists to stop 250k allocations
-        // being made, not to be kept afterwards, and the strings it hands out are retained by the
-        // entries themselves.
-        let interner = StringInterner()
+        lastScanFullParses = 0
+        lastScanTailParses = 0
 
         for url in files {
             present.insert(url)
             let (mtime, size) = Self.stat(url)
             if let hit = cache[url], hit.mtime == mtime, hit.size == size { continue }
+            let dir = Self.projectDir(of: url, under: root)
+
+            // The file only grew and the bytes we stopped at are untouched: parse just the tail.
+            //
+            // This is the difference between a widget that idles and one that pins a core. The key
+            // is `(mtime, size)`, so an appended line invalidates the whole file — and transcripts
+            // are append-only and reach hundreds of MB, so one new line was costing a 180 MB or
+            // 682 MB re-read. The guard is one-directional in the same way the `"usage"` probe is:
+            // a mismatch costs exactly the old behaviour, and a false match would need a 4 KB
+            // collision. Truncation and rotation land on the mismatch side; compaction turned out
+            // to append rather than rewrite, but is not relied on for correctness.
+            //
+            // `size >= hit.size` is a cheap early-out, NOT the truncation guard, and mutation
+            // testing says so: deleting it leaves every test green, because a file shorter than
+            // `parsedUpTo` cannot produce a fingerprint there (the read comes up short and returns
+            // nil). It survives only to skip opening the file at all in the shrink case. The
+            // fingerprint is what makes this safe — do not let this line take the credit for it.
+            if let hit = cache.removeValue(forKey: url) {
+                if size >= hit.size, hit.parsedUpTo > 0,
+                   let fingerprint = Self.boundaryHash(of: url, endingAt: hit.parsedUpTo),
+                   fingerprint == hit.boundaryHash,
+                   let tail = autoreleasepool(invoking: {
+                       try? JSONLParser.parse(fileAt: url, from: hit.parsedUpTo,
+                                              projectDir: dir, interner: interner)
+                   }) {
+                    // `hit` was removed from the dictionary above, so this array is uniquely
+                    // referenced and the append is in place rather than a copy of the whole file.
+                    var entries = hit.entries
+                    if hit.tailCount > 0 { entries.removeLast(min(hit.tailCount, entries.count)) }
+                    entries.append(contentsOf: tail.entries)
+                    cache[url] = CachedFile(
+                        mtime: mtime, size: size, parsedUpTo: tail.parsedUpTo,
+                        boundaryHash: Self.boundaryHash(of: url, endingAt: tail.parsedUpTo) ?? 0,
+                        tailCount: tail.tailCount, entries: entries)
+                    lastScanTailParses += 1
+                    continue
+                }
+                // Fell through: put the old parse back so a failed read below can't lose it.
+                cache[url] = hit
+            }
+
             // Drain the parse temporaries per file so a big rescan doesn't balloon the peak.
             //
             // A read failure must NOT be cached. The key is (mtime, size), and a completed
@@ -45,11 +112,14 @@ public actor UsageScanner {
             // prior good parse intact and un-evicted; the next scan retries the read.
             // (Explicit `invoking:` label — a trailing closure here would be parsed as the
             // guard's else-body.)
-            let dir = Self.projectDir(of: url, under: root)
-            guard let entries = autoreleasepool(invoking: {
-                try? JSONLParser.entries(inFileAt: url, projectDir: dir, interner: interner)
+            guard let parsed = autoreleasepool(invoking: {
+                try? JSONLParser.parse(fileAt: url, from: 0, projectDir: dir, interner: interner)
             }) else { continue }
-            cache[url] = CachedFile(mtime: mtime, size: size, entries: entries)
+            cache[url] = CachedFile(
+                mtime: mtime, size: size, parsedUpTo: parsed.parsedUpTo,
+                boundaryHash: Self.boundaryHash(of: url, endingAt: parsed.parsedUpTo) ?? 0,
+                tailCount: parsed.tailCount, entries: parsed.entries)
+            lastScanFullParses += 1
         }
         // Forget files that disappeared.
         for url in cache.keys where !present.contains(url) { cache[url] = nil }
@@ -142,6 +212,31 @@ public actor UsageScanner {
         guard parts.count > rootParts.count, Array(parts.prefix(rootParts.count)) == rootParts
         else { return "" }
         return parts[rootParts.count]
+    }
+
+    /// FNV-1a over the last ≤4 KB ending at `offset` — the guard that makes resuming safe.
+    ///
+    /// Deterministic on purpose: Swift's `Hasher` is randomly seeded per process, and while this
+    /// cache never outlives the process today, a fingerprint that silently means something different
+    /// on the next launch is a trap to leave lying around.
+    ///
+    /// It proves the bytes we stopped reading at are still the bytes that are there. A truncated,
+    /// rotated or rewritten file fails it and takes the full-parse path — the same work the app did
+    /// before any of this existed, so being wrong here costs speed and never correctness. Returns nil
+    /// for `offset == 0` (nothing has been consumed, so there is nothing to vouch for), which keeps
+    /// an empty or newline-free file on the full path forever.
+    static func boundaryHash(of url: URL, endingAt offset: UInt64) -> UInt64? {
+        guard offset > 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let window = min(offset, 4096)
+        guard (try? handle.seek(toOffset: offset - window)) != nil,
+              let bytes = try? handle.read(upToCount: Int(window)),
+              bytes.count == Int(window) else { return nil }
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        bytes.withUnsafeBytes { raw in
+            for b in raw { hash = (hash ^ UInt64(b)) &* 0x0000_0100_0000_01B3 }
+        }
+        return hash
     }
 
     static func stat(_ url: URL) -> (Date, Int) {

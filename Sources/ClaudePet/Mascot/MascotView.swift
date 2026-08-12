@@ -4,7 +4,14 @@ import ClaudePetCore
 /// The ambient pixel-art Claude mascot. Its mood follows usage (`MetricsStore.mascotEmotion`):
 /// happy when you have headroom, worried/alarmed near a limit, asleep when idle. Renders a
 /// user-supplied PNG for the mood if one was dropped into Resources/Mascot, else animates the
-/// built-in pixel art. Pauses when occluded / Reduce Motion / Low Power.
+/// built-in pixel art.
+///
+/// Pauses when occluded or under Reduce Motion. **Not** under Low Power, which only halves the
+/// frame rate (`AnimationRate.current`, 15 -> 6) — this comment claimed otherwise for a while.
+/// Profiled on the live app, the whole animation stack (TimelineView, Canvas, PixelMatrixRenderer,
+/// WeatherEngine) is **0.8% of main-thread samples** while the thread itself is 90.7% blocked, so
+/// there is nothing here worth optimising and gating it further would risk freezing the pet for a
+/// saving that does not exist.
 struct MascotView: View {
     var size: CGFloat = 48
 

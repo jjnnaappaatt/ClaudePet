@@ -48,6 +48,17 @@ struct DailyPaceView: View {
     }
 
     var body: some View {
+        // Bound once. Each of these re-derives from `allTimeDaily` on every read, and the body
+        // referenced them eight times between them — `overAverage` twice, `fraction` three times,
+        // `average` three — so a single pass did the same scan eight times. The array is one entry
+        // per *active day* (81 on the developer's machine), so this is legibility rather than a
+        // measurable saving; it is not a performance claim.
+        let todayValue = self.todayValue
+        let average = self.average
+        let fraction = self.fraction
+        let overAverage = self.overAverage
+        let hasHistory = metrics.hasDailyHistory() && average > 0
+
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Today").scaledFont(10, weight: .semibold)
