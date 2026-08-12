@@ -35,12 +35,20 @@ struct CodexLimitBar: View {
     private var showsReset: Bool { freshness != .ancient && limit.isUsable() }
 
     private var help: String {
-        let count = limit.tokensUsed.map {
-            " The token count is summed from Codex's own session rollouts and is a spend figure — "
-            + "every turn resends the context, so it counts \(Format.tokens($0)) billed, not "
-            + "\(Format.tokens($0)) held in a context window. It is not the same measurement as "
-            + "the count on the Claude rows and the two don't compare."
-        } ?? ""
+        // Built in pieces: as one chained `+` expression with interpolations the type-checker gave
+        // up outright ("unable to type-check this expression in reasonable time").
+        var count = ""
+        if let used = limit.tokensUsed {
+            let amount = Format.tokens(used)
+            count = " The token count is summed from Codex's own session rollouts and is a spend"
+            count += " figure — every turn resends the context, so it counts \(amount) billed, not"
+            count += " \(amount) held in a context window. Cache reads are excluded, so it is the"
+            count += " same basis as a \"work\" figure on the Claude rows above — but Codex counts"
+            count += " cache the opposite way round (its input_tokens includes the cached part,"
+            count += " where Anthropic's excludes it), so the subtraction happens in the statusline"
+            count += " before the number reaches here. Left in, this row read 28.2M against a"
+            count += " true 2.0M."
+        }
         return """
             Codex's own quota, as Codex reported it — read from the statusline's local cache file. \
             ClaudePet does not talk to Codex: no token, no network, same as the Claude rows above. \
@@ -72,7 +80,13 @@ struct CodexLimitBar: View {
                 if let tokens = limit.tokensUsed {
                     // "this week" only when the window actually is a week. Codex reported a
                     // 5-hour window until 2026-07-14 and the format still carries one.
-                    Text("\(Format.tokens(tokens)) used this \(limit.windowMinutes >= 1440 ? "week" : "window")")
+                    //
+                    // "work" is spelled out rather than taken from `tokenBasisLabel`: this count is
+                    // always cache-excluded, while the Claude rows follow the user's basis. Naming
+                    // its own unit is what keeps it honest when they diverge — under `.total` the
+                    // row above reads "total" and no false comparison is offered.
+                    Text("\(Format.tokens(tokens)) work used this "
+                         + "\(limit.windowMinutes >= 1440 ? "week" : "window")")
                 }
                 Spacer()
                 if showsReset {

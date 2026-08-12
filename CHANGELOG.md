@@ -22,11 +22,21 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   reset that had already happened, behind a percentage that had since gone 47% → 0%. The reset is
   also dropped whenever it lies in the past, whatever the reading's age.
 - **Tokens spent in the window, on the same line as the reset**, matching the Weekly row above
-  (`21.7M used this week`). Codex reports a percentage and never a count, so the statusline sums it
-  from Codex's own session rollouts and passes it through as a fifth field in the cache — the app
+  (`2M work used this week`). Codex reports a percentage and never a count, so the statusline sums
+  it from Codex's own session rollouts and passes it through as a fifth field in the cache — the app
   keeps reading one small file rather than scanning 22 MB of rollouts every 30 seconds. The count
   is optional: a four-field cache from an older statusline still renders the row without it, and a
   0 means "could not tell" and shows nothing rather than claiming a week of zero usage.
+- **That count excludes cache reads, which took subtracting them explicitly.** Codex reports tokens
+  the opposite way round from Anthropic — its `input_tokens` is gross, with `cached_input_tokens` a
+  *subset* of it — so the rollouts' `total_tokens` is `input + output` with cache **included**.
+  Measured over a real week that is **93.6% cache reads: 28.2M against a work-equivalent 2.0M**.
+  Left alone, a row sitting directly beneath the Claude weekly gauge (which prints work, cache
+  excluded) would have read 7× the Claude figure while actually being under half of it. The
+  statusline differences `input_tokens - cached_input_tokens + output_tokens` instead, and the row
+  spells "work" out literally rather than taking the basis label — this figure is always
+  cache-excluded, while the Claude rows follow the setting, so under `.total` the row above names a
+  different unit instead of inviting a comparison it can't support.
 - `CLAUDEPET_CODEX=<pct>[,<age>[,<tokens>]]` (or `none`) for the snapshot paths, so all four states
   are checkable headlessly.
 - **An age chip on the `/stats` "Total tokens" headline.** `+4d` when ClaudePet has extended the

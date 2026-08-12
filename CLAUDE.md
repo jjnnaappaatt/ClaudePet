@@ -277,6 +277,20 @@ time of day, on the developer's own live usage.
   token figure must route through `MetricsStore.tokens(work:total:)` and friends. Cost is always
   cache-inclusive and never routed through it.
 
+**Codex counts cache the opposite way round, and its row sits directly under the Claude gauges.**
+Codex's `input_tokens` is **gross** — `cached_input_tokens` is a *subset* of it — where Anthropic's
+excludes cache and reports `cache_read_input_tokens` separately. So the rollouts' `total_tokens` is
+exactly `input_tokens + output_tokens` (295 of 295 records over a real week, no exceptions) and is
+**cache-inclusive**: measured, 93.6% of it was cache reads, 28.2M against a work-equivalent 2.0M.
+Shipped as-is the row read **7× the Claude weekly figure while actually being under half of it**.
+`~/.claude/codex-week-tokens.py` therefore differences a derived cumulative,
+`input_tokens - cached_input_tokens + output_tokens`, and the fifth TSV field means work tokens. Two
+consequences: the app must **not** route that field through `TokenBasis` (it is already and always
+cache-excluded), and `CodexLimitBar` spells "work" out literally rather than using
+`tokenBasisLabel`, so that under `.total` the Claude row above names a different unit instead of
+inviting a comparison it can't support. The statusline and the app are coupled through that field's
+meaning — change one and the other mislabels silently.
+
 Also: `week` is the **fixed weekly-reset window** total (mirrors the Claude app, resets to zero at
 each boundary), and `weekDaily` is the **seven weekday slots of that window** — so the chart bars sum to `week`
 while staying real weekdays. A mid-day reset makes the window touch 8 calendar dates, so the
