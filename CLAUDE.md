@@ -752,3 +752,20 @@ A self-contained HTML mirror of the widget for claude.ai/design (`/design-sync` 
 first line is a `<!-- @dsCard group="..." -->` marker; each inlines the same `:root` tokens so it
 renders with zero external requests. It's generated output — the mascot SVGs come from the same
 pixel logic as `MascotArt.swift`, so changing the mascot means regenerating rather than hand-editing.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `jjnnaappaatt/ClaudePet`, driven through the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, unrenamed: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` and `docs/adr/` at the repo root, created lazily rather than
+scaffolded. See `docs/agents/domain.md`.
