@@ -15,13 +15,29 @@ import ClaudePetCore
 /// as Tuesday's total bar while being ~6× smaller — the comparison the eye makes is the one the chart
 /// invites. `SubagentShareChart` draws a different mark on a fixed 0…100% axis instead.
 struct WeeklyBarChart: View {
-    /// Let the bars grow into whatever height the container gives them. Off in the widget, where the
-    /// card is sized from its content and a fixed bar height is what keeps it compact; on in the
-    /// dashboard, where this chart shares a row with a taller card.
+    /// Let the bars grow into whatever height the container gives them, with no ceiling. On in the
+    /// dashboard, where this chart shares a row with a taller card; off in the widget, whose card is
+    /// sized from its own content. It also carries the dashboard's typography — see `header()`.
     var fillsHeight = false
+
+    /// How much taller than `barMax` the bars may grow when their column has height to spare, in
+    /// unscaled points (multiplied by `scale`, same convention as the pace bars' `barThickness`).
+    /// 0 = never.
+    ///
+    /// `landscapeStack`'s case, and it is neither of the other two: that card is sized from its
+    /// content, but its height is set by the OTHER column, so the slack exists whether or not this
+    /// chart wants it. Capped rather than free because the two columns' heights both swing with the
+    /// data (0–2 Codex rows, 1–5 model families), and an uncapped chart in the lopsided direction
+    /// would draw bars taller than the mascot.
+    var growth: CGFloat = 0
 
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
+
+    /// Height below the bars: the weekday letter and the gap above it. Same name and shape as
+    /// `SubagentShareChart.axisHeight`, which sits beside this chart in the dashboard and has to land
+    /// its own axis on the same baseline.
+    private var axisHeight: CGFloat { 11 * scale }
 
     private func value(_ d: DayTotal) -> Double {
         metrics.budgetUnit == .usd ? d.costUSD : Double(metrics.dayTokens(d))
@@ -53,14 +69,29 @@ struct WeeklyBarChart: View {
             // window's own total as a hero figure. Two chart cards sitting in one column looked
             // unbalanced when only one of them carried a number.
             header()
-            if fillsHeight {
+            if fillsHeight || growth > 0 {
+                // One branch for both growing modes; `maxHeight: nil` is what "no ceiling" means to
+                // `frame`, so the dashboard's call is unchanged by the widget gaining a cap.
                 GeometryReader { g in
                     bars(days, maxV: maxV, now: now,
-                         barArea: max(10, g.size.height - 11 * scale))
+                         barArea: max(10, g.size.height - axisHeight))
                 }
-                .frame(minHeight: barMax + 11 * scale)
+                .frame(minHeight: barMax + axisHeight,
+                       maxHeight: fillsHeight ? nil : barMax + growth * scale + axisHeight)
             } else {
+                // `.fixedSize` is a FIX, not a tidy-up. Each bar is `VStack { Spacer; bar; label }`
+                // and a `Spacer` is vertically unbounded, so this view was the only flexible child of
+                // `landscapeStack`'s left column — and a `VStack` hands its surplus to whatever is
+                // flexible. The whole column's slack (the right column is the taller one) landed here
+                // while `barArea` stayed pinned at `barMax`: the bars didn't grow into it, they were
+                // pushed DOWN it, leaving ~124pt of void between this header and its own bars.
+                //
+                // `.fixedSize` rather than `.frame(height: barMax + axisHeight)` because the weekday
+                // label is not 7pt — `\.minScaledFont` floors it at 10.5 in the widget and 12 in the
+                // dashboard, so a frame constant would have to guess a number the layout already
+                // knows. This measures it.
                 bars(days, maxV: maxV, now: now, barArea: barMax)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         // Same reason as the hour chart: the weekday letters were touching the card's bottom edge.

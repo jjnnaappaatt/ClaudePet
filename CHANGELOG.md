@@ -3,6 +3,23 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [Unreleased]
+
+### Fixed
+- **The landscape widget's "This week" chart no longer swallows the card's spare height.** In a
+  two-column `HStack` the taller column sets the height and SwiftUI proposes that height back to the
+  shorter one, where a `VStack` hands its surplus to whichever children are flexible. The left
+  column's only flexible child was this chart — each bar is `VStack { Spacer; bar; label }` and a
+  `Spacer` is vertically unbounded — while its `barArea` stayed pinned at `40 * scale`. So the bars
+  did not grow into the slack, they were pushed **down** it: 283px of void at scale 1.5, about a
+  third of the card, between the chart's header and its own bars. The hour chart below was spared
+  only because its bars carry no `Spacer`.
+- **The two left-column charts now absorb that slack as bar height instead**, split evenly and
+  capped at twice the base bar. Measured at scale 1.5 across four data shapes, the largest interior
+  gap in either column goes 283 → 67px (two Codex rows), 95 → 67, 82 → 67 and 140 → 89, with the
+  card's own height unchanged in every case but one, where it is 17px shorter. Scale-invariant:
+  identical results at 1.0, 1.5 and 2.0. The tall layout and the dashboard are untouched.
+
 ## [0.14.0] — 2026-08-12
 
 ### Added

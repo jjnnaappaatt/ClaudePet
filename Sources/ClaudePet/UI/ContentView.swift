@@ -68,15 +68,35 @@ struct ContentView: View {
         .environment(\.minScaledFont, 10.5)
     }
 
-    /// Wide two-column card: mascot/today + models + chart on the left, gauges + totals right.
+    /// Wide two-column card: mascot/today + the two charts on the left, gauges + models + totals
+    /// on the right.
+    ///
+    /// **The right column is the taller one, so it sets the card's height, and the left column is
+    /// handed that height whether it wants it or not.** A `VStack` gives its surplus to whichever
+    /// children are flexible, and the left column had exactly one: `WeeklyBarChart`'s bars, each
+    /// `VStack { Spacer; bar; label }`. Its `barArea` was fixed, so the bars didn't grow into the
+    /// slack, they were pushed DOWN it — 283px of void at scale 1.5, a third of the card, sitting
+    /// between that chart's header and its own bars. `growth` is what makes the two charts absorb it
+    /// as bar height instead, split evenly because they carry the same cap.
+    ///
+    /// **Today's per-model split stays in the right column, and that was measured rather than
+    /// assumed.** Moving it here reads better — it is the Today header's figure broken out, and
+    /// `frontend/widgets/landscape.html` draws it that way — and on a machine with two Codex rows it
+    /// is a clear win (card 48px shorter). But the model list is 1–5 rows and the Codex block is
+    /// 0–2, so on a machine with no Codex the move makes the LEFT column the taller one, and there
+    /// is nothing left in the right column to balance it back: measured, the card grew 87–204px and
+    /// opened a 273–528px hole under the billing lines. Leaving it put is never worse than the bug
+    /// it would have replaced.
     @ViewBuilder private func landscapeStack(scale: CGFloat) -> some View {
         HStack(alignment: .top, spacing: 12 * scale) {
             VStack(alignment: .leading, spacing: 9 * scale) {
                 header(scale: scale)
                 separator
-                WeeklyBarChart()
+                // The same cap on both is what splits the slack evenly: a `VStack` serves its least
+                // flexible children first, then divides what remains by the number still to serve.
+                WeeklyBarChart(growth: 40)
                 separator
-                TodayHourlyChart()
+                TodayHourlyChart(growth: 40)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
 

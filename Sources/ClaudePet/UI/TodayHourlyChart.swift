@@ -5,8 +5,15 @@ import ClaudePetCore
 /// Pairs with the day-level `WeeklyBarChart`; uses the selected gauge unit and highlights the
 /// current hour. All data is the already-scanned local `todayHourly` series (no token, no network).
 struct TodayHourlyChart: View {
-    /// Let the bars grow into whatever height the container gives them — see `WeeklyBarChart`.
+    /// Let the bars grow into whatever height the container gives them, with no ceiling — see
+    /// `WeeklyBarChart`.
     var fillsHeight = false
+
+    /// Capped growth for `landscapeStack`'s left column — see `WeeklyBarChart.growth`. Both charts in
+    /// that column are given the same cap, which is what makes a `VStack` split the column's slack
+    /// between them evenly: it serves its least flexible children first and then divides what is left
+    /// by the number remaining, so equal ranges get equal shares.
+    var growth: CGFloat = 0
 
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
@@ -37,12 +44,18 @@ struct TodayHourlyChart: View {
             // the caption clipped to "peak ~1…", which is worse than absent. Dropping it whole is the
             // right degradation — the peak hour is also readable off the bars themselves.
             header()
-            if fillsHeight {
+            if fillsHeight || growth > 0 {
+                // No axis allowance in this frame, unlike `WeeklyBarChart`'s: the 0…24 row below is a
+                // SIBLING of the bars here, not part of them.
                 GeometryReader { g in
                     bars(hours, maxV: maxV, currentHour: currentHour, barArea: max(8, g.size.height))
                 }
-                .frame(minHeight: barMax)
+                .frame(minHeight: barMax, maxHeight: fillsHeight ? nil : barMax + growth * scale)
             } else {
+                // No `.fixedSize` needed here, and that asymmetry with `WeeklyBarChart` is the whole
+                // reason the void was in that chart and not this one: these bars are bare
+                // `RoundedRectangle`s in a `.bottom`-aligned `HStack` with no `Spacer`, so nothing
+                // about them is vertically flexible.
                 bars(hours, maxV: maxV, currentHour: currentHour, barArea: barMax)
             }
             // 0…24, not 12a/6a/12p/6p. The bars are 24 hourly buckets, so a 24-hour axis maps onto
