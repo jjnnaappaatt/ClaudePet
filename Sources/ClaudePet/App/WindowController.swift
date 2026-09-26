@@ -35,9 +35,40 @@ final class WindowController {
     /// Default (0, 1) = top-left anchored (used for settings/slider changes). Resize
     /// handles pass the side OPPOSITE the grip so the window grows toward the drag.
     func fitToContent(anchorFracX: CGFloat = 0, anchorFracY: CGFloat = 1) {
+        pendingAnchor = (anchorFracX, anchorFracY)
+        applyFit(anchorFracX: anchorFracX, anchorFracY: anchorFracY)
+    }
+
+    /// The content's size changed underneath us (`FittingHostingView`) — the first scan landing, a
+    /// Codex row appearing, a grip's new scale propagating. Refit, keeping whatever anchor the last
+    /// explicit fit asked for.
+    ///
+    /// Why carry the anchor over: a grip's `fitToContent` runs synchronously, before SwiftUI has
+    /// propagated the new scale, so it reads the OLD size and the real growth arrives here a moment
+    /// later. Refitting that top-left would pin a side grip's drag (anchored on the vertical centre)
+    /// to the top instead. Consumed once, so a later scan-driven refit is top-left again.
+    ///
+    /// Side grips still don't hold their centre today, and not because of this: the `Settings`
+    /// scene builds `SettingsView` at launch, so its scale slider's `.onChange` → `persist()` →
+    /// `onConfigChange` → a default top-left `fitToContent()` fires on every grip event. Measured
+    /// identical with this refit switched off (centre moved either way). Pre-existing; when that
+    /// path is fixed, this hand-off is what keeps the refit from reintroducing the same drift.
+    func refitToContent() {
+        let a = pendingAnchor ?? (0, 1)
+        pendingAnchor = nil
+        applyFit(anchorFracX: a.x, anchorFracY: a.y)
+    }
+
+    private var pendingAnchor: (x: CGFloat, y: CGFloat)?
+
+    private func applyFit(anchorFracX: CGFloat, anchorFracY: CGFloat) {
         let size = content.fittingSize
         guard size.width > 1, size.height > 1 else { return }
         let old = panel.frame
+        // A no-op when nothing moved: most size invalidations don't change the size. Within a point
+        // because `fittingSize` is fractional and the frame lands on the backing-pixel grid (427.x
+        // against 428).
+        if abs(size.width - old.width) < 1, abs(size.height - old.height) < 1 { return }
         let anchorX = old.minX + anchorFracX * old.width
         let anchorY = old.minY + anchorFracY * old.height
         let newX = anchorX - anchorFracX * size.width

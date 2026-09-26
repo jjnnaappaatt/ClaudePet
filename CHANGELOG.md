@@ -6,6 +6,14 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **The widget panel now follows its content, and no longer launches clipped.** The panel was sized
+  to its SwiftUI content exactly once at launch — before the first scan — and then only on a
+  settings change or a resize drag. Measured on a fresh launch: fitted to 427pt of near-empty
+  content, grown by the scan to 611pt eight seconds later, and left at 427, clipping the header and
+  the footer with its buttons until something happened to refit it. Every launch had this; a
+  settings change or a drag usually masked it. `FittingHostingView` now refits whenever the
+  content's size is invalidated, whatever caused it. `CLAUDEPET_PANELFIT=1` checks it — the snapshot
+  path can't, because `ImageRenderer` draws the content at its own size and never asks the panel.
 - **The landscape widget's "This week" chart no longer swallows the card's spare height.** In a
   two-column `HStack` the taller column sets the height and SwiftUI proposes that height back to the
   shorter one, where a `VStack` hands its surplus to whichever children are flexible. The left

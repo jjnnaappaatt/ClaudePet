@@ -43,6 +43,12 @@ CLAUDEPET_NOLIVE=1 ...              # ignore the statusline + drop the calibrati
                                     # local-history budget estimate is what you're looking at
 ```
 
+**The snapshot path cannot see the widget panel's size.** `ImageRenderer` draws the content at its
+own ideal size and never asks the panel, so a panel stuck 184pt short of its content — header and
+footer clipped in the real app — rendered perfectly here. `CLAUDEPET_PANELFIT=1` runs the normal app
+flow, waits for the first scan, and prints `OK` or `FAIL: panel is Npt off its content`. Run it after
+anything that changes how the panel is sized or when the content's height changes.
+
 ```bash
 CLAUDEPET_DASHBOARD=/tmp/d.png ...                  # the dashboard window's view
 CLAUDEPET_DASHBOARD=/tmp/d.png CLAUDEPET_DASHSIZE=900x800 CLAUDEPET_REAL=1 ...   # at its minimum
