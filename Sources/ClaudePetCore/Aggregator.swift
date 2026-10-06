@@ -123,6 +123,8 @@ public enum Aggregator {
                                cycleWindow: (start: Date, end: Date)? = nil,
                                weekWindow: (start: Date, end: Date)? = nil) -> Aggregates {
         var agg = Aggregates()
+        // One resolver for the whole pass — see `PriceResolver` for why this was the hot spot.
+        let prices = PriceResolver(pricing, timeZone: calendar.timeZone)
 
         let startOfToday = calendar.startOfDay(for: now)
         // Rolling 7 calendar days incl. today — used for the day-by-day history chart.
@@ -255,8 +257,8 @@ public enum Aggregator {
             }
             let day = dayCacheStart
 
-            let cost = pricing.cost(for: e)
-            let weight = pricing.weight(for: e.family)
+            let cost = prices.cost(for: e)
+            let weight = prices.weight(for: e.family)
             agg.allTime.add(e, cost: cost, weight: weight)
 
             // Unconditional, exactly like `agg.allTime` above it — this series IS the lifetime one.

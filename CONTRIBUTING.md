@@ -13,7 +13,8 @@ them won't be merged regardless of how good the feature is.
    cache at `/tmp/claude/statusline-usage-cache.json`. It never reads your OAuth token, never
    calls an Anthropic API, and makes **no network requests** of any kind. If a feature needs data
    ClaudePet doesn't already have locally, it's out of scope — don't add a network call or read
-   the token to get it.
+   the token to get it. The one non-file read is the Mac's own temperature sensors (IOKit, for the
+   header's device readout) — still on-device, still no network.
 2. **Original art only.** The mascot is a code-drawn homage to Clawd (the Claude Code terminal
    mascot) — every pixel is generated in `MascotArt.swift`/`PixelMatrixRenderer.swift`, nothing is
    copied from Anthropic's actual assets. Keep it that way; don't bundle third-party art.

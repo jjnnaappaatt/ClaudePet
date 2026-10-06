@@ -39,6 +39,7 @@ CLAUDEPET_STATSAGE=6 ...            # re-date a COPY of ~/.claude/stats-cache.js
                                     # (try 200). Pair with CLAUDEPET_REAL=1 — it recomputes, which
                                     # wipes sample data. Never writes the real file.
 CLAUDEPET_HANDLES=1 ...             # force resize grips visible
+CLAUDEPET_DEVICE=88,serious,3 ...   # fake the header's device readout: "<°C|none>,<state>,<cpu%>"
 CLAUDEPET_NOLIVE=1 ...              # ignore the statusline + drop the calibration anchor, so the
                                     # local-history budget estimate is what you're looking at
 ```
@@ -78,7 +79,9 @@ From `CONTRIBUTING.md` — these are why the app is trustworthy, not style prefe
 
 1. **Local files only.** Reads `~/.claude/projects/**/*.jsonl`, `~/.claude.json`, and optionally
    `/tmp/claude/statusline-usage-cache.json`, `/tmp/claude/codex-usage-cache.tsv`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
-   request. A feature needing data that isn't already local is out of scope.
+   request. A feature needing data that isn't already local is out of scope. The one non-file read
+   is the Mac's temperature sensors (`DeviceMonitor`, private IOKit API via `dlsym`) — on-device,
+   and it degrades to `ProcessInfo.thermalState` if the symbols go away.
 2. **Original art only.** The mascot is code-drawn in `MascotArt.swift` / `PixelMatrixRenderer.swift`
    as an homage to Clawd. Don't bundle third-party art.
 
@@ -267,6 +270,37 @@ Equivalence was checked on real data, not just fixtures: 27,561 lines and 14,666
 against the old implementations with **0 mismatches** (and 0 falling back to the formatter), and the
 old and new binaries rendered **pixel-identical dashboards** apart from the burn-rate figure, whose
 denominator is elapsed wall clock.
+
+### CPU, second round — the steady state under heavy use
+
+The round above fixed the *parse*. The installed v0.14.0, 3.7 days up on a 5.8 GB corpus, still
+measured **101–107% of a core**: `sample` put it all in `refresh()` — every FSEvents burst started
+its own overlapping scan, each walked + stat'd every transcript, re-sorted and re-deduplicated all
+~130k entries (`merge`), then ran the full-history `recompute()` on the main actor, where
+`PricingTable.effectivePrice` re-parsed a date string through `Calendar` per entry. What replaced it,
+and the traps in each:
+
+- **`requestRefresh` / `refresh(changes:)`**: one scan at a time, chained in order, ≥2 s apart, a
+  burst coalesced into one. Order is now a correctness requirement, not a nicety — each delta is
+  relative to the result before it.
+- **`FileWatcher` passes paths; `scanChanges` stats only those.** FSEvents reports *resolved* paths
+  (`/private/var/…`), so `inRoot` maps both spellings and the cache is keyed by standardized path,
+  never `URL` — a miss makes an existing file look new and counts it twice. Directory create/move/
+  remove and dropped-event flags force a full walk; `tick()` walks every 5 min as the watchdog.
+- **`ScanDelta.appended` is merged in place** by `UsageScanner.mergeAppended`. That only works because
+  `lastEntries` is `@ObservationIgnored` (observed properties mutate through accessors that leave the
+  buffer shared → a silent 15 MB COW copy per scan) and the actor never retains the array it hands
+  out. Anything that removes or replaces a delivered entry — re-parse from zero, a dropped
+  `tailCount`, a deletion, a mode flip, a repeat *earlier* than the kept copy — must return `.full`.
+  `DeltaScanTests` churns randomly against cold scans; each of those guards was mutation-checked.
+- **`tick()` skips the recompute** unless `recomputeIsDue`: new entries, a side file's mtime, or
+  `nextRecomputeDeadline` (next hour, session end/expiry, week/cycle end, server resets, statusline
+  staleness). **A new clock-driven figure must add its boundary to `computeNextDeadline`**, or it
+  updates up to an hour late — the hourly floor bounds the damage, it doesn't remove it.
+- **`PriceResolver`: build one per loop.** `PricingTable.cost(for:)` still exists but builds a fresh
+  resolver per call — fine once, the old hot spot again inside a history loop.
+
+Cold scan is ~10 s now (`/usr/bin/time` on the snapshot path, 5.8 GB) — the corpus grew 2.5×, not the code.
 
 ### MetricsStore
 
@@ -464,9 +498,13 @@ out-of-order entry just misses and recomputes, so results are identical for any 
 ### Pricing
 
 `PricingTable` is user-editable and persisted. `defaultOverrides` handles version-specific rates
-(e.g. deprecated Opus 4.1 at $15/$75; Sonnet 5 introductory pricing through 2026-08-31). Restoring a
-table saved before a model family existed goes through `mergingMissingDefaults()` so new families
-get priced instead of silently counting as free. Costs are *notional* API-equivalent — the user is
+(Opus 4.1 $15/$75; Opus 5.5 $4/$20 with cache reads 0.05×; Fable/Mythos 5.1 cache reads 0.025×;
+Sonnet 5/5.5 $2/$10) and is **first-match-wins**, so a specific id goes before any id it contains.
+Cache-read multipliers matter more than headline rates — cache reads are ~97% of tokens.
+`mergingMissingDefaults()` adds new families *and* new overrides to a saved table, and swaps a saved
+override only if it equals an entry in `retiredDefaultOverrides` (our stale default, not a user edit).
+`throughDate` is read on a **Gregorian** calendar — on `Calendar.current` (Buddhist here) every dated
+override had lapsed in 1483, and the test helper shared the bug, so it passed. Costs are *notional* API-equivalent — the user is
 likely on a subscription.
 
 ### Mascot & weather

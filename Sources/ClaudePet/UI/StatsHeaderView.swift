@@ -55,12 +55,76 @@ struct StatsHeaderView: View {
                 }
                 .lineLimit(1)
                 .help(tokenCountHelp + "\n\n" + Self.cacheHelp)
+                HStack(spacing: 6 * scale) {
+                    Spacer(minLength: 0)
+                    temperature
+                    if DeviceMonitor.shared.reading?.celsius != nil {
+                        Text("·").scaledFont(10).foregroundStyle(Theme.textFaint)
+                    }
+                    pressureAndCPU
+                }
+                .help(Self.deviceHelp)
             } else {
-                workFigure.help(tokenCountHelp)
-                cacheFigure.help(Self.cacheHelp)
+                // The device readout fills the trailing side of these two rows — the space under
+                // the cost that sat empty, beside figures that are only ever left-aligned.
+                HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
+                    workFigure.help(tokenCountHelp)
+                    Spacer(minLength: 4 * scale)
+                    temperature.help(Self.deviceHelp)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
+                    cacheFigure.help(Self.cacheHelp)
+                    Spacer(minLength: 4 * scale)
+                    pressureAndCPU.help(Self.deviceHelp)
+                }
             }
         }
     }
+
+    // MARK: - Device readout
+
+    private var device: DeviceReading? { DeviceMonitor.shared.reading }
+
+    /// Nominal stays quiet; only a Mac under pressure earns colour, and the ramp mirrors the gauge
+    /// ramp's meaning — warm means "close to a limit". Never `.opacity` on a text token.
+    private func tint(_ p: ThermalPressure) -> Color {
+        switch p {
+        case .nominal: return Theme.textSecondary
+        case .fair: return Theme.highlight
+        case .serious: return Theme.claudeCoral
+        case .critical: return Theme.gaugeColor(1)
+        }
+    }
+
+    @ViewBuilder private var temperature: some View {
+        if let d = device, let c = d.celsius {
+            HStack(spacing: 2 * scale) {
+                Image(systemName: "thermometer.medium").scaledFont(9.5)
+                Text(Format.celsius(c)).scaledFont(10.5, weight: .semibold, design: .rounded)
+            }
+            .foregroundStyle(tint(d.pressure))
+            .lineLimit(1).fixedSize()
+        }
+    }
+
+    @ViewBuilder private var pressureAndCPU: some View {
+        if let d = device {
+            HStack(spacing: 4 * scale) {
+                Text(d.pressure.label).foregroundStyle(tint(d.pressure))
+                if let cpu = d.cpuPercent {
+                    Text("·").foregroundStyle(Theme.textFaint)
+                    Text(Format.cpu(cpu)).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .scaledFont(10)
+            .lineLimit(1).fixedSize()
+        }
+    }
+
+    private static let deviceHelp = "This Mac: the hottest SoC die sensor, macOS's thermal state "
+        + "(Nominal → Fair → Serious → Critical; above Nominal the system starts slowing down), and "
+        + "ClaudePet's own CPU use averaged over the last 15 seconds — 100% would be one full core. "
+        + "Read locally from the Mac's sensors; nothing leaves the machine."
 
     private var workFigure: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -81,5 +145,5 @@ struct StatsHeaderView: View {
         }
     }
 
-    private static let cacheHelp = "Cache tokens (reads + writes). Claude re-reads the cached conversation every turn, so this dwarfs 'work'. Cheap per token (reads 0.1×)."
+    private static let cacheHelp = "Cache tokens (reads + writes). Claude re-reads the cached conversation every turn, so this dwarfs 'work'. Cheap per token (reads cost 0.025–0.1× of input, depending on the model)."
 }

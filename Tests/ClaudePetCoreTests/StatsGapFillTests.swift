@@ -219,4 +219,34 @@ import Foundation
         #expect(s.statsFilledDays(now: now, calendar: buddhist) == 2)
         #expect(!s.statsIsDated(now: now, calendar: buddhist))
     }
+
+    /// The per-model rows used to be the cache alone while the headline above them was extended —
+    /// so on a cache 18 days stale the rows froze at that date and stopped adding up to the total
+    /// they sit under, which read as "the dashboard isn't updating". They are extended across the
+    /// same days now, and must sum to the headline exactly.
+    @MainActor
+    @Test func modelRowsAreExtendedAndSumToTheHeadline() throws {
+        // History reaching back to the cache's own last day (07-29, already counted there) — the
+        // condition for filling at all.
+        let gap = entries([(day(2026, 7, 29), 9_000_000), (day(2026, 7, 30), 1_000_000),
+                           (day(2026, 8, 1), 500_000)])
+        let other = [TestSupport.entry(at: day(2026, 8, 2), model: "claude-opus-5-5",
+                                       input: 100_000, output: 200_000)]
+        let s = try store(gap + other)
+        let now = day(2026, 8, 2)
+        let rows = s.statsModels(now: now, calendar: cal)
+        #expect(rows.reduce(0) { $0 + $1.workTokens } == s.statsTotalTokens(now: now, calendar: cal))
+        #expect(rows.first { $0.model == "claude-opus-4-8" }?.workTokens == Self.cacheWork + 1_500_000)
+        #expect(rows.first { $0.model == "claude-opus-5-5" }?.workTokens == 300_000)  // new since the cache
+        #expect(rows.map(\.workTokens) == rows.map(\.workTokens).sorted(by: >))
+    }
+
+    /// Same refusal as the headline: if our history can't reach back to the cache's last day, the
+    /// rows stay the cache's own rather than gaining a partial slice.
+    @MainActor
+    @Test func modelRowsAreNotExtendedWhenTheGapCantBeFilled() throws {
+        let s = try store(entries([(day(2026, 8, 5), 1_000_000)]))   // history starts after 07-29
+        let rows = s.statsModels(now: day(2026, 8, 6), calendar: cal)
+        #expect(rows.reduce(0) { $0 + $1.workTokens } == Self.cacheWork)
+    }
 }

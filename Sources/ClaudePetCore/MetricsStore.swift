@@ -130,6 +130,8 @@ public final class MetricsStore {
     /// `TestSupport.store(defaults:)` or it reads the developer's own usage and passes by machine.
     public var statsCachePath = StatsCacheReader.defaultPath
     public private(set) var statsCache: StatsCache?
+    /// Our own per-model usage over the days the cache hasn't folded in (see `statsModels`).
+    public private(set) var statsGapModels: [StatsModelTotal] = []
     public var extraUsageEnabled: Bool { account.extraUsageEnabled }
 
     /// Anchor for the fixed weekly-limit grid: the configured reset weekday + time of day,
@@ -154,7 +156,28 @@ public final class MetricsStore {
     private let scanner: UsageScanner
     private var watcher: FileWatcher?
     private var tick: Timer?                       // time-based recompute (rolls windows while idle)
-    private var lastEntries: [UsageEntry] = []
+    /// `@ObservationIgnored` so a scan delta can be merged in **in place**: an observed property is
+    /// mutated through accessors that leave the buffer non-uniquely referenced, and the append would
+    /// silently take a full copy of ~130k entries per scan. No view reads it — every figure it feeds
+    /// is published by `recompute()`.
+    @ObservationIgnored private var lastEntries: [UsageEntry] = []
+    /// False when `lastEntries` came from `ingestForTesting` rather than the scanner, so a delta
+    /// (which is relative to the scanner's last result) is never applied on top of foreign data.
+    @ObservationIgnored private var entriesFromScanner = false
+    /// Bumped whenever `lastEntries` changes; `tick()` compares it to skip idle recomputes.
+    public private(set) var entriesGeneration = 0
+    @ObservationIgnored private var generationAtLastRecompute = -1
+    // Refresh scheduling — see `requestRefresh`.
+    @ObservationIgnored private var refreshChain: Task<Void, Never>?
+    @ObservationIgnored private var pendingChanges: FileChanges?
+    @ObservationIgnored private var drainScheduled = false
+    @ObservationIgnored private var lastScanStartedAt = Date.distantPast
+    @ObservationIgnored private var lastFullWalkAt = Date.distantPast
+    /// Scans that actually ran (for tests: proves a burst of events coalesced).
+    @ObservationIgnored public private(set) var scansPerformed = 0
+    // Idle-tick skipping — see `tick()`.
+    @ObservationIgnored private var nextRecomputeDeadline = Date.distantPast
+    @ObservationIgnored private var sideFileStamp: [Date?] = []
     /// Which counting mode `lastEntries` was produced with, so a change can trigger a re-merge.
     private var lastScanCountedRepeats = false
     /// Only true once entries came from disk. Guards the auto re-merge below so a store fed by
@@ -190,6 +213,8 @@ public final class MetricsStore {
     /// Test hook: aggregate a fixed set of entries with the current config.
     public func ingestForTesting(_ entries: [UsageEntry]) {
         lastEntries = entries
+        entriesFromScanner = false
+        entriesGeneration += 1
         recompute()
     }
 
@@ -197,21 +222,20 @@ public final class MetricsStore {
 
     /// Initial refresh + live file watching for incremental updates.
     public func start() {
-        Task { await refresh() }
+        requestRefresh(.everything)
 
         let root = UsageScanner.defaultRoot.path
-        let w = FileWatcher(paths: [root]) { [weak self] in
-            Task { @MainActor in await self?.refresh() }
+        let w = FileWatcher(paths: [root]) { [weak self] changes in
+            Task { @MainActor in self?.requestRefresh(changes) }
         }
         w.start()
         watcher = w
 
         // The 5h session (and the day/week/cycle windows) reset on the clock, not on a file
         // write. Without this, an elapsed window keeps showing its old usage until the next
-        // token is logged. Re-aggregate the cached entries periodically so it rolls to empty
-        // on time. Cheap — no disk rescan; just re-sums lastEntries against a fresh `now`.
+        // token is logged. `tick()` decides whether anything is actually due.
         let t = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.recompute() }
+            Task { @MainActor in self?.tick() }
         }
         t.tolerance = 5
         tick = t
@@ -224,14 +248,122 @@ public final class MetricsStore {
         tick = nil
     }
 
+    /// Spacing between scans while Claude Code is writing. FSEvents fires on every transcript
+    /// write — several a second across parallel sessions and subagents — and each used to start
+    /// its own overlapping scan + full recompute, which is how an idle-looking widget held a core
+    /// at 100% for days. Two seconds late is invisible on a usage meter.
+    public static let minRefreshSpacing: TimeInterval = 2
+    /// How often to walk the whole tree regardless of events: the watchdog for a stalled or
+    /// dropped FSEvents stream, which would otherwise freeze every figure with no error anywhere.
+    public static let fullWalkInterval: TimeInterval = 300
+
+    /// Coalesce file events into at most one queued scan behind the one in flight.
+    public func requestRefresh(_ changes: FileChanges) {
+        pendingChanges = pendingChanges?.merged(with: changes) ?? changes
+        guard !drainScheduled else { return }
+        drainScheduled = true
+        Task { @MainActor in
+            let wait = lastScanStartedAt.addingTimeInterval(Self.minRefreshSpacing).timeIntervalSinceNow
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+            await refreshChain?.value          // events arriving meanwhile fold into this one
+            drainScheduled = false
+            guard let c = pendingChanges else { return }
+            pendingChanges = nil
+            await refresh(changes: c)
+        }
+    }
+
+    /// A full scan, awaited. Serialized with every other scan.
     public func refresh() async {
+        await refresh(changes: .everything)
+    }
+
+    /// Scans run strictly one at a time, in order. They used to overlap, and because each assigned
+    /// its result when it finished, a slower older scan could overwrite a newer one; with deltas,
+    /// order is also a correctness requirement — each delta is relative to the result before it.
+    func refresh(changes: FileChanges) async {
+        let previous = refreshChain
+        let task = Task { @MainActor in
+            await previous?.value
+            await self.performRefresh(changes)
+        }
+        refreshChain = task
+        await task.value
+    }
+
+    private func performRefresh(_ changes: FileChanges) async {
         isLoading = true
-        lastScanCountedRepeats = countRepeatedLogLines
+        defer { isLoading = false }
+        let started = Date()
+        lastScanStartedAt = started
+        if changes == .everything { lastFullWalkAt = started }
+        scansPerformed += 1
+        let countRepeats = countRepeatedLogLines
+        let delta = await scanner.scanChanges(deduplicated: !countRepeats, changes: changes)
+        lastScanCountedRepeats = countRepeats
         hasScannedFromDisk = true
-        lastEntries = await scanner.scan(deduplicated: !countRepeatedLogLines)
+        var released = false
+        switch delta {
+        case .unchanged where entriesFromScanner:
+            return                             // nothing new: no recompute, no allocation
+        case .appended(let batch) where entriesFromScanner:
+            UsageScanner.mergeAppended(batch, into: &lastEntries)
+        case .full(let all):
+            lastEntries = all
+            released = true
+        case .unchanged, .appended:
+            // `lastEntries` isn't the scanner's last result (a test ingested its own), so a delta
+            // has nothing valid to apply to. Re-merge from the parse cache; nothing is re-read.
+            lastEntries = await scanner.scan(deduplicated: !countRepeats)
+            released = true
+        }
+        entriesFromScanner = true
+        entriesGeneration += 1
         recompute()
-        isLoading = false
-        Self.returnFreedMemoryToTheOS()
+        if released { Self.returnFreedMemoryToTheOS() }
+    }
+
+    /// The 30s timer. Re-aggregating the whole history is the expensive part of the app, and on
+    /// an idle tick it almost always reproduced the figures already on screen — so it runs only
+    /// when something it reads could have changed: new entries, a clock boundary passing
+    /// (`nextRecomputeDeadline`), or one of the small side files being rewritten.
+    public func tick(now: Date = Date()) {
+        if hasScannedFromDisk, now.timeIntervalSince(lastFullWalkAt) >= Self.fullWalkInterval {
+            requestRefresh(.everything)        // recomputes itself when it lands
+        }
+        guard recomputeIsDue(now: now) else { return }
+        recompute(now: now)
+    }
+
+    func recomputeIsDue(now: Date) -> Bool {
+        entriesGeneration != generationAtLastRecompute
+            || now >= nextRecomputeDeadline
+            || sideFileStamps() != sideFileStamp
+    }
+
+    /// Modification dates of the files `recompute()` re-reads every pass.
+    private func sideFileStamps() -> [Date?] {
+        [statuslineCachePath, codexUsageCachePath, statsCachePath].map {
+            (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date
+        }
+    }
+
+    /// The earliest instant at which a figure could change with no new data: a day/hour rolling
+    /// over, the 5h session ending or expiring, a week or cycle resetting, a server window
+    /// resetting, or the statusline reading going stale. Capped at the next hour, so anything not
+    /// listed here is at most an hour late rather than wrong forever.
+    private func computeNextDeadline(now: Date) -> Date {
+        var candidates: [Date?] = [
+            Calendar.current.dateInterval(of: .hour, for: now)?.end,
+            activeBlock?.endsAt,
+            lastEntries.last.map { $0.timestamp.addingTimeInterval(FiveHourBlockEngine.blockDuration) },
+            weekReset, cycleReset,
+            serverUsage?.fiveHour?.resetsAt, serverUsage?.sevenDay?.resetsAt,
+            serverUsage.map { $0.asOf.addingTimeInterval(Self.serverDataMaxAge) },
+        ]
+        candidates += codexUsage.map { Optional($0.resetsAt) }
+        return candidates.compactMap { $0 }.filter { $0 > now }.min()
+            ?? now.addingTimeInterval(3600)
     }
 
     /// Hand the allocator's freed pages back to the OS after a scan.
@@ -260,13 +392,14 @@ public final class MetricsStore {
         lastScanCountedRepeats = countRepeatedLogLines
         hasScannedFromDisk = true
         lastEntries = UsageScanner.scanOnce(deduplicated: !countRepeatedLogLines)
+        entriesFromScanner = false              // not the actor's result; never delta onto it
+        entriesGeneration += 1
         recompute()
     }
 
     /// Re-aggregate the last-scanned entries with the current config (pricing,
     /// include-subagents). Cheap — no disk re-scan. Call after a settings change.
-    public func recompute() {
-        let now = Date()
+    public func recompute(now: Date = Date()) {
         let entries = includeSubagents ? lastEntries : lastEntries.filter { !$0.isSidechain }
         let cycleBounds: (start: Date, end: Date)
         if let day = billingCycleDayOverride {
@@ -311,9 +444,14 @@ public final class MetricsStore {
         // Cheap (22 KB) and it only changes when Claude Code recomputes, so a plain re-read per
         // recompute is fine — no need for the mtime/size cache `UsageScanner` needs for 100 MB files.
         statsCache = StatsCacheReader.read(path: statsCachePath)
+        statsGapModels = Self.perModel(entries, after: statsGapCutoff(calendar: .current), upTo: now,
+                                       calendar: .current)
         // Must run before the mood/weather edges below, which read the gauge fractions this moves.
         applyServerCalibration(now: now, entries: entries)
         lastUpdated = now
+        generationAtLastRecompute = entriesGeneration
+        nextRecomputeDeadline = computeNextDeadline(now: now)
+        sideFileStamp = sideFileStamps()
         detectWeatherEdges()
         onRecompute?()
     }
@@ -504,7 +642,7 @@ public final class MetricsStore {
         // Dedup happens during the scan's merge, not in `recompute`, so this one setting needs a
         // re-scan to take effect. It re-merges the per-file parse cache — no file is re-read.
         if hasScannedFromDisk, lastScanCountedRepeats != countRepeatedLogLines {
-            Task { await refresh() }
+            requestRefresh(.everything)
         }
         onConfigChange?()
     }
@@ -1075,9 +1213,10 @@ public final class MetricsStore {
     private func gaugeValues(from start: Date, to end: Date,
                              entries: [UsageEntry]) -> (weighted: Double, cost: Double) {
         var weighted = 0.0, cost = 0.0
+        let prices = PriceResolver(pricing)
         for e in entries where e.timestamp >= start && e.timestamp < end {
-            weighted += Double(e.workTokens) * (weightTokensByModel ? pricing.weight(for: e.family) : 1)
-            cost += pricing.cost(for: e)
+            weighted += Double(e.workTokens) * (weightTokensByModel ? prices.weight(for: e.family) : 1)
+            cost += prices.cost(for: e)
         }
         return (weighted, cost)
     }
@@ -1238,6 +1377,58 @@ public final class MetricsStore {
     /// what we hold would produce a total that is neither the cache's nor ours. That is a real state,
     /// not a defensive one: Claude Code deletes transcripts past `cleanupPeriodDays`, so a cache left
     /// un-recomputed for months outlives the local history it would need to be extended with.
+    /// Start of the first day the cache hasn't folded in, or nil when the gap can't be filled —
+    /// the same refusal rule as `statsGapDays`, from the same inputs.
+    private func statsGapCutoff(calendar: Calendar) -> Date? {
+        guard let c = statsCache, let lastCached = c.lastComputedDate(calendar: calendar),
+              let earliest = allTimeDaily.first?.date else { return nil }
+        let cutoff = calendar.startOfDay(for: lastCached)
+        guard earliest <= cutoff else { return nil }
+        return calendar.date(byAdding: .day, value: 1, to: cutoff)
+    }
+
+    /// Per-model totals over `[start, end of today)` — the same span and the same entries
+    /// `statsGapDays` sums, so the rows it extends add up to the extended headline exactly.
+    /// `entries` is sorted, so the span is found by binary search rather than a full-history pass.
+    static func perModel(_ entries: [UsageEntry], after start: Date?, upTo now: Date,
+                         calendar: Calendar) -> [StatsModelTotal] {
+        guard let start, let end = calendar.date(byAdding: .day, value: 1,
+                                                  to: calendar.startOfDay(for: now)) else { return [] }
+        var lo = 0, hi = entries.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if entries[mid].timestamp < start { lo = mid + 1 } else { hi = mid }
+        }
+        var sums: [String: (i: Int, o: Int, r: Int, w: Int)] = [:]
+        for e in entries[lo...] where e.timestamp < end {
+            var t = sums[e.model] ?? (0, 0, 0, 0)
+            t.i += e.inputTokens; t.o += e.outputTokens
+            t.r += e.cacheReadTokens; t.w += e.cacheWrite5mTokens + e.cacheWrite1hTokens
+            sums[e.model] = t
+        }
+        return sums.map { StatsModelTotal(model: $0.key, inputTokens: $0.value.i, outputTokens: $0.value.o,
+                                          cacheReadTokens: $0.value.r, cacheWriteTokens: $0.value.w) }
+    }
+
+    /// `/stats`' per-model rows, extended across the gap the same way `statsTotalTokens` is — so the
+    /// rows keep summing to the headline above them instead of freezing at the cache's date while
+    /// the headline moves. Heaviest first. The cache's rows unchanged when the gap can't be filled.
+    public func statsModels(now: Date = Date(), calendar: Calendar = .current) -> [StatsModelTotal] {
+        guard let c = statsCache else { return [] }
+        guard statsGapDays(now: now, calendar: calendar) != nil, !statsGapModels.isEmpty else { return c.models }
+        var byID = Dictionary(uniqueKeysWithValues: c.models.map { ($0.model, $0) })
+        for g in statsGapModels where g.workTokens > 0 {
+            let base = byID[g.model]
+            byID[g.model] = StatsModelTotal(
+                model: g.model,
+                inputTokens: (base?.inputTokens ?? 0) + g.inputTokens,
+                outputTokens: (base?.outputTokens ?? 0) + g.outputTokens,
+                cacheReadTokens: (base?.cacheReadTokens ?? 0) + g.cacheReadTokens,
+                cacheWriteTokens: (base?.cacheWriteTokens ?? 0) + g.cacheWriteTokens)
+        }
+        return byID.values.sorted { ($0.workTokens, $0.model) > ($1.workTokens, $1.model) }
+    }
+
     private func statsGapDays(now: Date, calendar: Calendar) -> [DayTotal]? {
         guard let c = statsCache, let lastCached = c.lastComputedDate(calendar: calendar),
               let earliest = allTimeDaily.first?.date else { return nil }
@@ -1272,6 +1463,13 @@ public final class MetricsStore {
     /// already current, and zero when the gap couldn't be filled — `statsIsDated` separates those.
     public func statsFilledDays(now: Date = Date(), calendar: Calendar = .current) -> Int {
         statsGapDays(now: now, calendar: calendar)?.count ?? 0
+    }
+
+    /// True when the cache itself stops before today — whether or not the headline could be filled.
+    /// The figures that are never extended (sessions, messages, …) are behind in either case.
+    public func statsCacheLags(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let c = statsCache else { return false }
+        return !c.covers(now, calendar: calendar) && (statsGapDays(now: now, calendar: calendar)?.isEmpty != true)
     }
 
     /// True when the headline stops at the cache's date instead of reaching today.

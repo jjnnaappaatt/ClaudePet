@@ -29,9 +29,11 @@ struct StatsModelBreakdownView: View {
     ]
 
     var body: some View {
-        if let cache = metrics.statsCache, let total = metrics.statsTotalTokens() {
-            let shown = Array(cache.models.prefix(Self.maxModels))
-            let rest = cache.models.dropFirst(Self.maxModels)
+        if metrics.statsCache != nil, let total = metrics.statsTotalTokens() {
+            // Extended across the gap like the headline, so the rows keep adding up to it.
+            let models = metrics.statsModels()
+            let shown = Array(models.prefix(Self.maxModels))
+            let rest = models.dropFirst(Self.maxModels)
             // Chunk into pairs so the grid stays a plain VStack of HStacks — `LazyVGrid` would give the
             // same picture, but lazy containers are the family that renders blank through
             // `ImageRenderer`, and this view has to stay snapshot-verifiable.
@@ -54,7 +56,7 @@ struct StatsModelBreakdownView: View {
                         .lineLimit(1).fixedSize()
                     ageChip(dated: dated, filled: filled)
                     Spacer(minLength: 4 * scale)
-                    Text(Format.tokens(total))
+                    Text(Format.tokensPrecise(total))
                         .scaledFont(21, weight: .bold, design: .rounded)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).fixedSize()
@@ -64,7 +66,7 @@ struct StatsModelBreakdownView: View {
                 ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                     HStack(alignment: .top, spacing: 14 * scale) {
                         ForEach(pair) { m in
-                            modelRow(m, share: cache.share(m))
+                            modelRow(m, share: total > 0 ? Double(m.workTokens) / Double(total) : 0)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         // Keeps a lone final model in the left column instead of letting it stretch
@@ -93,8 +95,7 @@ struct StatsModelBreakdownView: View {
     ///
     /// Two states, because they need opposite reactions. `to 4 Aug` means the figure genuinely stops
     /// there and only running `/stats` will move it; `+2d` means ClaudePet closed the gap itself, and
-    /// is also the standing explanation for why the headline no longer equals the model rows below it
-    /// (those are pure cache — only the total is extended).
+    /// covers the model rows below it too, which are extended across the same days.
     @ViewBuilder private func ageChip(dated: Bool, filled: Int) -> some View {
         if dated, let asOf = metrics.statsAsOfDescription {
             Text("to \(asOf)")
@@ -148,7 +149,7 @@ struct StatsModelBreakdownView: View {
             gap = " The \(filled == 1 ? "day" : "\(filled) days") since then \(filled == 1 ? "is" : "are") "
                 + "added from ClaudePet's own count, which uses different accounting — measured on one "
                 + "full day the two ran within about ±7% of each other, so treat that slice as "
-                + "approximate. The per-model rows below are the cache alone and stop at that date."
+                + "approximate. The per-model rows below are extended across the same days."
         } else {
             gap = " Nothing has been logged since, so the figure is current."
         }

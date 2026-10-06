@@ -55,6 +55,7 @@ public enum FiveHourBlockEngine {
                                      now: Date = Date(),
                                      resetOffset: TimeInterval = 0) -> UsageBlock? {
         guard !entries.isEmpty else { return nil }
+        let prices = PriceResolver(pricing)
         let sorted = timeOrdered(entries)
 
         // Anchor = first message after the most recent >=5h gap, shifted by the user's
@@ -84,8 +85,8 @@ public enum FiveHourBlockEngine {
             if first == nil { first = e.timestamp }
             work += e.workTokens
             total += e.totalTokens
-            cost += pricing.cost(for: e)
-            weighted += Double(e.workTokens) * pricing.weight(for: e.family)
+            cost += prices.cost(for: e)
+            weighted += Double(e.workTokens) * prices.weight(for: e.family)
             if e.isSidechain {
                 sideWork += e.workTokens
                 sideTotal += e.totalTokens
@@ -108,6 +109,7 @@ public enum FiveHourBlockEngine {
                                      now: Date = Date(), resetOffset: TimeInterval = 0)
         -> (work: Int, weighted: Double, cost: Double) {
         guard !entries.isEmpty else { return (0, 0, 0) }
+        let prices = PriceResolver(pricing)
         let sorted = timeOrdered(entries)
 
         struct Cell { var work = 0; var weighted = 0.0; var cost = 0.0; var end = Date.distantPast }
@@ -123,8 +125,8 @@ public enum FiveHourBlockEngine {
             let start = anchor.addingTimeInterval(max(0, steps) * blockDuration)
             var c = cells[start] ?? Cell()
             c.work += e.workTokens
-            c.weighted += Double(e.workTokens) * pricing.weight(for: e.family)
-            c.cost += pricing.cost(for: e)
+            c.weighted += Double(e.workTokens) * prices.weight(for: e.family)
+            c.cost += prices.cost(for: e)
             c.end = start.addingTimeInterval(blockDuration)
             cells[start] = c
         }

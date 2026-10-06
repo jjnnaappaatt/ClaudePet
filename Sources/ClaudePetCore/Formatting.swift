@@ -13,6 +13,24 @@ public enum Format {
         }
     }
 
+    /// Like `tokens`, but two decimals at M and B: "123.14M". For the dashboard's lifetime figures,
+    /// which are large and grow slowly — at one decimal a 123M project row moves once per 100k
+    /// tokens, so a figure that is updating correctly sat unchanged for hours and read as frozen.
+    public static func tokensPrecise(_ n: Int) -> String {
+        let v = Double(n)
+        switch abs(n) {
+        case 1_000_000_000...: return String(format: "%.2f", v / 1_000_000_000) + "B"
+        case 1_000_000...:     return String(format: "%.2f", v / 1_000_000) + "M"
+        default:               return tokens(n)
+        }
+    }
+
+    /// Whole dollars from $100 up, never abbreviated: "$21,138". Same reason as `tokensPrecise` —
+    /// `currency` prints "$21.1k", which only moves in $100 steps.
+    public static func currencyWhole(_ usd: Double) -> String {
+        usd >= 100 ? "$" + grouped(usd) : currency(usd)
+    }
+
     /// $0.06, $4.21, $402, $1,001, $12.5k
     ///
     /// Abbreviation starts at $10k, not $1k. At the old threshold `$1,001` printed as "$1k" — three

@@ -1,5 +1,34 @@
 import Foundation
 
+/// What changed on disk since the last scan, as reported by `FileWatcher`.
+public enum FileChanges: Sendable, Equatable {
+    /// Walk the whole tree — first scan, dropped events, a directory created/moved/removed, or
+    /// the periodic safety rescan.
+    case everything
+    /// Just these files (absolute paths, as FSEvents spells them). Non-`.jsonl` paths are ignored.
+    case paths(Set<String>)
+
+    public func merged(with other: FileChanges) -> FileChanges {
+        switch (self, other) {
+        case let (.paths(a), .paths(b)): return .paths(a.union(b))
+        default: return .everything
+        }
+    }
+}
+
+/// The result of `UsageScanner.scanChanges`, relative to the previous result it delivered.
+public enum ScanDelta: Sendable {
+    /// Nothing that affects the merged entries.
+    case unchanged
+    /// New entries only, sorted by timestamp and already deduplicated against everything delivered
+    /// before. They may interleave with the tail of the previous result (two sessions writing at
+    /// once), so the caller merges them in rather than appending blindly — see
+    /// `UsageScanner.mergeAppended(_:into:)`.
+    case appended([UsageEntry])
+    /// The complete merged history; discard what you had.
+    case full([UsageEntry])
+}
+
 /// Scans `~/.claude/projects/**/*.jsonl` (including `subagents/agent-*.jsonl`) and
 /// returns the globally-deduplicated usage entries. Caches per-file results keyed by
 /// (mtime, size) so re-scans only re-parse changed files.
@@ -22,7 +51,23 @@ public actor UsageScanner {
         let tailCount: Int
         let entries: [UsageEntry]
     }
-    private var cache: [URL: CachedFile] = [:]
+    /// Keyed by standardized **path**, not `URL`: a path from an FSEvents callback and a URL from
+    /// the directory enumerator must land on the same key, and `URL` equality compares spellings.
+    private var cache: [String: CachedFile] = [:]
+
+    // State of the last result handed out, so the next one can be a delta against it.
+    //
+    // **This is why a busy session no longer costs a full sort per write.** Every scan used to
+    // concatenate all ~130k cached entries, sort them and rebuild the dedup set, to absorb the
+    // handful of lines one append added — `UsageScanner.merge` was the single largest block of
+    // samples in a live profile of the widget pinned at 100% of a core. The key set costs ~4 MB
+    // resident (16-byte keys, power-of-two capacity); it used to be built and dropped every scan.
+    /// `deduplicated` flag of the last delivered result; nil until one has been delivered.
+    private var baseMode: Bool?
+    /// Keys of every entry in the last delivered result (dedup mode only).
+    private var baseKeys = Set<MessageKey>()
+    /// Latest timestamp in the last delivered result.
+    private var baseLast = Date.distantPast
 
     /// Kept on the actor rather than per-scan, **because entries now outlive the scan that parsed
     /// them.** Its doc comment used to say the opposite, and that was right while every changed file
@@ -52,16 +97,81 @@ public actor UsageScanner {
     /// `deduplicated: false` keeps every logged line instead, which reproduces Claude Code's
     /// `/stats` counting. Only the merge step changes — the per-file parse cache is shared — so
     /// flipping the mode costs a re-merge, never a re-read.
+    ///
+    /// Always walks the whole tree and returns the full merge; `scanChanges` is the live path.
     public func scan(deduplicated: Bool = true) -> [UsageEntry] {
-        let files = Self.jsonlFiles(under: root)
-        var present = Set<URL>()
+        _ = update(Self.jsonlFiles(under: root).map(Self.key), walkedAll: true)
+        return fullMerge(deduplicated: deduplicated)
+    }
+
+    /// The live path: look only at `changes`, and answer with a delta against the previous result
+    /// whenever the change was purely additive.
+    ///
+    /// Falls back to `.full` whenever entries the caller already holds could be wrong — a file
+    /// re-parsed from the start, a dropped partial line, a deleted file, a mode flip, or a repeat of
+    /// an already-delivered message that is *earlier* than the one delivered (earliest wins, so it
+    /// would have to replace it). Each of those is rare; the common case, lines appended to live
+    /// transcripts, is answered without touching the other ~130k entries.
+    public func scanChanges(deduplicated: Bool, changes: FileChanges) -> ScanDelta {
+        let (fresh, invalidated): ([UsageEntry], Bool)
+        switch changes {
+        case .everything:
+            (fresh, invalidated) = update(Self.jsonlFiles(under: root).map(Self.key), walkedAll: true)
+        case .paths(let paths):
+            (fresh, invalidated) = update(paths.compactMap(inRoot), walkedAll: false)
+        }
+        if invalidated || baseMode != deduplicated {
+            return .full(fullMerge(deduplicated: deduplicated))
+        }
+        guard !fresh.isEmpty else { return .unchanged }
+        var batch = fresh
+        batch.sort { $0.timestamp < $1.timestamp }
+        if deduplicated {
+            var kept: [UsageEntry] = []
+            kept.reserveCapacity(batch.count)
+            for e in batch {
+                if baseKeys.insert(e.messageID).inserted { kept.append(e); continue }
+                // A repeat. Dropping it is right iff the copy already kept is no later — true when
+                // this one is at or past everything delivered. Otherwise re-merge rather than guess.
+                if e.timestamp < baseLast { return .full(fullMerge(deduplicated: deduplicated)) }
+            }
+            batch = kept
+        }
+        guard let last = batch.last else { return .unchanged }
+        baseLast = max(baseLast, last.timestamp)
+        return .appended(batch)
+    }
+
+    /// The full merge of everything cached, recorded as the new base for deltas.
+    private func fullMerge(deduplicated: Bool) -> [UsageEntry] {
+        let merged = Self.merge(Self.concatenated(cache.values), deduplicated: deduplicated,
+                                keys: &baseKeys)
+        baseMode = deduplicated
+        baseLast = merged.last?.timestamp ?? .distantPast
+        return merged
+    }
+
+    /// Bring the parse cache up to date for `paths`. Returns the entries that are new since the
+    /// last call, and whether anything already handed out was removed or replaced (which a delta
+    /// can't express).
+    private func update(_ paths: [String], walkedAll: Bool) -> (fresh: [UsageEntry], invalidated: Bool) {
+        var present = Set<String>()
+        var fresh: [UsageEntry] = []
+        var invalidated = false
         lastScanFullParses = 0
         lastScanTailParses = 0
 
-        for url in files {
-            present.insert(url)
-            let (mtime, size) = Self.stat(url)
-            if let hit = cache[url], hit.mtime == mtime, hit.size == size { continue }
+        for path in paths {
+            if walkedAll { present.insert(path) }
+            let url = URL(fileURLWithPath: path)
+            guard let (mtime, size) = Self.stat(url) else {
+                // Named by an event but gone: deleted or renamed away. A file the walk just listed
+                // that fails to stat is a transient error — keep its parse, as `present` does.
+                if !walkedAll, !FileManager.default.fileExists(atPath: path),
+                   cache.removeValue(forKey: path) != nil { invalidated = true }
+                continue
+            }
+            if let hit = cache[path], hit.mtime == mtime, hit.size == size { continue }
             let dir = Self.projectDir(of: url, under: root)
 
             // The file only grew and the bytes we stopped at are untouched: parse just the tail.
@@ -79,7 +189,7 @@ public actor UsageScanner {
             // `parsedUpTo` cannot produce a fingerprint there (the read comes up short and returns
             // nil). It survives only to skip opening the file at all in the shrink case. The
             // fingerprint is what makes this safe — do not let this line take the credit for it.
-            if let hit = cache.removeValue(forKey: url) {
+            if let hit = cache.removeValue(forKey: path) {
                 if size >= hit.size, hit.parsedUpTo > 0,
                    let fingerprint = Self.boundaryHash(of: url, endingAt: hit.parsedUpTo),
                    fingerprint == hit.boundaryHash,
@@ -90,9 +200,13 @@ public actor UsageScanner {
                     // `hit` was removed from the dictionary above, so this array is uniquely
                     // referenced and the append is in place rather than a copy of the whole file.
                     var entries = hit.entries
-                    if hit.tailCount > 0 { entries.removeLast(min(hit.tailCount, entries.count)) }
+                    if hit.tailCount > 0 {
+                        entries.removeLast(min(hit.tailCount, entries.count))
+                        invalidated = true      // those entries were already handed out
+                    }
                     entries.append(contentsOf: tail.entries)
-                    cache[url] = CachedFile(
+                    fresh.append(contentsOf: tail.entries)
+                    cache[path] = CachedFile(
                         mtime: mtime, size: size, parsedUpTo: tail.parsedUpTo,
                         boundaryHash: Self.boundaryHash(of: url, endingAt: tail.parsedUpTo) ?? 0,
                         tailCount: tail.tailCount, entries: entries)
@@ -100,7 +214,7 @@ public actor UsageScanner {
                     continue
                 }
                 // Fell through: put the old parse back so a failed read below can't lose it.
-                cache[url] = hit
+                cache[path] = hit
             }
 
             // Drain the parse temporaries per file so a big rescan doesn't balloon the peak.
@@ -108,24 +222,68 @@ public actor UsageScanner {
             // A read failure must NOT be cached. The key is (mtime, size), and a completed
             // subagent transcript is write-once — its key never changes again, so a cached `[]`
             // would zero that file for the life of the process, silently and unrecoverably.
-            // `present` already holds this URL (inserted above), so skipping here leaves any
+            // `present` already holds this path (inserted above), so skipping here leaves any
             // prior good parse intact and un-evicted; the next scan retries the read.
             // (Explicit `invoking:` label — a trailing closure here would be parsed as the
             // guard's else-body.)
             guard let parsed = autoreleasepool(invoking: {
                 try? JSONLParser.parse(fileAt: url, from: 0, projectDir: dir, interner: interner)
             }) else { continue }
-            cache[url] = CachedFile(
+            // A re-parse from zero replaces entries already handed out; a new file only adds.
+            if cache[path] != nil { invalidated = true } else { fresh.append(contentsOf: parsed.entries) }
+            cache[path] = CachedFile(
                 mtime: mtime, size: size, parsedUpTo: parsed.parsedUpTo,
                 boundaryHash: Self.boundaryHash(of: url, endingAt: parsed.parsedUpTo) ?? 0,
                 tailCount: parsed.tailCount, entries: parsed.entries)
             lastScanFullParses += 1
         }
         // Forget files that disappeared.
-        for url in cache.keys where !present.contains(url) { cache[url] = nil }
-
-        return Self.merge(Self.concatenated(cache.values), deduplicated: deduplicated)
+        if walkedAll {
+            for path in cache.keys where !present.contains(path) {
+                cache[path] = nil
+                invalidated = true
+            }
+        }
+        return (fresh, invalidated)
     }
+
+    /// Merge an `.appended` batch into the caller's sorted array, **in place**.
+    ///
+    /// The batch is usually entirely later than `entries.last`, so this is an append. When two
+    /// sessions write at once it can reach back a few entries; only that suffix is re-sorted. The
+    /// array must be uniquely referenced by the caller for this to be in place — `MetricsStore`
+    /// owns `lastEntries` and the actor keeps no copy, which is what lets a delta avoid the full
+    /// copy-on-write copy `AllocationTests` exists to catch.
+    public static func mergeAppended(_ batch: [UsageEntry], into entries: inout [UsageEntry]) {
+        guard let first = batch.first else { return }
+        var lo = entries.startIndex, hi = entries.endIndex      // first index with timestamp > first
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if entries[mid].timestamp <= first.timestamp { lo = mid + 1 } else { hi = mid }
+        }
+        let needsSort = lo < entries.endIndex
+        entries.append(contentsOf: batch)
+        if needsSort { entries[lo...].sort { $0.timestamp < $1.timestamp } }
+    }
+
+    /// Map an FSEvents path onto the cache's key space, or nil if it isn't a transcript under the
+    /// root. Mirrors `jsonlFiles`: `.jsonl` only, and nothing under a hidden component (the
+    /// enumerator runs with `.skipsHiddenFiles`). FSEvents reports *resolved* paths, so a root
+    /// reached through a symlink (`/var` → `/private/var`) is matched in both spellings — a miss
+    /// here would make an existing file look new and count it twice.
+    private func inRoot(_ path: String) -> String? {
+        guard path.hasSuffix(".jsonl") else { return nil }
+        let rootPath = Self.key(root)
+        let resolved = root.resolvingSymlinksInPath().standardizedFileURL.path
+        let rel: Substring
+        if path.hasPrefix(rootPath + "/") { rel = path.dropFirst(rootPath.count + 1) }
+        else if path.hasPrefix(resolved + "/") { rel = path.dropFirst(resolved.count + 1) }
+        else { return nil }
+        if rel.split(separator: "/").contains(where: { $0.hasPrefix(".") }) { return nil }
+        return rootPath + "/" + rel
+    }
+
+    static func key(_ url: URL) -> String { url.standardizedFileURL.path }
 
     // MARK: - One-shot (no cache) — used for synchronous snapshot rendering.
 
@@ -176,13 +334,21 @@ public actor UsageScanner {
     /// `consuming` transfers ownership so the buffer is uniquely referenced and the sort is genuinely
     /// in place.
     static func merge(_ entries: consuming [UsageEntry], deduplicated: Bool = true) -> [UsageEntry] {
+        var discarded = Set<MessageKey>()
+        return merge(entries, deduplicated: deduplicated, keys: &discarded)
+    }
+
+    /// `keys` receives the dedup set (emptied in non-dedup mode), so the scanner can keep it as the
+    /// base for later deltas instead of rebuilding it.
+    static func merge(_ entries: consuming [UsageEntry], deduplicated: Bool,
+                      keys seen: inout Set<MessageKey>) -> [UsageEntry] {
         var sorted = consume entries
         sorted.sort { $0.timestamp < $1.timestamp }
+        seen.removeAll()
         guard deduplicated else { return sorted }
         // In place, not `filter`. `Deduplicator.deduplicated` returns a NEW array, so at the moment
         // it returned there were two full copies live; `removeAll(where:)` compacts the one we
         // already own. Same earliest-wins semantics — `removeAll(where:)` visits in order.
-        var seen = Set<MessageKey>()
         seen.reserveCapacity(sorted.count)
         sorted.removeAll { !seen.insert($0.messageID).inserted }
         return sorted
@@ -239,8 +405,11 @@ public actor UsageScanner {
         return hash
     }
 
-    static func stat(_ url: URL) -> (Date, Int) {
-        let v = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-        return (v?.contentModificationDate ?? .distantPast, v?.fileSize ?? 0)
+    /// nil when the file doesn't exist (or can't be stat'd) — an FSEvents path can name a file that
+    /// has since been deleted, which a directory walk never could.
+    static func stat(_ url: URL) -> (Date, Int)? {
+        guard let v = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let mtime = v.contentModificationDate else { return nil }
+        return (mtime, v.fileSize ?? 0)
     }
 }
