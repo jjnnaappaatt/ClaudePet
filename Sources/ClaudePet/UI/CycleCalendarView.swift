@@ -120,18 +120,34 @@ struct CycleCalendarView: View {
     /// and height is what the grid is short of, because square cells are sized by it. Letting the
     /// *words* wrap instead spends the one thing this header has spare — the title's own line — and
     /// puts the figure where the eye already looks for a card's headline number.
+    ///
+    /// **Only whole words wrap.** The title used to be free to wrap anywhere, and when the figure grew
+    /// from "6M" to "8.9M" the column left for it fell under the width of "Billing", so SwiftUI broke the
+    /// word itself — "Billi / ng / cyc / le" — and the extra lines took height from the grid, which
+    /// shrank the weekday letters to "…". Now each step drops a whole element instead, most dispensable
+    /// first: the title onto two lines, then the date range, then the basis label, and only then does
+    /// the figure itself shrink.
     private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            headerRow(title: "Billing cycle", showsDates: true, showsBasis: true)
+            headerRow(title: "Billing\ncycle", showsDates: true, showsBasis: true)
+            headerRow(title: "Billing\ncycle", showsDates: false, showsBasis: true)
+            headerRow(title: "Billing\ncycle", showsDates: false, showsBasis: false)
+        }
+    }
+
+    private func headerRow(title: String, showsDates: Bool, showsBasis: Bool) -> some View {
         HStack(alignment: .center, spacing: 8 * scale) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Billing cycle")
+                Text(title)
                     .scaledFont(15, weight: .semibold)
                     .foregroundStyle(Theme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)   // wrap rather than truncate
-                if let start = metrics.cycleStart, let end = metrics.cycleReset {
+                    .fixedSize()
+                if showsDates, let start = metrics.cycleStart, let end = metrics.cycleReset {
                     Text(start.formatted(.dateTime.month(.abbreviated).day())
                          + " – " + end.formatted(.dateTime.month(.abbreviated).day()))
                         .scaledFont(9).foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1).minimumScaleFactor(0.8)
+                        .fixedSize()
                 }
             }
             Spacer(minLength: 0)
@@ -143,8 +159,12 @@ struct CycleCalendarView: View {
                             : Double(metrics.totalsTokens(metrics.cycle))))
                     .scaledFont(26, weight: .bold, design: .rounded)
                     .foregroundStyle(Theme.textPrimary)
-                    .fixedSize()
-                if metrics.budgetUnit == .tokens {
+                    .lineLimit(1)
+                    // Fixed in every variant but the last, so `ViewThatFits` measures its real width;
+                    // the last is the fallback and may shrink rather than clip.
+                    .minimumScaleFactor(showsBasis ? 1 : 0.6)
+                    .fixedSize(horizontal: showsBasis, vertical: false)
+                if showsBasis, metrics.budgetUnit == .tokens {
                     Text(metrics.tokenBasisLabel)
                         .scaledFont(9).foregroundStyle(Theme.textTertiary).fixedSize()
                 }

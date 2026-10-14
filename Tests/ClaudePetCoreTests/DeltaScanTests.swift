@@ -17,13 +17,13 @@ import Foundation
         return dir
     }
 
-    private func line(_ id: String, at seconds: Int, input: Int = 10) -> String {
+    private func line(_ id: String, at seconds: Int, input: Int = 10, output: Int = 5) -> String {
         let ts = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_790_000_000 + Double(seconds)))
             .replacingOccurrences(of: "Z", with: ".000Z")
         return """
         {"type":"assistant","timestamp":"\(ts)","cwd":"/tmp/p","isSidechain":false,\
         "message":{"id":"\(id)","model":"claude-opus-4-8",\
-        "usage":{"input_tokens":\(input),"output_tokens":5}}}
+        "usage":{"input_tokens":\(input),"output_tokens":\(output)}}}
         """
     }
 
@@ -44,16 +44,16 @@ import Foundation
         return root.resolvingSymlinksInPath().path + rel
     }
 
-    private struct Row: Hashable { let id: MessageKey; let t: Date; let input: Int }
+    private struct Row: Hashable { let id: MessageKey; let t: Date; let input: Int; let output: Int }
     private func rows(_ e: [UsageEntry]) -> [Row] {
-        e.map { Row(id: $0.messageID, t: $0.timestamp, input: $0.inputTokens) }
-            .sorted { ($0.t, $0.input, $0.id.hashValue) < ($1.t, $1.input, $1.id.hashValue) }
+        e.map { Row(id: $0.messageID, t: $0.timestamp, input: $0.inputTokens, output: $0.outputTokens) }
+            .sorted { ($0.t, $0.input, $0.output, $0.id.hashValue) < ($1.t, $1.input, $1.output, $1.id.hashValue) }
     }
 
     private func apply(_ d: ScanDelta, to held: inout [UsageEntry]) {
         switch d {
         case .unchanged: break
-        case .appended(let batch): UsageScanner.mergeAppended(batch, into: &held)
+        case .appended(let batch, let repeats): UsageScanner.mergeAppended(batch, repeats: repeats, into: &held)
         case .full(let all): held = all
         }
     }
@@ -69,8 +69,9 @@ import Foundation
 
         try append(line("c", at: 20) + "\n" + line("a", at: 21) + "\n", to: f)   // one new, one repeat
         let d = await scanner.scanChanges(deduplicated: true, changes: .paths([eventPath(f, root: root)]))
-        guard case .appended(let batch) = d else { Issue.record("expected .appended, got \(d)"); return }
-        #expect(batch.count == 1)                       // the repeat of "a" is dropped, not appended
+        guard case .appended(let batch, let repeats) = d else { Issue.record("expected .appended, got \(d)"); return }
+        #expect(batch.count == 1)                       // the repeat of "a" is folded in, not appended
+        #expect(repeats.count == 1)
         apply(d, to: &held)
         #expect(rows(held) == rows(await UsageScanner(root: root).scan()))
         #expect(held.map(\.timestamp) == held.map(\.timestamp).sorted())
@@ -94,19 +95,22 @@ import Foundation
         #expect(all.count == 1)
     }
 
-    /// Earliest wins. A repeat that is earlier than the copy already delivered must replace it,
-    /// which a delta can't say — so the scanner has to fall back rather than drop it.
-    @Test func anEarlierRepeatForcesAFullMerge() async throws {
+    /// A copy that is *earlier* than the one delivered moves the held entry back to its timestamp
+    /// (and brings its own usage if larger) — still as a delta, not a full re-merge.
+    @Test func anEarlierRepeatMovesTheHeldEntry() async throws {
         let root = try makeRoot()
         let f = root.appendingPathComponent("p/s.jsonl")
         let g = root.appendingPathComponent("p/t.jsonl")
-        try append(line("dup", at: 100, input: 1) + "\n", to: f)
+        try append(line("dup", at: 100, input: 1) + "\n" + line("mid", at: 75) + "\n", to: f)
         let scanner = UsageScanner(root: root)
-        _ = await scanner.scanChanges(deduplicated: true, changes: .everything)
-        try append(line("dup", at: 50, input: 2) + "\n", to: g)
+        var held: [UsageEntry] = []
+        apply(await scanner.scanChanges(deduplicated: true, changes: .everything), to: &held)
+        try append(line("dup", at: 50, input: 1, output: 900) + "\n", to: g)
         let d = await scanner.scanChanges(deduplicated: true, changes: .paths([eventPath(g, root: root)]))
-        guard case .full(let all) = d else { Issue.record("expected .full"); return }
-        #expect(all.map(\.inputTokens) == [2])
+        guard case .appended = d else { Issue.record("expected a delta, got \(d)"); return }
+        apply(d, to: &held)
+        #expect(rows(held) == rows(await UsageScanner(root: root).scan()))
+        #expect(held.map(\.outputTokens) == [900, 5])  // moved before "mid", larger usage kept
     }
 
     @Test func mergeAppendedReSortsOnlyWhatInterleaves() {
@@ -147,10 +151,10 @@ import Foundation
                     ids.append(id)
                     try append(line(id, at: clock - Int(rng.next() % 15)) + "\n", to: f)
                 }
-            case 5:                                       // re-log an earlier message, later
+            case 5:                                       // a later snapshot of an earlier message
                 if let id = ids.randomElement(using: &rng) {
                     clock += 1
-                    try append(line(id, at: clock) + "\n", to: f)
+                    try append(line(id, at: clock, output: Int(rng.next() % 5000)) + "\n", to: f)
                 }
             case 6:                                       // half-written line, finished next time
                 if let rest = partial.removeValue(forKey: f) {
@@ -171,12 +175,18 @@ import Foundation
             case 8:                                       // delete
                 partial[f] = nil
                 try? FileManager.default.removeItem(at: f)
+            case 9 where step % 3 == 0:                   // a forked transcript: same instant, any usage
+                if let id = ids.randomElement(using: &rng) {
+                    try append(line(id, at: clock, output: Int(rng.next() % 5000)) + "\n", to: f)
+                    try append(line(id, at: clock, output: Int(rng.next() % 5000)) + "\n",
+                               to: files[Int(rng.next() % UInt64(files.count))])
+                }
             default:
                 break                                     // an event with nothing new
             }
             let changes: FileChanges = rng.next() % 4 == 0
                 ? .everything : .paths([eventPath(f, root: root)])
-            let d = await scanner.scanChanges(deduplicated: deduplicated, changes: changes)
+            let d = await scanner.scanChanges(deduplicated: deduplicated, changes: op == 9 ? .everything : changes)
             if case .appended = d { deltas += 1 }
             apply(d, to: &held)
             let cold = await UsageScanner(root: root).scan(deduplicated: deduplicated)

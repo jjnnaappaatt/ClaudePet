@@ -136,8 +136,8 @@ life, so every byte costs ~250 KB twice at 128k entries. Field order is load-bea
 `Int32` (stored `Int32`, read `Int`, summed in `Int`, clamped on construction so a corrupt value
 saturates instead of wrapping negative), it is 96. `messageID` is a 128-bit `MessageKey`: unique per
 entry so interning cannot help it, and as a 28-char `String` it cost a 64-byte heap node each —
-129,692 nodes, 8.3 MB, allocated only to be compared. 128 bits rather than 64 because dedup keeps the
-first entry per key, so a collision silently drops a real turn; verified 0 collisions over 129,806
+129,692 nodes, 8.3 MB, allocated only to be compared. 128 bits rather than 64 because dedup keeps one
+entry per key, so a collision silently folds two real turns into one; verified 0 collisions over 129,806
 real ids. Measured settled: live set 73.3 → 40.6 MB, malloc nodes 215,283 → 86,206. Pinned by
 `AllocationTests` — both changes leave every figure identical, so nothing else can see them regress.
 
@@ -171,9 +171,23 @@ active use it wandered 526–790 MB. Do **not** compare current footprint betwee
 ages — an idle process sheds hundreds of MB, so a 17-minute "before" against a 1-minute "after" is not
 a measurement, it is a clock.
 
-**Dedup is load-bearing:** on a real corpus **8,349 of 12,259 `message.id`s appear more than once**,
-every repeat inside the same file with byte-identical usage — they are re-logs of one API response,
-not streaming deltas. Keep the first per `messageID`, never sum, or tokens and cost roughly triple.
+**Dedup is load-bearing:** most `message.id`s appear more than once — Claude Code writes a line per
+content block as a response streams. Never sum them, or tokens and cost roughly triple.
+
+**And the copies are NOT identical — keep the largest, not the first.** This section used to say every
+repeat carried byte-identical usage, and the code kept the first copy. Measured 2026-10: across
+73,016 repeated ids, input and cache counts match while output only grows (`3, 3, 3, 4313`) in
+72,984 of them — each line is the usage known at that point in the stream. Keeping the first read
+all-time output as 42.1M against 57.2M, a 26% undercount. `UsageEntry.absorbing` keeps the largest
+copy's usage at the earliest copy's timestamp, so an entry never moves after it is delivered.
+
+Keep-first was also **non-deterministic**, which is how this was found: a forked subagent transcript
+carries one line (same uuid, same millisecond) into several files, and one copy can be a mid-stream
+snapshot (out=4 against 8,530). Tied on timestamp, the winner came from `Dictionary` order — seeded per
+process — so each launch read a different total; a 3-day-old widget sat 50k above a cold scan. The
+fold is commutative (a tie takes the larger copy's metadata too), and `RepeatedSnapshotTests` pins
+order-independence. On the live path a repeat is a `repeats:` entry in `.appended`, folded in place by
+`mergeAppended` — not a `.full`, which streaming would trigger on nearly every write.
 
 **…but it is switched off by a setting, so never read a figure as deduped without checking.**
 `countRepeatedLogLines` (Settings → "Count repeated log lines (match /stats)") passes
@@ -185,7 +199,8 @@ figure that looks too large.** With it on, ClaudePet's all-time work reads 185.6
 
 Verify a token figure against the transcripts directly rather than against another figure in the app:
 sum `input_tokens + output_tokens` over `~/.claude/projects/**/*.jsonl`, keyed on
-`message.id ?? requestId`. That is what settled it, and it takes about a minute.
+`message.id ?? requestId`, **taking each key's largest-output copy** (not the first — see above).
+That is what settled it, and it takes about a minute.
 
 **But dedupe the walk by inode, or the check is wrong and looks right.** Claude Code **symlinks a
 workflow's agent directory into every session that resumed it** — e.g.
@@ -290,8 +305,10 @@ and the traps in each:
 - **`ScanDelta.appended` is merged in place** by `UsageScanner.mergeAppended`. That only works because
   `lastEntries` is `@ObservationIgnored` (observed properties mutate through accessors that leave the
   buffer shared → a silent 15 MB COW copy per scan) and the actor never retains the array it hands
-  out. Anything that removes or replaces a delivered entry — re-parse from zero, a dropped
-  `tailCount`, a deletion, a mode flip, a repeat *earlier* than the kept copy — must return `.full`.
+  out. Anything that removes a delivered entry — re-parse from zero, a dropped `tailCount`, a
+  deletion, a mode flip — must return `.full`. A repeat of a delivered message is the exception: it
+  comes back in `repeats:` and `mergeAppended` folds it into the held entry (moving it only if the
+  repeat is earlier), because streaming produces one on nearly every write.
   `DeltaScanTests` churns randomly against cold scans; each of those guards was mutation-checked.
 - **`tick()` skips the recompute** unless `recomputeIsDue`: new entries, a side file's mtime, or
   `nextRecomputeDeadline` (next hour, session end/expiry, week/cycle end, server resets, statusline

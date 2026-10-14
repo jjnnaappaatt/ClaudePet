@@ -20,11 +20,12 @@ public enum FileChanges: Sendable, Equatable {
 public enum ScanDelta: Sendable {
     /// Nothing that affects the merged entries.
     case unchanged
-    /// New entries only, sorted by timestamp and already deduplicated against everything delivered
-    /// before. They may interleave with the tail of the previous result (two sessions writing at
-    /// once), so the caller merges them in rather than appending blindly — see
-    /// `UsageScanner.mergeAppended(_:into:)`.
-    case appended([UsageEntry])
+    /// New entries, sorted by timestamp and deduplicated against everything delivered before, plus
+    /// `repeats`: further copies of messages already delivered, which may carry larger usage (a
+    /// response's later streaming snapshot). New entries may interleave with the tail of the previous
+    /// result (two sessions writing at once), so the caller merges rather than appends blindly — see
+    /// `UsageScanner.mergeAppended(_:repeats:into:)`.
+    case appended([UsageEntry], repeats: [UsageEntry])
     /// The complete merged history; discard what you had.
     case full([UsageEntry])
 }
@@ -66,8 +67,6 @@ public actor UsageScanner {
     private var baseMode: Bool?
     /// Keys of every entry in the last delivered result (dedup mode only).
     private var baseKeys = Set<MessageKey>()
-    /// Latest timestamp in the last delivered result.
-    private var baseLast = Date.distantPast
 
     /// Kept on the actor rather than per-scan, **because entries now outlive the scan that parsed
     /// them.** Its doc comment used to say the opposite, and that was right while every changed file
@@ -108,10 +107,10 @@ public actor UsageScanner {
     /// whenever the change was purely additive.
     ///
     /// Falls back to `.full` whenever entries the caller already holds could be wrong — a file
-    /// re-parsed from the start, a dropped partial line, a deleted file, a mode flip, or a repeat of
-    /// an already-delivered message that is *earlier* than the one delivered (earliest wins, so it
-    /// would have to replace it). Each of those is rare; the common case, lines appended to live
-    /// transcripts, is answered without touching the other ~130k entries.
+    /// re-parsed from the start, a dropped partial line, a deleted file, or a mode flip. Each of
+    /// those is rare; the common case, lines appended to live transcripts, is answered without
+    /// touching the other ~130k entries. A further copy of a delivered message comes back in
+    /// `repeats` for `mergeAppended` to fold in (see `UsageEntry.absorbing`).
     public func scanChanges(deduplicated: Bool, changes: FileChanges) -> ScanDelta {
         let (fresh, invalidated): ([UsageEntry], Bool)
         switch changes {
@@ -126,20 +125,18 @@ public actor UsageScanner {
         guard !fresh.isEmpty else { return .unchanged }
         var batch = fresh
         batch.sort { $0.timestamp < $1.timestamp }
-        if deduplicated {
-            var kept: [UsageEntry] = []
-            kept.reserveCapacity(batch.count)
-            for e in batch {
-                if baseKeys.insert(e.messageID).inserted { kept.append(e); continue }
-                // A repeat. Dropping it is right iff the copy already kept is no later — true when
-                // this one is at or past everything delivered. Otherwise re-merge rather than guess.
-                if e.timestamp < baseLast { return .full(fullMerge(deduplicated: deduplicated)) }
-            }
-            batch = kept
+        guard deduplicated else { return .appended(batch, repeats: []) }
+        // A key already delivered is another snapshot of a response the caller holds. It goes back
+        // as a repeat for the caller to fold in where the entry sits — not as a reason to re-merge:
+        // streaming writes several copies of every response, so a `.full` here would put the
+        // whole-history merge back on nearly every write.
+        var kept: [UsageEntry] = []
+        var repeats: [UsageEntry] = []
+        kept.reserveCapacity(batch.count)
+        for e in batch {
+            if baseKeys.insert(e.messageID).inserted { kept.append(e) } else { repeats.append(e) }
         }
-        guard let last = batch.last else { return .unchanged }
-        baseLast = max(baseLast, last.timestamp)
-        return .appended(batch)
+        return .appended(kept, repeats: repeats)
     }
 
     /// The full merge of everything cached, recorded as the new base for deltas.
@@ -147,7 +144,6 @@ public actor UsageScanner {
         let merged = Self.merge(Self.concatenated(cache.values), deduplicated: deduplicated,
                                 keys: &baseKeys)
         baseMode = deduplicated
-        baseLast = merged.last?.timestamp ?? .distantPast
         return merged
     }
 
@@ -254,16 +250,53 @@ public actor UsageScanner {
     /// array must be uniquely referenced by the caller for this to be in place — `MetricsStore`
     /// owns `lastEntries` and the actor keeps no copy, which is what lets a delta avoid the full
     /// copy-on-write copy `AllocationTests` exists to catch.
-    public static func mergeAppended(_ batch: [UsageEntry], into entries: inout [UsageEntry]) {
-        guard let first = batch.first else { return }
-        var lo = entries.startIndex, hi = entries.endIndex      // first index with timestamp > first
+    public static func mergeAppended(_ batch: [UsageEntry], repeats: [UsageEntry] = [],
+                                     into entries: inout [UsageEntry]) {
+        if let first = batch.first {
+            let lo = upperBound(of: first.timestamp, in: entries)
+            let needsSort = lo < entries.endIndex
+            entries.append(contentsOf: batch)
+            if needsSort { entries[lo...].sort { $0.timestamp < $1.timestamp } }
+        }
+        for r in repeats {
+            guard let i = index(of: r.messageID, near: r.timestamp, in: entries) else {
+                // The scanner only calls it a repeat if it delivered the key, so this means the
+                // caller's array isn't the scanner's result. Keep the turn rather than lose it.
+                entries.insert(r, at: upperBound(of: r.timestamp, in: entries))
+                continue
+            }
+            let folded = entries[i].absorbing(r)
+            if folded.timestamp == entries[i].timestamp {
+                entries[i] = folded
+            } else {
+                // An earlier copy turned up late (another file). Rare; move the one entry.
+                entries.remove(at: i)
+                entries.insert(folded, at: upperBound(of: folded.timestamp, in: entries))
+            }
+        }
+    }
+
+    /// First index whose timestamp is later than `t`.
+    private static func upperBound(of t: Date, in entries: [UsageEntry]) -> Int {
+        var lo = entries.startIndex, hi = entries.endIndex
         while lo < hi {
             let mid = (lo + hi) / 2
-            if entries[mid].timestamp <= first.timestamp { lo = mid + 1 } else { hi = mid }
+            if entries[mid].timestamp <= t { lo = mid + 1 } else { hi = mid }
         }
-        let needsSort = lo < entries.endIndex
-        entries.append(contentsOf: batch)
-        if needsSort { entries[lo...].sort { $0.timestamp < $1.timestamp } }
+        return lo
+    }
+
+    /// Where the held copy of `key` is. It began no later than this repeat in practice — a streaming
+    /// snapshot seconds before, or the identical instant in a forked transcript — so search back from
+    /// the repeat's own position first, and forward only for the rare earlier-copy-arrives-late case.
+    private static func index(of key: MessageKey, near t: Date, in entries: [UsageEntry]) -> Int? {
+        let start = upperBound(of: t, in: entries)
+        var i = start
+        while i > entries.startIndex {
+            i -= 1
+            if entries[i].messageID == key { return i }
+        }
+        return entries[start...].firstIndex { $0.messageID == key }
     }
 
     /// Map an FSEvents path onto the cache's key space, or nil if it isn't a transcript under the
@@ -346,11 +379,24 @@ public actor UsageScanner {
         sorted.sort { $0.timestamp < $1.timestamp }
         seen.removeAll()
         guard deduplicated else { return sorted }
-        // In place, not `filter`. `Deduplicator.deduplicated` returns a NEW array, so at the moment
-        // it returned there were two full copies live; `removeAll(where:)` compacts the one we
-        // already own. Same earliest-wins semantics — `removeAll(where:)` visits in order.
-        seen.reserveCapacity(sorted.count)
-        sorted.removeAll { !seen.insert($0.messageID).inserted }
+        // Compacted in place, not `filter` — two full copies of ~125k entries were a measurable part
+        // of the scan's peak. Each key remembers where its entry landed so a later copy can be
+        // folded into it (`absorbing`): the copies are streaming snapshots, and the last carries the
+        // response's real usage. Sorted input means a fold never moves an entry.
+        var slot = [MessageKey: Int](minimumCapacity: sorted.count)
+        var w = sorted.startIndex
+        for r in sorted.indices {
+            let e = sorted[r]
+            if let k = slot[e.messageID] {
+                sorted[k] = sorted[k].absorbing(e)
+            } else {
+                slot[e.messageID] = w
+                sorted[w] = e
+                w += 1
+            }
+        }
+        sorted.removeSubrange(w...)
+        seen = Set(slot.keys)
         return sorted
     }
 

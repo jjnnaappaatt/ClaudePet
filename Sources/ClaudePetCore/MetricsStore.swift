@@ -45,9 +45,10 @@ public final class MetricsStore {
     public var weeklyCostBudget: Double = 2000
     public var includeSubagents = true
     /// Count every logged assistant line instead of one per `message.id` — reproduces Claude
-    /// Code's `/stats` figure. Off by default: ~57% of logged lines repeat an id already seen,
-    /// with byte-identical usage, so they are re-logs of one API response rather than extra
-    /// consumption, and counting them roughly doubles every number.
+    /// Code's `/stats` figure. Off by default: ~57% of logged lines repeat an id already seen —
+    /// streaming snapshots of one API response, each carrying the usage known so far — so they are
+    /// not extra consumption, and counting them roughly doubles every number. With it off, each
+    /// response counts once at its final snapshot's usage (`UsageEntry.absorbing`).
     public var countRepeatedLogLines = false
     public var weightTokensByModel = true        // gauge counts Opus tokens heavier than Haiku (cost-weighted)
     public var tokenBasis: TokenBasis = .total   // per-day token figures: cache-inclusive total (default) vs work (in+out)
@@ -306,8 +307,8 @@ public final class MetricsStore {
         switch delta {
         case .unchanged where entriesFromScanner:
             return                             // nothing new: no recompute, no allocation
-        case .appended(let batch) where entriesFromScanner:
-            UsageScanner.mergeAppended(batch, into: &lastEntries)
+        case .appended(let batch, let repeats) where entriesFromScanner:
+            UsageScanner.mergeAppended(batch, repeats: repeats, into: &lastEntries)
         case .full(let all):
             lastEntries = all
             released = true

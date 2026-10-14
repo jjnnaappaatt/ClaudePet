@@ -39,6 +39,16 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   mascot's sky block and moves nothing below the header.
 
 ### Fixed
+- **Output tokens were undercounted by ~26%, and every launch read a slightly different total.**
+  Claude Code logs one line per content block as a response streams, each carrying the usage known
+  so far — output grows `3, 3, 3, 4313` across the copies. ClaudePet kept the *first* copy of each
+  message, so it counted the opening snapshot rather than the finished response: all-time output read
+  42.1M against a real 57.2M. Where copies tied on timestamp (forked subagent transcripts), which one
+  won depended on per-process hash order, so a widget running for days drifted ~50k tokens away from a
+  fresh scan. Each response now counts once, at its final snapshot's usage. Work, cost, the gauges'
+  fitted budgets and the `/stats` gap-fill all rise accordingly.
+- **The dashboard's "Billing cycle" title broke mid-word** ("Billi / ng / cyc / le") once the cycle
+  total grew wider. The header now drops whole elements — date range, then the basis label — instead.
 - **Notional cost was overstated by stale rates.** Opus 5.5 is $4/$20 with cache reads at 0.05×
   (was priced $5/$25 at 0.10×); Fable 5.1 and Mythos 5.1 cache reads are 0.025× (were 0.10× — 4× too
   high, on the token class that is ~97% of volume); Sonnet 5 and 5.5 stay at $2/$10 (were reverting
