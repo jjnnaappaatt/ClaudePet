@@ -47,13 +47,14 @@ public enum WeeklyWindowEngine {
     /// most recent reset count. Entries before `start` are excluded (they "reset off").
     public static func current(from entries: [UsageEntry], pricing: PricingTable,
                                anchor: Date, now: Date = Date()) -> WeeklyWindow {
+        let prices = PriceResolver(pricing)
         let (start, end) = window(anchor: anchor, now: now)
         var work = 0, total = 0
         var cost = 0.0
         for e in entries where e.timestamp >= start && e.timestamp < end {
             work += e.workTokens
             total += e.totalTokens
-            cost += pricing.cost(for: e)
+            cost += prices.cost(for: e)
         }
         return WeeklyWindow(start: start, end: end, workTokens: work, totalTokens: total, costUSD: cost)
     }
@@ -66,6 +67,7 @@ public enum WeeklyWindowEngine {
                                      anchor: Date, now: Date = Date())
         -> (work: Int, weighted: Double, cost: Double) {
         guard !entries.isEmpty else { return (0, 0, 0) }
+        let prices = PriceResolver(pricing)
         struct Cell { var work = 0; var weighted = 0.0; var cost = 0.0; var end = Date.distantPast }
         var cells: [Date: Cell] = [:]
         for e in entries {
@@ -73,8 +75,8 @@ public enum WeeklyWindowEngine {
             let start = anchor.addingTimeInterval(steps * weekDuration)
             var c = cells[start] ?? Cell()
             c.work += e.workTokens
-            c.weighted += Double(e.workTokens) * pricing.weight(for: e.family)
-            c.cost += pricing.cost(for: e)
+            c.weighted += Double(e.workTokens) * prices.weight(for: e.family)
+            c.cost += prices.cost(for: e)
             c.end = start.addingTimeInterval(weekDuration)
             cells[start] = c
         }

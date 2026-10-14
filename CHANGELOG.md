@@ -3,6 +3,75 @@
 All notable changes to ClaudePet are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); versions are dated on release.
 
+## [Unreleased]
+
+### Added
+- **Device readout in the Today header** — the Mac's SoC temperature (hottest die sensor), macOS's
+  thermal state, and ClaudePet's own CPU use, in the space under the cost that used to sit empty.
+  Tinted only when the Mac is under thermal pressure. The temperature comes from IOKit's private
+  `IOHIDEventSystemClient` API, loaded with `dlsym` so a macOS that drops it falls back to the
+  public thermal state instead of failing. On-device only; nothing leaves the machine.
+  `CLAUDEPET_DEVICE="<°C>,<state>,<cpu>"` fakes it for snapshots.
+
+### Changed
+- **Idle CPU: from 45–107% of a core to near zero.** Measured on the installed v0.14.0 after 3.7 days
+  up: 101–107% of a core, sustained, almost all of it in `MetricsStore.refresh()`. Every transcript
+  write started its own scan — overlapping — and each one walked and stat'd all ~2,000 transcripts,
+  re-sorted and re-deduplicated all ~130k entries, then re-aggregated the whole history on the main
+  thread, pricing every entry by re-parsing a date string through `Calendar`. Now:
+  - scans run one at a time, at most one every 2 s, with a burst of events coalesced into one;
+  - only the files FSEvents names are stat'd (a full walk every 5 minutes is the safety net);
+  - a purely additive change is merged as a delta, not by re-sorting the history;
+  - pricing resolves each model's rate once per pass instead of once per entry;
+  - the 30 s timer skips the full re-aggregate unless an hour, session, week, cycle or server
+    window boundary has passed, new data arrived, or a side file changed.
+- **The dashboard's lifetime figures show their precision** — project rows as `123.14M` and
+  `$20,915`, the /stats headline as `272.32M`. At `123.1M` / `$21.2k` a correctly updating row moved
+  once per 100k tokens or $100 and read as frozen.
+- **The /stats per-model rows are extended across the same days as the headline**, so they keep
+  summing to it instead of stopping at Claude Code's cache date while the total moved. The four
+  tiles that can't be extended honestly (sessions, messages, busiest hour, longest session) now say
+  `· to 17 Sep` when the cache lags.
+
+- **Device readout on three lines, larger.** Temperature, thermal state and CPU each get their own
+  line under the cost, in the widget and the dashboard alike. The dashboard used to squeeze work and
+  cache onto one line to save height; it now stacks them like the widget, which fits within the
+  mascot's sky block and moves nothing below the header.
+
+### Fixed
+- **Notional cost was overstated by stale rates.** Opus 5.5 is $4/$20 with cache reads at 0.05×
+  (was priced $5/$25 at 0.10×); Fable 5.1 and Mythos 5.1 cache reads are 0.025× (were 0.10× — 4× too
+  high, on the token class that is ~97% of volume); Sonnet 5 and 5.5 stay at $2/$10 (were reverting
+  to $3/$15 after 2026-08-31). Measured on the developer's corpus: today's estimate $1,885 → $1,088
+  with no change in tokens.
+- **Saved pricing tables now pick up new rate overrides.** They were restored only when a saved
+  table had none at all, so a table saved with one override never received another. A saved
+  override equal to a retired shipped default is replaced; anything the user edited is kept.
+- **Dated price overrides never applied on a non-Gregorian calendar.** `throughDate` was read with
+  `Calendar.current`; under the Thai Buddhist calendar 2026 is Gregorian 1483, so every dated
+  override had already lapsed. The test helper used the same calendar, which is how it passed.
+- **The widget panel now follows its content, and no longer launches clipped.** The panel was sized
+  to its SwiftUI content exactly once at launch — before the first scan — and then only on a
+  settings change or a resize drag. Measured on a fresh launch: fitted to 427pt of near-empty
+  content, grown by the scan to 611pt eight seconds later, and left at 427, clipping the header and
+  the footer with its buttons until something happened to refit it. Every launch had this; a
+  settings change or a drag usually masked it. `FittingHostingView` now refits whenever the
+  content's size is invalidated, whatever caused it. `CLAUDEPET_PANELFIT=1` checks it — the snapshot
+  path can't, because `ImageRenderer` draws the content at its own size and never asks the panel.
+- **The landscape widget's "This week" chart no longer swallows the card's spare height.** In a
+  two-column `HStack` the taller column sets the height and SwiftUI proposes that height back to the
+  shorter one, where a `VStack` hands its surplus to whichever children are flexible. The left
+  column's only flexible child was this chart — each bar is `VStack { Spacer; bar; label }` and a
+  `Spacer` is vertically unbounded — while its `barArea` stayed pinned at `40 * scale`. So the bars
+  did not grow into the slack, they were pushed **down** it: 283px of void at scale 1.5, about a
+  third of the card, between the chart's header and its own bars. The hour chart below was spared
+  only because its bars carry no `Spacer`.
+- **The two left-column charts now absorb that slack as bar height instead**, split evenly and
+  capped at twice the base bar. Measured at scale 1.5 across four data shapes, the largest interior
+  gap in either column goes 283 → 67px (two Codex rows), 95 → 67, 82 → 67 and 140 → 89, with the
+  card's own height unchanged in every case but one, where it is 17px shorter. Scale-invariant:
+  identical results at 1.0, 1.5 and 2.0. The tall layout and the dashboard are untouched.
+
 ## [0.14.0] — 2026-08-12
 
 ### Added

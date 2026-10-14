@@ -114,10 +114,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environment(metrics)
             .environment(panelVisibility)
             .environment(resizeController)
-        let hosting = NSHostingView(rootView: root)
+        let hosting = FittingHostingView(rootView: root)
         hosting.sizingOptions = .intrinsicContentSize   // report SwiftUI's fitting size
 
         let wc = WindowController(content: hosting)
+        // Follow the content. The fit inside `WindowController.init` runs before the first scan, so
+        // without this the panel keeps its near-empty launch height — see `FittingHostingView`.
+        hosting.onIntrinsicSizeChange = { [weak wc] in wc?.refitToContent() }
         wc.panel.setOnTop(metrics.keepOnTop)
         wc.panel.setShowOnAllSpaces(metrics.showOnAllSpaces)
         wc.show()
@@ -203,6 +206,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         metrics.start()
+
+        // Debug: the panel-sizing path. `CLAUDEPET_SNAPSHOT` cannot see this — `ImageRenderer` draws
+        // the content at its own ideal size and never asks the panel — which is how a panel fitted
+        // once to near-empty launch content (427pt) shipped against a 611pt widget, clipping the
+        // header and footer. Waits for the first scan, then reports whether the panel followed.
+        if ProcessInfo.processInfo.environment["CLAUDEPET_PANELFIT"] != nil {
+            func log(_ s: String) { FileHandle.standardError.write(Data("diag: \(s)\n".utf8)) }
+            let t0 = Date()
+            func line(_ tag: String) -> String {
+                String(format: "%@ t=%.1fs content=%.0f panel=%.0f", tag, Date().timeIntervalSince(t0),
+                       hosting.fittingSize.height, wc.panel.frame.height)
+            }
+            log(line("launch "))
+            var dataSeenAt: Date?
+            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
+                MainActor.assumeIsolated {
+                    if dataSeenAt == nil, !self.metrics.todayByModel.isEmpty { dataSeenAt = Date() }
+                    let settled = dataSeenAt.map { Date().timeIntervalSince($0) > 1.5 } ?? false
+                    guard settled || Date().timeIntervalSince(t0) > 180 else { return }
+                    timer.invalidate()
+                    let gap = hosting.fittingSize.height - wc.panel.frame.height
+                    log(line(settled ? "settled" : "TIMEOUT (no scan data)"))
+                    log(abs(gap) < 1 ? "OK: panel follows its content"
+                                     : String(format: "FAIL: panel is %.0fpt off its content", gap))
+                    NSApp.terminate(nil)
+                }
+            }
+        }
 
         // Debug: simulate the REAL flow for the dashboard — accessory app already running, then the
         // expand button is tapped. Reports the things that silently break instead of erroring:

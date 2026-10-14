@@ -76,25 +76,33 @@ struct CodexLimitBar: View {
             }
             .frame(height: barThickness * scale)
 
-            HStack(spacing: 4) {
-                if let tokens = limit.tokensUsed {
-                    // "this week" only when the window actually is a week. Codex reported a
-                    // 5-hour window until 2026-07-14 and the format still carries one.
-                    //
-                    // "work" is spelled out rather than taken from `tokenBasisLabel`: this count is
-                    // always cache-excluded, while the Claude rows follow the user's basis. Naming
-                    // its own unit is what keeps it honest when they diverge — under `.total` the
-                    // row above reads "total" and no false comparison is offered.
-                    Text("\(Format.tokens(tokens)) work used this "
-                         + "\(limit.windowMinutes >= 1440 ? "week" : "window")")
-                }
-                Spacer()
-                if showsReset {
-                    TimelineView(.periodic(from: .now, by: 60)) { context in
-                        Text("resets in \(Format.durationLong(limit.resetsAt.timeIntervalSince(context.date)))")
+            // Two lines, not one — same split as `BudgetGauge`'s 5h row. A single `HStack` with the
+            // used-tokens text and the reset both fighting for room truncated the left text ("240.7k
+            // work used this wi…") once Codex's own numbers ran longer than Claude's.
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    if let tokens = limit.tokensUsed {
+                        // "this week" only when the window actually is a week. Codex reported a
+                        // 5-hour window until 2026-07-14 and the format still carries one.
+                        //
+                        // "work" is spelled out rather than taken from `tokenBasisLabel`: this count
+                        // is always cache-excluded, while the Claude rows follow the user's basis.
+                        // Naming its own unit is what keeps it honest when they diverge — under
+                        // `.total` the row above reads "total" and no false comparison is offered.
+                        Text("\(Format.tokens(tokens)) work used this "
+                             + "\(limit.windowMinutes >= 1440 ? "week" : "window")")
                     }
-                } else {
-                    Text(Format.relativeAge(from: limit.recordedAt))
+                    Spacer()
+                }
+                HStack(spacing: 4) {
+                    Spacer()
+                    if showsReset {
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            Text("resets in \(Format.durationLong(limit.resetsAt.timeIntervalSince(context.date)))")
+                        }
+                    } else {
+                        Text(Format.relativeAge(from: limit.recordedAt))
+                    }
                 }
             }
             .scaledFont(9.5)

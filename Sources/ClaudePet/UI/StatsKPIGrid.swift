@@ -38,12 +38,16 @@ struct StatsKPIGrid: View {
     private struct Tile { let label: String; let value: String }
 
     private func tiles(_ c: StatsCache) -> [Tile] {
-        [
+        // These four come from the cache alone and can't be extended honestly (a "session" or
+        // "message" is Claude Code's own count). When the cache lags, say so on the tile — an 18-day
+        // old count rendered exactly like a current one, which read as the dashboard not updating.
+        let asOf = metrics.statsCacheLags() ? metrics.statsAsOfDescription.map { " · to \($0)" } ?? "" : ""
+        return [
             // Zero renders as "—", not "0". An older Claude Code writes a cache without these keys,
             // and a confident zero there would be a lie — "no messages ever" rather than "this file
             // doesn't say". Every tile below follows the same rule.
-            Tile(label: "Sessions", value: count(c.totalSessions)),
-            Tile(label: "Messages", value: count(c.totalMessages)),
+            Tile(label: "Sessions" + asOf, value: count(c.totalSessions)),
+            Tile(label: "Messages" + asOf, value: count(c.totalMessages)),
             // Via the store: extended past the cache like the streak, or a 27-day streak sits
             // beside 26 active days.
             Tile(label: "Active days", value: count(metrics.statsActiveDays() ?? 0)),
@@ -57,9 +61,9 @@ struct StatsKPIGrid: View {
                  value: (metrics.statsLongestStreak()).map { $0 > 0 ? "\($0)d" : "—" } ?? "—"),
             // "All time" is load-bearing: the hour chart one card away says "peak ~9am", which is
             // TODAY's busiest hour. Same word, different figure — the label is what keeps them apart.
-            Tile(label: "Busiest hr · all time",
+            Tile(label: asOf.isEmpty ? "Busiest hr · all time" : "Busiest hr" + asOf,
                  value: c.busiestHour.map { Format.hourLabel($0) } ?? "—"),
-            Tile(label: "Longest session",
+            Tile(label: "Longest session" + asOf,
                  value: c.longestSessionMessages > 0
                      ? Format.grouped(Double(c.longestSessionMessages)) + " msg" : "—"),
         ]

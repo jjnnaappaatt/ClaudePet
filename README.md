@@ -120,8 +120,8 @@ Three that change what the numbers *mean*, not just how they look:
 ## Privacy
 
 ClaudePet reads only local files under `~/.claude` (your transcripts, `~/.claude.json`, and —
-if installed — the statusline's local cache). It **never** reads your OAuth token, and it makes
-**no network requests**. Token counts come straight from your transcripts; cost is a *notional*
+if installed — the statusline's local cache), plus your Mac's own temperature sensors for the
+header's device readout. It **never** reads your OAuth token, and it makes **no network requests**. Token counts come straight from your transcripts; cost is a *notional*
 API-equivalent estimate (you're likely on a subscription).
 
 ## Uninstall

@@ -25,7 +25,9 @@ struct ProjectBreakdownView: View {
     }
 
     private func amount(_ v: Double) -> String {
-        metrics.budgetUnit == .usd ? Format.currency(v) : Format.tokens(Int(v))
+        // Precise forms: these are lifetime figures, and the compact ones moved in 0.1M / $100 steps
+        // — a row updating correctly sat unchanged for hours and read as frozen.
+        metrics.budgetUnit == .usd ? Format.currencyWhole(v) : Format.tokensPrecise(Int(v))
     }
 
     var body: some View {
@@ -102,7 +104,7 @@ struct ProjectBreakdownView: View {
             Spacer(minLength: 4 * scale)
             Text(amount(value(row)))
                 .scaledFont(10, design: .rounded).foregroundStyle(Theme.textSecondary)
-            Text(Format.currency(row.costUSD))
+            Text(Format.currencyWhole(row.costUSD))
                 .scaledFont(10, weight: .semibold, design: .rounded)
                 .foregroundStyle(Theme.textPrimary)
                 .frame(width: 52 * scale, alignment: .trailing)

@@ -408,7 +408,7 @@ struct DashboardView: View {
                     // like `usageBoost`. Unlike everywhere else in this layout, the limit here is
                     // WIDTH: both lines must stay unwrapped in a column that is only ~200pt wide at the
                     // minimum window size.
-                    StatsHeaderView(compact: true)
+                    StatsHeaderView()
                         .environment(\.widgetScale, scale * headerBoost)
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
