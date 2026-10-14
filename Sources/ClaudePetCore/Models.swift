@@ -260,6 +260,37 @@ public struct UsageEntry: Sendable, Equatable, Identifiable {
     private static func narrow(_ v: Int) -> Int32 {
         Int32(clamping: v)
     }
+
+    /// Fold another logged copy of the same response into this one.
+    ///
+    /// **Copies are streaming snapshots, not re-logs** — see `RepeatedSnapshotTests`. Claude Code
+    /// writes a line per content block as a response streams, each with the usage known so far, so
+    /// output grows across copies (`3, 3, 3, 4313`) while input and cache stay put. The usage is
+    /// therefore the largest copy's, and the timestamp and metadata the earliest copy's, so the turn
+    /// stays where it began and a delta never has to move an entry it already delivered.
+    ///
+    /// Commutative and associative on purpose: a tied timestamp takes its metadata from the larger
+    /// copy too, so the result never depends on which file was read first. "Keep the first" broke
+    /// exactly there — the winner of a tie came from `Dictionary` order, seeded per process.
+    func absorbing(_ other: UsageEntry) -> UsageEntry {
+        let otherIsLarger = other.usageRank > usageRank
+        let otherIsEarlier = other.timestamp < timestamp
+            || (other.timestamp == timestamp && otherIsLarger)
+        let meta = otherIsEarlier ? other : self
+        let usage = otherIsLarger ? other : self
+        return UsageEntry(
+            messageID: messageID, timestamp: meta.timestamp, model: meta.model, family: meta.family,
+            inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens, cacheWrite5mTokens: usage.cacheWrite5mTokens,
+            cacheWrite1hTokens: usage.cacheWrite1hTokens, isSidechain: meta.isSidechain,
+            project: meta.project, projectDir: meta.projectDir)
+    }
+
+    /// Output first: it is the count that grows as a response streams. The rest only break ties, so
+    /// that two copies with equal output still resolve the same way whatever order they arrive in.
+    private var usageRank: (Int32, Int32, Int32, Int32, Int32) {
+        (_outputTokens, _inputTokens, _cacheReadTokens, _cacheWrite5mTokens, _cacheWrite1hTokens)
+    }
 }
 
 // MARK: - Timestamp parsing
