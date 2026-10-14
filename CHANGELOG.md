@@ -33,6 +33,11 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   tiles that can't be extended honestly (sessions, messages, busiest hour, longest session) now say
   `· to 17 Sep` when the cache lags.
 
+- **Device readout on three lines, larger.** Temperature, thermal state and CPU each get their own
+  line under the cost, in the widget and the dashboard alike. The dashboard used to squeeze work and
+  cache onto one line to save height; it now stacks them like the widget, which fits within the
+  mascot's sky block and moves nothing below the header.
+
 ### Fixed
 - **Notional cost was overstated by stale rates.** Opus 5.5 is $4/$20 with cache reads at 0.05×
   (was priced $5/$25 at 0.10×); Fable 5.1 and Mythos 5.1 cache reads are 0.025× (were 0.10× — 4× too
