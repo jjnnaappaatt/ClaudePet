@@ -78,7 +78,8 @@ the snapshot vars it runs in the normal app flow rather than rendering and exiti
 From `CONTRIBUTING.md` — these are why the app is trustworthy, not style preferences:
 
 1. **Local files only.** Reads `~/.claude/projects/**/*.jsonl`, `~/.claude.json`, and optionally
-   `/tmp/claude/statusline-usage-cache.json`, `/tmp/claude/codex-usage-cache.tsv`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
+   `/tmp/claude/statusline-usage-cache.json`, `/tmp/claude/codex-usage-cache.tsv`, `~/.claude/stats-cache.json`,
+   and Codex's own rollouts in `~/.codex/sessions` (`CodexRolloutReader`). Never reads the OAuth token, never makes a network
    request. A feature needing data that isn't already local is out of scope. The one non-file read
    is the Mac's temperature sensors (`DeviceMonitor`, private IOKit API via `dlsym`) — on-device,
    and it degrades to `ProcessInfo.thermalState` if the symbols go away.
@@ -402,6 +403,18 @@ cache-excluded), and `CodexLimitBar` spells "work" out literally rather than usi
 `tokenBasisLabel`, so that under `.total` the Claude row above names a different unit instead of
 inviting a comparison it can't support. The statusline and the app are coupled through that field's
 meaning — change one and the other mislabels silently.
+
+**The app now computes that figure itself too.** `CodexRolloutReader` ports both `codex_usage` and
+`codex-week-tokens.py` and reads `~/.codex/sessions` directly, because the cache lives in `/tmp` —
+emptied on every restart — and only a terminal statusline rewrites it (the desktop app's Code tab
+never renders one), so after a reboot the Codex row stayed blank for as long as no terminal was open.
+Rollouts win when they yield a reading; the TSV is the fallback and what `CLAUDEPET_CODEX` fakes. The
+two implementations must keep agreeing: they matched to the token at six window starts over the whole
+331 MB corpus, and a change to either algorithm needs that comparison re-run
+(`python3 ~/.claude/codex-week-tokens.py <start>` against `CodexRolloutReader.tokensUsed(since:)`).
+`MetricsStore` maps a window whose `resetsAt` has passed through `CodexLimit.asReset()` (0%, no token
+count, `hasReset`) — it read 4% for a window that had ended 68 hours earlier. Don't drop it instead:
+that was tried, and the session row vanishing read as a missing feature.
 
 Also: `week` is the **fixed weekly-reset window** total (mirrors the Claude app, resets to zero at
 each boundary), and `weekDaily` is the **seven weekday slots of that window** — so the chart bars sum to `week`

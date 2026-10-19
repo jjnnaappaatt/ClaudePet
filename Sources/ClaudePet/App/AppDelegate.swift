@@ -383,6 +383,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .write(toFile: path, atomically: true, encoding: .utf8)
         }
         metrics.codexUsageCachePath = path
+        // Otherwise the real rollouts win over the fake, and "none" couldn't show a Codex-less Mac.
+        metrics.codexSessionsRoot = nil
         metrics.recompute()
     }
 

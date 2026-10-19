@@ -25,14 +25,15 @@ struct CodexLimitBar: View {
     /// keeps its ramp colour either way — the text carries the staleness, so the colour stays free
     /// to carry the number.
     private var textTier: Color {
-        freshness == .live ? Theme.textSecondary : Theme.textTertiary
+        freshness == .live && !limit.hasReset ? Theme.textSecondary : Theme.textTertiary
     }
 
-    /// A reset is only worth showing while the window it names is still open AND the reading is
-    /// recent enough to be describing the current one. Past either, the honest thing on that line is
-    /// how old the number is — a 65-hour-old row once promised a reset that had already happened,
-    /// behind a percentage that had since gone from 47% to 0%.
-    private var showsReset: Bool { freshness != .ancient && limit.isUsable() }
+    /// A reset is only worth showing while the reading is recent enough to be describing the current
+    /// window. Past that, the honest thing on that line is how old the number is — a 65-hour-old row
+    /// once promised a reset that had already happened, behind a percentage that had since gone from
+    /// 47% to 0%. A window that has actually ended arrives as `hasReset` (0%, see `asReset`); the
+    /// `isUsable` check covers the moments between its reset and the recompute that marks it.
+    private var showsReset: Bool { freshness != .ancient && !limit.hasReset && limit.isUsable() }
 
     private var help: String {
         // Built in pieces: as one chained `+` expression with interpolations the type-checker gave
@@ -45,13 +46,22 @@ struct CodexLimitBar: View {
             count += " \(amount) held in a context window. Cache reads are excluded, so it is the"
             count += " same basis as a \"work\" figure on the Claude rows above — but Codex counts"
             count += " cache the opposite way round (its input_tokens includes the cached part,"
-            count += " where Anthropic's excludes it), so the subtraction happens in the statusline"
-            count += " before the number reaches here. Left in, this row read 28.2M against a"
+            count += " where Anthropic's excludes it), so the cached part is subtracted before the"
+            count += " number reaches this row. Left in, this row read 28.2M against a"
             count += " true 2.0M."
         }
+        if limit.hasReset {
+            return """
+                This Codex window reset \(Format.relativeAge(from: limit.resetsAt)) and Codex hasn't \
+                run on this Mac since, so it is empty — 0% until Codex next reports. Codex last ran \
+                \(Format.relativeAge(from: limit.recordedAt)). Read from Codex's session files \
+                (~/.codex/sessions); no token, no network.
+                """
+        }
         return """
-            Codex's own quota, as Codex reported it — read from the statusline's local cache file. \
-            ClaudePet does not talk to Codex: no token, no network, same as the Claude rows above. \
+            Codex's own quota, as Codex reported it — read from Codex's session files on this Mac \
+            (~/.codex/sessions). ClaudePet does not talk to Codex: no token, no network, same as the \
+            Claude rows above. \
             The figure only moves when Codex runs, so this one is \
             \(Format.relativeAge(from: limit.recordedAt)).\(count)
             """
@@ -81,7 +91,10 @@ struct CodexLimitBar: View {
             // work used this wi…") once Codex's own numbers ran longer than Claude's.
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    if let tokens = limit.tokensUsed {
+                    if limit.hasReset {
+                        // Same word the Claude 5h row uses when nothing is running in its window.
+                        Text("idle — window reset")
+                    } else if let tokens = limit.tokensUsed {
                         // "this week" only when the window actually is a week. Codex reported a
                         // 5-hour window until 2026-07-14 and the format still carries one.
                         //
@@ -100,6 +113,8 @@ struct CodexLimitBar: View {
                         TimelineView(.periodic(from: .now, by: 60)) { context in
                             Text("resets in \(Format.durationLong(limit.resetsAt.timeIntervalSince(context.date)))")
                         }
+                    } else if limit.hasReset {
+                        Text("last used \(Format.relativeAge(from: limit.recordedAt))")
                     } else {
                         Text(Format.relativeAge(from: limit.recordedAt))
                     }

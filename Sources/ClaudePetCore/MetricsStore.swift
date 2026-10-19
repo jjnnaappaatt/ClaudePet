@@ -31,9 +31,9 @@ public final class MetricsStore {
     public private(set) var cycleStart: Date?      // start of the current billing cycle
     public private(set) var cycleReset: Date?      // end of the current billing cycle (next anniversary)
     public private(set) var serverUsage: StatuslineUsage?   // real 5h/7d from the statusline cache (local file read; no token/network)
-    /// Codex's own quota windows, from the statusline's Codex cache. Empty on a machine with no
-    /// Codex — the UI hides the row rather than drawing it at 0%, which would be a claim about a
-    /// tool that isn't installed.
+    /// Codex's own quota windows — from Codex's rollouts, else the statusline's Codex cache — with
+    /// any window that has already ended shown as reset (`CodexLimit.asReset`). Empty on a machine with no Codex — the UI hides
+    /// the row rather than drawing it at 0%, which would be a claim about a tool that isn't installed.
     public private(set) var codexUsage: [CodexLimit] = []
 
     // Config (user-editable; persisted to UserDefaults)
@@ -125,6 +125,16 @@ public final class MetricsStore {
     /// and silently switching off a Codex row with it would be a surprise; the row already hides
     /// itself whenever the file is missing, which is the case the toggle would be standing in for.
     public var codexUsageCachePath = CodexUsageReader.defaultPath
+    /// Codex's own session folder, read directly so the Codex row survives a restart (which empties
+    /// `/tmp`, and with it the cache above, until a terminal statusline happens to run). Preferred
+    /// over the cache whenever it yields a reading; nil switches it off. Defaults to the REAL
+    /// `~/.codex/sessions` — same test hazard as the paths around it, see `TestSupport.store`.
+    public var codexSessionsRoot: String? = CodexRolloutReader.defaultRoot {
+        didSet { codexRollouts = codexSessionsRoot.map { CodexRolloutReader(root: $0) } }
+    }
+    /// Holds the per-rollout token cache between recomputes; rebuilt only when the root changes.
+    @ObservationIgnored private lazy var codexRollouts: CodexRolloutReader? =
+        codexSessionsRoot.map { CodexRolloutReader(root: $0) }
     /// Claude Code's own `/stats` cache. Injectable, and — exactly like `statuslineCachePath` — it
     /// defaults to the REAL file, so any test touching these figures must go through
     /// `TestSupport.store(defaults:)` or it reads the developer's own usage and passes by machine.
@@ -341,11 +351,13 @@ public final class MetricsStore {
             || sideFileStamps() != sideFileStamp
     }
 
-    /// Modification dates of the files `recompute()` re-reads every pass.
+    /// Modification dates of the files `recompute()` re-reads every pass. The newest Codex rollout
+    /// is one of them now that Codex is read directly: without it a Codex-only session (no Claude
+    /// transcript moving) would leave the row up to an hour behind.
     private func sideFileStamps() -> [Date?] {
         [statuslineCachePath, codexUsageCachePath, statsCachePath].map {
             (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date
-        }
+        } + [codexRollouts?.latestModification()]
     }
 
     /// The earliest instant at which a figure could change with no new data: a day/hour rolling
@@ -438,9 +450,20 @@ public final class MetricsStore {
         // Real server-side 5h/7d numbers, read from the statusline's local cache (no token,
         // no network — ClaudePet only reads the file the user's statusline already wrote).
         serverUsage = useStatuslineData ? StatuslineUsageReader.read(path: statuslineCachePath) : nil
-        // A few dozen bytes on the same 30s tick — no new timer, and nothing here that the
-        // allocation budget notices.
-        codexUsage = CodexUsageReader.read(path: codexUsageCachePath)
+        // Rollouts first: they're the source the cache is computed from, they're current to the
+        // write rather than to the statusline's 60s cache, and they survive a restart. The cache
+        // stays as the fallback (and is what `CLAUDEPET_CODEX` fakes). Incremental — an unchanged
+        // rollout isn't re-read, a growing one only from where it left off.
+        //
+        // A window that has already reset is shown as reset, at 0%: its percentage describes a
+        // window that is over — a 5h row read 4% for one that had ended 68 hours earlier. Not
+        // dropped either: that hid the session row entirely, which read as a missing feature.
+        // Marked here rather than tested at render time so the array itself changes at the reset —
+        // a view comparing `Date()` would not re-render until something else moved. Each `resetsAt`
+        // is in `computeNextDeadline`, so the flip lands on time.
+        let codex = codexRollouts?.read() ?? []
+        codexUsage = (codex.isEmpty ? CodexUsageReader.read(path: codexUsageCachePath) : codex)
+            .map { $0.isUsable(now: now) ? $0 : $0.asReset() }
         // Cheap (22 KB) and it only changes when Claude Code recomputes, so a plain re-read per
         // recompute is fine — no need for the mtime/size cache `UsageScanner` needs for 100 MB files.
         statsCache = StatsCacheReader.read(path: statsCachePath)

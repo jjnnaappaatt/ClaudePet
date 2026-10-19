@@ -39,6 +39,13 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   mascot's sky block and moves nothing below the header.
 
 ### Fixed
+- **The Codex row no longer disappears after a restart.** It read only the statusline's cache in
+  `/tmp`, which macOS empties on every reboot and which only a terminal `claude` session rewrites, so
+  the row stayed blank until one happened to be open. ClaudePet now reads Codex's own session files in
+  `~/.codex/sessions` — local, same algorithm as the statusline, matched to the token on real data —
+  and falls back to the cache. A Codex window that has already reset now reads 0%, "idle — window
+  reset", with when Codex was last used, instead of its old percentage (a 5h row read 4% for a
+  window that had ended 68 hours earlier).
 - **The widget can be dragged again on macOS 27.** `isMovableByWindowBackground` stopped moving a
   borderless panel whose content is a SwiftUI hosting view (a plain `NSView` still drags), so the
   widget couldn't be moved at all. The card now carries a `WindowDragGesture` on macOS 15+; the

@@ -21,7 +21,8 @@ import Foundation
     private func isolate(_ s: MetricsStore) {
         s.statuslineCachePath = TestSupport.noStatuslineCache
         s.statsCachePath = TestSupport.noStatsCache
-        s.codexUsageCachePath = "/nonexistent/claudepet-tests/codex-usage-cache.tsv"
+        s.codexUsageCachePath = TestSupport.noCodexCache
+        s.codexSessionsRoot = nil
         s.billingCycleDayOverride = 1
     }
 

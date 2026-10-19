@@ -15,13 +15,17 @@ enum TestSupport {
     /// `~/.claude/stats-cache.json`, so a test asserting on those figures would read the developer's own
     /// lifetime usage.
     static let noStatsCache = "/nonexistent/claudepet-tests/stats-cache.json"
+    /// And for Codex, which is read from the real `~/.codex/sessions` and `/tmp/claude` by default.
+    static let noCodexCache = "/nonexistent/claudepet-tests/codex-usage-cache.tsv"
 
-    /// Store wired away from BOTH real caches. Use this instead of `MetricsStore(defaults:)`.
+    /// Store wired away from every real cache. Use this instead of `MetricsStore(defaults:)`.
     @MainActor
     static func store(defaults: UserDefaults) -> MetricsStore {
         let s = MetricsStore(defaults: defaults)
         s.statuslineCachePath = noStatuslineCache
         s.statsCachePath = noStatsCache
+        s.codexUsageCachePath = noCodexCache
+        s.codexSessionsRoot = nil
         return s
     }
 
