@@ -39,6 +39,10 @@ All notable changes to ClaudePet are documented here. Format loosely follows
   mascot's sky block and moves nothing below the header.
 
 ### Fixed
+- **The widget can be dragged again on macOS 27.** `isMovableByWindowBackground` stopped moving a
+  borderless panel whose content is a SwiftUI hosting view (a plain `NSView` still drags), so the
+  widget couldn't be moved at all. The card now carries a `WindowDragGesture` on macOS 15+; the
+  resize grips and the footer buttons still take their own clicks.
 - **Notional cost was overstated by stale rates.** Opus 5.5 is $4/$20 with cache reads at 0.05×
   (was priced $5/$25 at 0.10×); Fable 5.1 and Mythos 5.1 cache reads are 0.025× (were 0.10× — 4× too
   high, on the token class that is ~97% of volume); Sonnet 5 and 5.5 stay at $2/$10 (were reverting
