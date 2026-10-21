@@ -131,36 +131,46 @@ struct CycleCalendarView: View {
     /// falls back to its last child when none fit, and that child must not be able to overflow.
     private var header: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 8 * scale) {
-                titleBlock(twoLines: false)
-                Spacer(minLength: 0)
-                figure.fixedSize()
-            }
-            HStack(alignment: .center, spacing: 8 * scale) {
-                titleBlock(twoLines: true)
-                Spacer(minLength: 0)
-                figure.fixedSize()
-            }
-            VStack(alignment: .leading, spacing: 2 * scale) {
-                HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
-                    Text("Billing cycle")
-                        .scaledFont(15, weight: .semibold).foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                    Spacer(minLength: 0)
-                    // Beside the title when there's room, otherwise left out — never cut.
-                    ViewThatFits(in: .horizontal) {
-                        dateRange.fixedSize()
-                        Color.clear.frame(width: 0, height: 0)
-                    }
-                }
-                figure.lineLimit(1).minimumScaleFactor(0.6)
-            }
+            besideFigure(twoLines: false)
+            besideFigure(twoLines: true)
+            stackedHeader
         }
         // The dates are the part an arrangement may leave out, so they are always one hover away.
-        .help(metrics.cycleStart.flatMap { start in metrics.cycleReset.map { end in
-            "This billing cycle: " + start.formatted(.dateTime.day().month(.abbreviated)) + " – "
-                + end.formatted(.dateTime.day().month(.abbreviated)) + "."
-        } } ?? "")
+        .help(headerHelp)
+    }
+
+    // Split out of `header` on purpose: as one expression it type-checked locally but timed out on
+    // CI's runner ("unable to type-check this expression in reasonable time").
+    private func besideFigure(twoLines: Bool) -> some View {
+        HStack(alignment: .center, spacing: 8 * scale) {
+            titleBlock(twoLines: twoLines)
+            Spacer(minLength: 0)
+            figure.fixedSize()
+        }
+    }
+
+    private var stackedHeader: some View {
+        VStack(alignment: .leading, spacing: 2 * scale) {
+            HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
+                Text("Billing cycle")
+                    .scaledFont(15, weight: .semibold).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                Spacer(minLength: 0)
+                // Beside the title when there's room, otherwise left out — never cut.
+                ViewThatFits(in: .horizontal) {
+                    dateRange.fixedSize()
+                    Color.clear.frame(width: 0, height: 0)
+                }
+            }
+            figure.lineLimit(1).minimumScaleFactor(0.6)
+        }
+    }
+
+    private var headerHelp: String {
+        guard let start = metrics.cycleStart, let end = metrics.cycleReset else { return "" }
+        let from: String = start.formatted(.dateTime.day().month(.abbreviated))
+        let to: String = end.formatted(.dateTime.day().month(.abbreviated))
+        return "This billing cycle: \(from) – \(to)."
     }
 
     /// Title and dates, every word whole. The dates come in one line or two to match the title.

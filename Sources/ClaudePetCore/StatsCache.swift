@@ -224,7 +224,9 @@ public enum StatsCacheReader {
               let raw = try? JSONDecoder().decode(Raw.self, from: data),
               let usage = raw.modelUsage, !usage.isEmpty else { return nil }
 
-        let models = usage.map { model, u in
+        // Typed in steps: as one chained expression this took ~0.8 s to type-check, the kind of
+        // expression CI's slower runner gives up on.
+        let unsorted: [StatsModelTotal] = usage.map { (model: String, u: Raw.Usage) -> StatsModelTotal in
             StatsModelTotal(model: model,
                             inputTokens: u.inputTokens ?? 0,
                             outputTokens: u.outputTokens ?? 0,
@@ -232,7 +234,9 @@ public enum StatsCacheReader {
                             cacheWriteTokens: u.cacheCreationInputTokens ?? 0)
         }
         // Heaviest first; tie-break on the id so the order can't flicker between reads.
-        .sorted { $0.workTokens != $1.workTokens ? $0.workTokens > $1.workTokens : $0.model < $1.model }
+        let models: [StatsModelTotal] = unsorted.sorted { (a: StatsModelTotal, b: StatsModelTotal) -> Bool in
+            a.workTokens != b.workTokens ? a.workTokens > b.workTokens : a.model < b.model
+        }
 
         guard models.contains(where: { $0.workTokens > 0 }) else { return nil }
 
