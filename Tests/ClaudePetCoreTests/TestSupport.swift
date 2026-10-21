@@ -24,6 +24,7 @@ enum TestSupport {
         let s = MetricsStore(defaults: defaults)
         s.statuslineCachePath = noStatuslineCache
         s.statsCachePath = noStatsCache
+        s.statsTranscriptRoot = nil
         s.codexUsageCachePath = noCodexCache
         s.codexSessionsRoot = nil
         return s

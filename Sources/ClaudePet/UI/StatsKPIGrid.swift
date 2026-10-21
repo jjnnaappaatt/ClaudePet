@@ -1,88 +1,173 @@
 import SwiftUI
 import ClaudePetCore
 
-/// Claude Code's lifetime counters, as eight tiles: sessions, messages, active days, streaks and so on.
+/// Claude Code's lifetime counters, as eight tiles — the same figures `/stats` prints, live.
 ///
-/// **Every figure is read from `~/.claude/stats-cache.json`, not derived** — the same rule that governs
-/// the `/stats` total above it. That file already carried all of this; nothing here is computed from
-/// our own transcripts except the streak's tail (see `MetricsStore.statsCurrentStreak`).
+/// Every value comes from `MetricsStore.stats`: the cache plus the days since, merged the way Claude
+/// Code merges them, so nothing here needs a "to 17 Sep" qualifier any more.
 ///
-/// The eight were picked so that none repeats something already on the dashboard. Three of Claude
-/// Code's own tiles are deliberately absent for that reason: **Total tokens** is the hero of this very
-/// card, **Favourite model** is row 1 of the model grid directly above (which is sorted heaviest
-/// first), and **tokens/day** is what the Today pace bar prints. A tile that restates its neighbour
-/// costs space and teaches nothing.
+/// Two rows of five, read as a ledger: the first is how much (sessions, messages, days, when), the
+/// second is records and preferences. **Favourite model is its own tile, not "the grid's first row"**
+/// — `/stats` ranks it by tokens including cache, the grid by input + output, and on real data those
+/// name different models (Opus 5.5 vs Opus 4.8). The cache-inclusive total sits right after it, so
+/// the reason for the difference is on screen beside the answer.
 struct StatsKPIGrid: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
     var body: some View {
-        if let c = metrics.statsCache {
-            let tiles = tiles(c)
-            VStack(spacing: 6 * scale) {
-                ForEach(Array(stride(from: 0, to: tiles.count, by: 4)), id: \.self) { start in
-                    HStack(alignment: .top, spacing: 8 * scale) {
-                        ForEach(tiles[start ..< min(start + 4, tiles.count)], id: \.label) { t in
-                            tile(t).frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
+        if let s = metrics.stats {
+            let tiles = tiles(s)
+            LedgerLayout(columns: Self.columns, hSpacing: 10 * scale, vSpacing: 9 * scale) {
+                ForEach(tiles, id: \.label) { tile($0) }
             }
-            .help("Claude Code's own lifetime figures, read from its stats cache"
-                  + (metrics.statsAsOfDescription.map { " (last recomputed \($0))" } ?? "")
-                  + ". The current streak is extended past that date with days ClaudePet can see for "
-                  + "itself, so it doesn't read low while the cache catches up.")
         }
     }
 
-    private struct Tile { let label: String; let value: String }
+    private static let columns = 5
 
-    private func tiles(_ c: StatsCache) -> [Tile] {
-        // These four come from the cache alone and can't be extended honestly (a "session" or
-        // "message" is Claude Code's own count). When the cache lags, say so on the tile — an 18-day
-        // old count rendered exactly like a current one, which read as the dashboard not updating.
-        let asOf = metrics.statsCacheLags() ? metrics.statsAsOfDescription.map { " · to \($0)" } ?? "" : ""
+    private struct Tile {
+        let label: String
+        let value: String
+        var suffix = ""
+        var help = ""
+        var dot: Color? = nil
+    }
+
+    private func tiles(_ s: StatsSnapshot) -> [Tile] {
+        // Zero renders as "—": an older Claude Code writes a cache without these keys, and a confident
+        // zero would claim "never" where the file simply doesn't say.
+        let since = s.firstSessionDate.map { " since \($0.formatted(.dateTime.day().month(.abbreviated).year()))" } ?? ""
         return [
-            // Zero renders as "—", not "0". An older Claude Code writes a cache without these keys,
-            // and a confident zero there would be a lie — "no messages ever" rather than "this file
-            // doesn't say". Every tile below follows the same rule.
-            Tile(label: "Sessions" + asOf, value: count(c.totalSessions)),
-            Tile(label: "Messages" + asOf, value: count(c.totalMessages)),
-            // Via the store: extended past the cache like the streak, or a 27-day streak sits
-            // beside 26 active days.
-            Tile(label: "Active days", value: count(metrics.statsActiveDays() ?? 0)),
-            Tile(label: "Since", value: c.firstSessionDate.map {
-                $0.formatted(.dateTime.day().month(.abbreviated))
-            } ?? "—"),
-            Tile(label: "Current streak", value: metrics.statsCurrentStreak().map { "\($0)d" } ?? "—"),
-            // Via the store, not `c.longestStreak`: the current streak is extended past the cache, so
-            // the cached longest can be overtaken by it — see `statsLongestStreak`.
-            Tile(label: "Longest streak",
-                 value: (metrics.statsLongestStreak()).map { $0 > 0 ? "\($0)d" : "—" } ?? "—"),
-            // "All time" is load-bearing: the hour chart one card away says "peak ~9am", which is
-            // TODAY's busiest hour. Same word, different figure — the label is what keeps them apart.
-            Tile(label: asOf.isEmpty ? "Busiest hr · all time" : "Busiest hr" + asOf,
-                 value: c.busiestHour.map { Format.hourLabel($0) } ?? "—"),
-            Tile(label: "Longest session" + asOf,
-                 value: c.longestSessionMessages > 0
-                     ? Format.grouped(Double(c.longestSessionMessages)) + " msg" : "—"),
+            Tile(label: "Sessions", value: count(s.totalSessions)),
+            Tile(label: "Messages", value: count(s.totalMessages)),
+            Tile(label: "Active days", value: count(s.activeDays),
+                 suffix: s.totalDays > 0 ? "/\(s.totalDays)" : "",
+                 help: "Days with any activity, out of every day\(since)."),
+            Tile(label: "Most active", value: s.mostActiveDay.map(Self.dayLabel) ?? "—",
+                 help: "The day with the most messages."),
+            // "Peak hour", not "busiest": the hour chart nearby says "peak ~10am" for TODAY; this is
+            // all time, by when sessions began. The tooltip keeps the two apart.
+            Tile(label: "Peak hour", value: s.peakHour.map(Format.hourLabel) ?? "—",
+                 help: "The hour your sessions most often start, all time."),
+            Tile(label: "Streak", value: days(s.currentStreak),
+                 help: "Consecutive days with activity, ending today. Days are UTC, as /stats counts them."),
+            Tile(label: "Longest streak", value: days(s.longestStreak)),
+            Tile(label: "Longest session",
+                 value: s.longestSession.map { Format.durationLong($0.duration) } ?? "—",
+                 help: s.longestSession.map {
+                     "By wall-clock time, as /stats picks it: \(Format.grouped(Double($0.messageCount))) "
+                         + "messages, started \($0.start.formatted(date: .abbreviated, time: .shortened))."
+                 } ?? ""),
+            Tile(label: "Favourite", value: s.favouriteModel?.displayName ?? "—",
+                 help: s.favouriteModel.map {
+                     "The model with the most tokens including cache — /stats' own rule. "
+                         + "\($0.displayName): \(Format.tokens($0.allTokens)). The list above ranks by "
+                         + "input + output instead, which is why its first row can be a different model."
+                 } ?? "",
+                 dot: s.favouriteModel.map { StatsModelBreakdownView.dotColor[$0.family] ?? .gray }),
+            Tile(label: "Incl. cache", value: Format.tokensPrecise(s.totalTokensIncludingCache),
+                 help: "Every token Claude processed, cache reads and writes included — the \"Total "
+                     + "tokens\" the terminal /stats prints. The headline above is input + output only, "
+                     + "as the Claude desktop app shows it; prompt caching makes this one ~300× larger."),
         ]
     }
 
+    /// The file's dates are UTC calendar dates, labelled as such — a `Date` would shift them a day
+    /// in any zone west of Greenwich.
+    private static func dayLabel(_ c: DateComponents) -> String {
+        var g = Calendar(identifier: .gregorian)
+        g.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let d = g.date(from: c) else { return "—" }
+        let f = DateFormatter()
+        f.calendar = g
+        f.timeZone = g.timeZone
+        f.setLocalizedDateFormatFromTemplate("dMMM")
+        return f.string(from: d)
+    }
+
     private func count(_ n: Int) -> String { n > 0 ? Format.grouped(Double(n)) : "—" }
+    private func days(_ n: Int) -> String { n > 0 ? "\(n)d" : "—" }
 
     private func tile(_ t: Tile) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            // Shrink, don't clip. "Busiest hr · all time" is the longest label and truncated to
-            // "all ti…" at 900x800 even before this card's type grew; `WeekAllTimeView` and
-            // `BillingLineView` in the same card have carried 0.8 for exactly this reason.
+        VStack(alignment: .leading, spacing: 2 * scale) {
             Text(t.label)
                 .scaledFont(9).foregroundStyle(Theme.textTertiary)
                 .lineLimit(1).minimumScaleFactor(0.8)
-            Text(t.value)
-                .scaledFont(13, weight: .semibold, design: .rounded)
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1).minimumScaleFactor(0.8)
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                if let dot = t.dot {
+                    Circle().fill(dot).frame(width: 6 * scale, height: 6 * scale)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 1 * scale }
+                        .padding(.trailing, 4 * scale)
+                }
+                Text(t.value)
+                    .scaledFont(13, weight: .semibold, design: .rounded)
+                    .foregroundStyle(Theme.textPrimary)
+                if !t.suffix.isEmpty {
+                    Text(t.suffix)
+                        .scaledFont(10, design: .rounded)
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .help(t.help)
+    }
+}
+
+/// Columns sized to their content, inside exactly the width offered.
+///
+/// Equal fifths squeezed "Longest session" below its neighbours at 900×800, and the smaller label
+/// knocked its value off the row's baseline. `Grid` with `fixedSize` tiles fixed that and broke
+/// something worse: a fixed-size tile raises the card's *minimum* width, the dashboard row honoured
+/// it, and the whole card ran past the window edge — with `ViewThatFits` never falling back, since the
+/// width it measured against was not yet fixed. This reports the proposed width as its own, so it
+/// can never widen its container. Inside that width each column gets its natural width plus an even
+/// share of what's left; when they don't all fit, columns shrink in proportion to their natural
+/// width (tiles carry `minimumScaleFactor`), so the long labels keep the most room.
+private struct LedgerLayout: Layout {
+    let columns: Int
+    let hSpacing: CGFloat
+    let vSpacing: CGFloat
+
+    private func widths(_ subviews: Subviews, available: CGFloat) -> [CGFloat] {
+        var natural = Array(repeating: CGFloat(0), count: columns)
+        for (i, v) in subviews.enumerated() {
+            natural[i % columns] = max(natural[i % columns], v.sizeThatFits(.unspecified).width)
+        }
+        let room = max(0, available - hSpacing * CGFloat(columns - 1))
+        let sum = natural.reduce(0, +)
+        guard sum > 0 else { return Array(repeating: room / CGFloat(columns), count: columns) }
+        if sum <= room { return natural.map { $0 + (room - sum) / CGFloat(columns) } }
+        return natural.map { room * $0 / sum }
+    }
+
+    private func rowHeights(_ subviews: Subviews, widths: [CGFloat]) -> [CGFloat] {
+        var heights: [CGFloat] = []
+        for (i, v) in subviews.enumerated() {
+            let h = v.sizeThatFits(ProposedViewSize(width: widths[i % columns], height: nil)).height
+            if i % columns == 0 { heights.append(h) } else { heights[heights.count - 1] = max(heights.last!, h) }
+        }
+        return heights
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let natural = widths(subviews, available: .infinity).reduce(0, +) + hSpacing * CGFloat(columns - 1)
+        let width = proposal.width ?? natural
+        let rows = rowHeights(subviews, widths: widths(subviews, available: width))
+        return CGSize(width: width, height: rows.reduce(0, +) + vSpacing * CGFloat(max(0, rows.count - 1)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let w = widths(subviews, available: bounds.width)
+        let rows = rowHeights(subviews, widths: w)
+        var y = bounds.minY
+        for (i, v) in subviews.enumerated() {
+            let col = i % columns, row = i / columns
+            if col == 0, row > 0 { y += rows[row - 1] + vSpacing }
+            let x = bounds.minX + w[..<col].reduce(0, +) + hSpacing * CGFloat(col)
+            v.place(at: CGPoint(x: x, y: y), anchor: .topLeading,
+                    proposal: ProposedViewSize(width: w[col], height: rows[row]))
         }
     }
 }

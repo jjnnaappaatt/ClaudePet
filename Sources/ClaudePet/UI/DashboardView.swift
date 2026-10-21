@@ -476,7 +476,7 @@ struct DashboardView: View {
         // card outgrows the row. Halving the gap is a real typographic trade at 15% larger text, and
         // it keeps the top row at its unboosted 528px instead of 576px.
         VStack(alignment: .leading, spacing: 5 * scale) {
-            if metrics.statsCache != nil {
+            if metrics.stats != nil {
                 StatsModelBreakdownView()
             } else {
                 Text("Today by model")
@@ -488,12 +488,21 @@ struct DashboardView: View {
                         help: "Every turn in your transcripts. Claude Code's own /stats total would show "
                               + "here instead, but its cache (~/.claude/stats-cache.json) wasn't found.")
             }
-            // The KPI tiles take the slack the Spacer used to hold. They keep a Spacer above and
-            // below so that when an account has enough models to squeeze the band, the grid is pushed
-            // rather than the billing lines — those must never leave the card.
-            Spacer(minLength: 0)
-            StatsKPIGrid()
-            Spacer(minLength: 0)
+            // Two sections on rules: what you used (total + model mix, which stretches) on top, and a
+            // ledger of counters anchored to the billing footer below. The slack goes between them —
+            // one deliberate gap rather than the two the tiles used to float in. When an account has
+            // enough models to squeeze the band, the Spacer gives first, never the billing lines.
+            if metrics.stats != nil {
+                // Takes the slack the Spacer held — the card's spare height becomes the activity grid,
+                // which sizes itself to it and vanishes when there isn't room for a legible cell.
+                StatsActivityHeatmap()
+                    .frame(maxHeight: .infinity)
+                divider
+                StatsKPIGrid()
+                    .padding(.vertical, 3 * scale)
+            } else {
+                Spacer(minLength: 0)
+            }
             divider
             WeekAllTimeView(showsExpandButton: false, showsLayoutButton: false)
             BillingLineView()

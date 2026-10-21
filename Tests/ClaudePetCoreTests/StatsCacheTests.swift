@@ -136,7 +136,7 @@ import Foundation
         let store = TestSupport.store(defaults: defaults)   // wired to a nonexistent path
         store.ingestForTesting([TestSupport.entry(at: Date(), input: 700, output: 300)])
         #expect(store.statsCache == nil)
-        #expect(store.statsTotalTokens() == nil)
+        #expect(store.stats == nil)
         #expect(store.statsAsOfDescription == nil)
     }
     // MARK: - The lifetime KPI figures
@@ -191,48 +191,4 @@ import Foundation
                    activeDays: days.compactMap { StatsCacheReader.parseDay($0) },
                    hourCounts: hourCounts, asOf: Date())
     }
-
-    /// A current streak extended past the cache can overtake the cache's own longest — the panel
-    /// rendered "current 26d / longest 24d" the first time, which is impossible by definition.
-    @MainActor
-    @Test func longestStreakNeverTrailsTheCurrentOne() throws {
-        let name = "kpi-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: name)!
-        defaults.removePersistentDomain(forName: name)
-        let store = TestSupport.store(defaults: defaults)
-
-        // A cache that stops three days ago while every day since has usage: the current streak is
-        // extended to 4 and must drag the longest up with it.
-        let cal = Calendar.current
-        // The cache file's dates are always GREGORIAN. Building them with `Calendar.current` wrote
-        // "2569-07-28" on this machine — the Thai Buddhist year — and the streak silently refused to
-        // extend. Same trap the production parser is written to avoid; a test can fall into it too.
-        var gregorian = Calendar(identifier: .gregorian)
-        gregorian.timeZone = cal.timeZone
-        func ymd(_ daysAgo: Int) -> String {
-            let d = cal.date(byAdding: .day, value: -daysAgo, to: Date())!
-            let c = gregorian.dateComponents([.year, .month, .day], from: d)
-            return String(format: "%04d-%02d-%02d", c.year!, c.month!, c.day!)
-        }
-        let json = """
-        {"lastComputedDate":"\(ymd(3))",
-         "dailyActivity":[{"date":"\(ymd(3))"}],
-         "modelUsage":{"m":{"inputTokens":1,"outputTokens":1}}}
-        """
-        store.statsCachePath = try write(json)
-        defer { try? FileManager.default.removeItem(atPath: store.statsCachePath) }
-        store.ingestForTesting((0...3).map {
-            TestSupport.entry(at: cal.date(byAdding: .day, value: -$0, to: Date())!,
-                              input: 500, output: 500)
-        })
-
-        let current = store.statsCurrentStreak() ?? 0
-        let longest = store.statsLongestStreak() ?? 0
-        let active = store.statsActiveDays() ?? 0
-        #expect(current > 1, "the streak should have been extended past the cache, got \(current)")
-        #expect(longest >= current, "longest \(longest) must never trail current \(current)")
-        // A streak cannot be longer than the number of days you were active at all.
-        #expect(active >= current, "active days \(active) must never trail the streak \(current)")
-    }
-
 }

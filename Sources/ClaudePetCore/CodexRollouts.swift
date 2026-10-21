@@ -220,8 +220,13 @@ public final class CodexRolloutReader {
         defer { try? handle.close() }
         guard (try? handle.seek(toOffset: entry.parsedUpTo)) != nil else { return }
         var buffer = Data()
-        while case let chunk = handle.readData(ofLength: 1 << 20), !chunk.isEmpty {
+        // Read inside the pool — in the `while` condition every chunk was parked in the caller's pool
+        // until the file ended (see `JSONLParser.parse`).
+        var more = true
+        while more {
             autoreleasepool {
+                let chunk = handle.readData(ofLength: 1 << 20)
+                guard !chunk.isEmpty else { more = false; return }
                 buffer.append(chunk)
                 guard let last = lastNewline(in: buffer) else { return }
                 let complete = buffer[buffer.startIndex..<(buffer.startIndex + last)]

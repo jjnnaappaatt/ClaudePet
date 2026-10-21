@@ -120,34 +120,101 @@ struct CycleCalendarView: View {
     /// and height is what the grid is short of, because square cells are sized by it. Letting the
     /// *words* wrap instead spends the one thing this header has spare — the title's own line — and
     /// puts the figure where the eye already looks for a card's headline number.
+    ///
+    /// **Never let the title wrap freely.** It was `fixedSize(horizontal: false, vertical: true)`, so it
+    /// wrapped to whatever width the figure left it — and on a card narrow enough that was one letter
+    /// per line, "B / il / li / n / g …", which then took the height the calendar needed and pushed
+    /// the grid out of the card entirely. Reported from the real app at a 2000×1256 window; the
+    /// snapshot path had been showing the same thing and was wrongly written off as a renderer quirk.
+    /// Now it is three arrangements tried in order, with words kept whole: one line beside the figure,
+    /// two words beside it, or stacked above it. The last is allowed to shrink, because `ViewThatFits`
+    /// falls back to its last child when none fit, and that child must not be able to overflow.
     private var header: some View {
-        HStack(alignment: .center, spacing: 8 * scale) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Billing cycle")
-                    .scaledFont(15, weight: .semibold)
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)   // wrap rather than truncate
-                if let start = metrics.cycleStart, let end = metrics.cycleReset {
-                    Text(start.formatted(.dateTime.month(.abbreviated).day())
-                         + " – " + end.formatted(.dateTime.month(.abbreviated).day()))
-                        .scaledFont(9).foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1).minimumScaleFactor(0.8)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 8 * scale) {
+                titleBlock(twoLines: false)
+                Spacer(minLength: 0)
+                figure.fixedSize()
+            }
+            HStack(alignment: .center, spacing: 8 * scale) {
+                titleBlock(twoLines: true)
+                Spacer(minLength: 0)
+                figure.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 2 * scale) {
+                HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
+                    Text("Billing cycle")
+                        .scaledFont(15, weight: .semibold).foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                    Spacer(minLength: 0)
+                    // Beside the title when there's room, otherwise left out — never cut.
+                    ViewThatFits(in: .horizontal) {
+                        dateRange.fixedSize()
+                        Color.clear.frame(width: 0, height: 0)
+                    }
+                }
+                figure.lineLimit(1).minimumScaleFactor(0.6)
+            }
+        }
+        // The dates are the part an arrangement may leave out, so they are always one hover away.
+        .help(metrics.cycleStart.flatMap { start in metrics.cycleReset.map { end in
+            "This billing cycle: " + start.formatted(.dateTime.day().month(.abbreviated)) + " – "
+                + end.formatted(.dateTime.day().month(.abbreviated)) + "."
+        } } ?? "")
+    }
+
+    /// Title and dates, every word whole. The dates come in one line or two to match the title.
+    private func titleBlock(twoLines: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Group {
+                if twoLines {
+                    Text("Billing")
+                    Text("cycle")
+                } else {
+                    Text("Billing cycle")
                 }
             }
-            Spacer(minLength: 0)
-            HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
-                // The cycle TOTAL, so it names the basis rather than sitting beside a "/day" caption —
-                // "90.3M work/day" would read as a rate.
-                Text(amount(metrics.budgetUnit == .usd
-                            ? metrics.cycle.costUSD
-                            : Double(metrics.totalsTokens(metrics.cycle))))
-                    .scaledFont(26, weight: .bold, design: .rounded)
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize()
-                if metrics.budgetUnit == .tokens {
-                    Text(metrics.tokenBasisLabel)
-                        .scaledFont(9).foregroundStyle(Theme.textTertiary).fixedSize()
+            .scaledFont(15, weight: .semibold).foregroundStyle(Theme.textPrimary)
+            .fixedSize()
+            if let start = metrics.cycleStart, let end = metrics.cycleReset {
+                let from = start.formatted(.dateTime.month(.abbreviated).day())
+                let to = end.formatted(.dateTime.month(.abbreviated).day())
+                // Whole or on two lines, never "4 Oct – 4…": the cut dropped the one part that says
+                // when the cycle ends.
+                Group {
+                    if twoLines {
+                        Text(from + " –")
+                        Text(to)
+                    } else {
+                        Text(from + " – " + to)
+                    }
                 }
+                .scaledFont(9).foregroundStyle(Theme.textTertiary)
+                .fixedSize()
+            }
+        }
+    }
+
+    @ViewBuilder private var dateRange: some View {
+        if let start = metrics.cycleStart, let end = metrics.cycleReset {
+            Text(start.formatted(.dateTime.month(.abbreviated).day()) + " – "
+                 + end.formatted(.dateTime.month(.abbreviated).day()))
+                .scaledFont(9).foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    /// The cycle TOTAL, so it names the basis rather than sitting beside a "/day" caption —
+    /// "90.3M work/day" would read as a rate.
+    private var figure: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5 * scale) {
+            Text(amount(metrics.budgetUnit == .usd
+                        ? metrics.cycle.costUSD
+                        : Double(metrics.totalsTokens(metrics.cycle))))
+                .scaledFont(26, weight: .bold, design: .rounded)
+                .foregroundStyle(Theme.textPrimary)
+            if metrics.budgetUnit == .tokens {
+                Text(metrics.tokenBasisLabel)
+                    .scaledFont(9).foregroundStyle(Theme.textTertiary)
             }
         }
     }

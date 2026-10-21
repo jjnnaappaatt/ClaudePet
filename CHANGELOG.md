@@ -5,6 +5,41 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **The dashboard's /stats panel is live and matches `/stats` exactly.** Claude Code writes
+  `~/.claude/stats-cache.json` only when `/stats` is opened, so the panel froze at that date: it sat
+  at 17 Sep for 34 days and read 264.28M against `/stats`' real 287.4M, with sessions, messages and
+  the busiest hour all marked "to 17 Sep". ClaudePet now folds every day since in itself, by Claude
+  Code's own rules — ported from its bundle and checked against it: 30 of 30 days identical, to the
+  message and the token. Replaces the old "+Nd" estimate, which used ClaudePet's accounting and ran
+  ~8% low. When the cache gets old enough that transcripts are about to be cleaned up, the panel says
+  "open /stats" — that's the one step only Claude Code can take.
+
+### Changed
+- **Memory: cold-start peak 450–488 MB → 206 MB, settled 170–202 MB → 116–152 MB.** Each 1 MB
+  chunk of a transcript was being kept alive until the whole file was read, so the peak was the size
+  of your largest transcript (215 MB here). The scanner's per-file cache also stops keeping Claude
+  Code's repeated log lines in the default counting mode — 2.5× smaller — at the price of a full
+  re-read when you toggle "Count repeated log lines". CPU over a launch fell too (29–40 s → 19–22 s
+  in the first ~5 minutes), from fewer allocations and a smaller merge.
+- **Figures no longer drift between launches.** When one message was logged at the same instant in
+  several places, which copy counted was decided by an unstable sort, so the 30-day averages moved
+  slightly every time the app started. The choice is now deterministic.
+- **/stats panel: daily activity grid.** The card's spare height now holds `/stats`' own activity
+  grid — a cell per day, shaded in its four quartile steps — sized to the room it has and hidden at
+  the minimum window size.
+- **Billing cycle card: the title no longer breaks letter by letter.** On some window sizes it wrapped
+  to "B / il / li / n / g …" and pushed the calendar out of the card. The header now keeps words
+  whole — one line, two words, or title above the figure — and the dates are shown whole or not at
+  all (they're always in the tooltip), never "4 Oct – 4…".
+- **/stats panel: favourite model and the cache-inclusive total.** "Favourite" uses `/stats`' own
+  rule (most tokens including cache — Opus 5.5 here, though Opus 4.8 wrote the most), and the
+  "Incl. cache" figure beside it shows why. The counters became a ruled two-row ledger above the
+  footer, with columns sized to their labels so nothing shrinks or clips at the minimum window size.
+- **A quieter /stats panel.** One line per model with a hairline share bar (in/out moved to the
+  tooltip), an "Other (N)" cell instead of a "+N more" line, and the tiles `/stats` itself shows:
+  active days out of total, most active day, longest session by duration, peak hour.
+
 ### Added
 - **Device readout in the Today header** — the Mac's SoC temperature (hottest die sensor), macOS's
   thermal state, and ClaudePet's own CPU use, in the space under the cost that used to sit empty.

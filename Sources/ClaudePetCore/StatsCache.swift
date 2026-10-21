@@ -13,6 +13,10 @@ public struct StatsModelTotal: Sendable, Equatable, Identifiable {
     /// What `/stats` counts: input + output, cache EXCLUDED.
     public var workTokens: Int { inputTokens + outputTokens }
 
+    /// Input + output + cache reads + cache writes — `Wo` in Claude Code's bundle. The terminal `/stats`
+    /// prints the sum of this as "Total tokens", and ranks its favourite model by it.
+    public var allTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens }
+
     public var family: ModelFamily { ModelFamily(modelID: model) }
 
     /// "Opus 4.8" from "claude-opus-4-8" — the shape `/stats` prints. Falls back to the raw id when the
@@ -28,13 +32,14 @@ public struct StatsModelTotal: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Claude Code's `/stats` cache — the ONLY source that reproduces the "Total tokens" figure `/stats`
-/// shows.
+/// Claude Code's `/stats` cache: its all-time figures as of the last time `/stats` was opened.
 ///
-/// It cannot be recomputed from the transcripts. Measured against one complete day where `/stats` read
-/// 3,063,775: counting every logged line gives +7.2%, excluding subagent lines gives −3.3%, and
-/// deduplicating by `message.id` gives ×0.36 globally or ×0.46 per file. No rule lands on it, so the
-/// number is read rather than derived.
+/// It is the base, not the answer. The days before `lastComputedDate` can't be recomputed — their
+/// transcripts are deleted after `cleanupPeriodDays` — so they are read from here; the days after it
+/// are folded in live by `StatsReplica`, and `StatsSnapshot.merge` joins the two exactly as Claude Code
+/// does when the dialog opens. (This comment used to say the figure could not be reproduced at all:
+/// every rule tried missed by 3–7%. The rules that were missing are the 100 MiB tail read and UTC days
+/// — see `StatsReplica`.)
 ///
 /// Same class of action as reading `~/.claude.json` or the statusline cache: a local file the user's own
 /// tooling already wrote. No network, no OAuth token — the token is not in this file.
@@ -56,23 +61,34 @@ public struct StatsCache: Sendable, Equatable {
     /// All-time message counts per hour of the local day, 0…23. Sparse in the file.
     public let hourCounts: [Int: Int]
     public let firstSessionDate: Date?
-    public let longestSessionMessages: Int
+    /// The longest session **by wall-clock duration**, which is how `/stats` picks it — not the one
+    /// with the most messages.
+    public let longestSession: StatsSession?
+    public var longestSessionMessages: Int { longestSession?.messageCount ?? 0 }
+    /// Messages per day, keyed by `StatsDay` index. The file's dates are UTC dates.
+    public let dailyMessages: [Int: Int]
     public let asOf: Date                    // file mtime, for freshness display
 
     public init(models: [StatsModelTotal], lastComputedDay: DateComponents?, totalSessions: Int,
                 totalMessages: Int = 0, activeDays: [DateComponents] = [],
+                dailyMessages: [Int: Int]? = nil,
                 hourCounts: [Int: Int] = [:], firstSessionDate: Date? = nil,
-                longestSessionMessages: Int = 0, asOf: Date) {
+                longestSession: StatsSession? = nil, asOf: Date) {
         self.models = models
         self.lastComputedDay = lastComputedDay
         self.totalSessions = totalSessions
         self.totalMessages = totalMessages
         self.activeDays = activeDays
+        self.dailyMessages = dailyMessages ?? Dictionary(
+            activeDays.compactMap { StatsDay.index(of: $0).map { ($0, 0) } }, uniquingKeysWith: +)
         self.hourCounts = hourCounts
         self.firstSessionDate = firstSessionDate
-        self.longestSessionMessages = longestSessionMessages
+        self.longestSession = longestSession
         self.asOf = asOf
     }
+
+    /// The first day `/stats` would fold in on top of this file — the delta's `fromDay`.
+    public var nextDay: Int? { lastComputedDay.flatMap(StatsDay.index(of:)).map { $0 + 1 } }
 
     /// The hour of the day with the most messages, all time. Nil when the file records none.
     ///
@@ -88,8 +104,7 @@ public struct StatsCache: Sendable, Equatable {
     public var longestStreak: Int { Self.streaks(activeDays).max() ?? 0 }
 
     /// The run of consecutive active days ending at the **last day the cache knows about** — which is
-    /// not necessarily today. `MetricsStore.statsCurrentStreak()` extends it across the days the cache
-    /// hasn't folded in yet.
+    /// not necessarily today. The live figure is `StatsSnapshot.currentStreak`.
     public var streakEndingAtLastDay: Int { Self.streaks(activeDays).last ?? 0 }
 
     /// Run lengths of consecutive days, in order. Uses a fixed Gregorian calendar: these are the
@@ -147,11 +162,7 @@ public struct StatsCache: Sendable, Equatable {
         return last >= today
     }
 
-    /// The cache's last day as an instant, for display **and for bounding the gap** that
-    /// `MetricsStore.statsGapDays` fills from local history. There was an `endsYesterday` companion to
-    /// `covers` here; it is gone deliberately. It encoded the rule that only a one-day gap could be
-    /// closed, which left a seven-day-old total on screen unmarked, and a predicate with no caller is
-    /// an invitation to wire that rule back in.
+    /// The cache's last day as an instant, for display.
     ///
     /// Built on a Gregorian calendar for the same reason as above — `Calendar.current.date(from:)`
     /// would read 2026 as a Buddhist year and land in the 15th century.
@@ -184,8 +195,8 @@ public enum StatsCacheReader {
             let cacheReadInputTokens: Int?
             let cacheCreationInputTokens: Int?
         }
-        struct DailyActivity: Decodable { let date: String? }
-        struct LongestSession: Decodable { let messageCount: Int? }
+        struct DailyActivity: Decodable { let date: String?; let messageCount: Int? }
+        struct LongestSession: Decodable { let messageCount: Int?; let duration: Double?; let timestamp: String? }
         let lastComputedDate: String?
         let modelUsage: [String: Usage]?
         let totalSessions: Int?
@@ -198,7 +209,7 @@ public enum StatsCacheReader {
 
     /// `"2026-07-29"` → y/m/d components. No calendar or timezone involved, deliberately — see
     /// `StatsCache.lastComputedDay`.
-    static func parseDay(_ s: String?) -> DateComponents? {
+    public static func parseDay(_ s: String?) -> DateComponents? {
         guard let s else { return nil }
         let parts = s.split(separator: "-").compactMap { Int($0) }
         guard parts.count == 3 else { return nil }
@@ -227,6 +238,15 @@ public enum StatsCacheReader {
 
         let mtime = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
         let days = (raw.dailyActivity ?? []).compactMap { parseDay($0.date) }
+        var daily: [Int: Int] = [:]
+        for a in raw.dailyActivity ?? [] {
+            if let d = parseDay(a.date).flatMap(StatsDay.index(of:)) { daily[d, default: 0] += a.messageCount ?? 0 }
+        }
+        let longest = raw.longestSession.flatMap { l -> StatsSession? in
+            guard let start = l.timestamp.flatMap(TimestampParser.date(from:)) else { return nil }
+            // `duration` is milliseconds in the file.
+            return StatsSession(duration: (l.duration ?? 0) / 1000, messageCount: l.messageCount ?? 0, start: start)
+        }
         let hours = (raw.hourCounts ?? [:]).reduce(into: [Int: Int]()) { out, kv in
             if let h = Int(kv.key), (0...23).contains(h) { out[h] = kv.value }
         }
@@ -234,11 +254,12 @@ public enum StatsCacheReader {
                           totalSessions: raw.totalSessions ?? 0,
                           totalMessages: raw.totalMessages ?? 0,
                           activeDays: days,
+                          dailyMessages: daily,
                           hourCounts: hours,
                           firstSessionDate: raw.firstSessionDate.flatMap {
                               Self.statsFormatter.date(from: $0)
                           },
-                          longestSessionMessages: raw.longestSession?.messageCount ?? 0,
+                          longestSession: longest,
                           asOf: mtime ?? Date())
     }
 }

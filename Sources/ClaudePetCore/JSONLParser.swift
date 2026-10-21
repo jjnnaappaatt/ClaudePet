@@ -148,10 +148,20 @@ public enum JSONLParser {
         var newlines: [Int] = []          // reused across chunks; one allocation, not one per chunk
         let chunkSize = 1 << 20           // 1 MB
 
-        while case let chunk = handle.readData(ofLength: chunkSize), !chunk.isEmpty {
-            // Drain per chunk: JSON decoding spins off many autoreleased Foundation
-            // temporaries; without this they pile up to a huge peak over a 100 MB+ file.
+        // Drain per chunk: JSON decoding spins off many autoreleased Foundation temporaries; without
+        // this they pile up to a huge peak over a 100 MB+ file.
+        //
+        // **The read must be inside the pool, not in the `while` condition.** `readData` returns an
+        // autoreleased buffer, and read in the condition it landed in the *caller's* pool — the
+        // scanner's per-file one — so every 1 MB chunk of a file stayed live until the whole file was
+        // done. The pool here drained everything except the chunks themselves. The peak was therefore
+        // the size of the largest transcript (215 MB here, 682 MB measured on another corpus), freed
+        // afterwards but kept by malloc as "(empty)" regions: 250 MB of a 480 MB cold-scan peak.
+        var more = true
+        while more {
             autoreleasepool {
+                let chunk = handle.readData(ofLength: chunkSize)
+                guard !chunk.isEmpty else { more = false; return }
                 buffer.append(chunk)
                 lineOffsets(in: buffer, into: &newlines)
                 guard let lastNewline = newlines.last else { return }

@@ -32,8 +32,9 @@ The pet's design is an original code-drawn homage to **Clawd**, the Claude Code 
 
 **In the dashboard** (the ⤢ button, or a real full-screen window)
 
-- Claude Code's own lifetime **`/stats` total**, with each model's share and in/out split, plus
-  lifetime **KPI tiles** — sessions, messages, active days, current and longest streak, busiest hour.
+- Claude Code's own lifetime **`/stats` total**, live — the same figures `/stats` would print right
+  now, even if you haven't opened it in weeks — with each model's share, plus lifetime **KPI tiles**:
+  sessions, messages, active days, most active day, streaks, longest session, peak hour.
 - **This billing cycle as a calendar** — one shaded cell per day, denser where you worked harder.
 - **Subagents today** as a pace bar, and **Subagents/day** as each day's delegated share on a fixed
   0–100% axis — turns run by the Task tool, including workflow agents.
