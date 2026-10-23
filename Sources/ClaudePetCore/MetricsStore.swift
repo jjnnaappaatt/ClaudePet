@@ -31,9 +31,9 @@ public final class MetricsStore {
     public private(set) var cycleStart: Date?      // start of the current billing cycle
     public private(set) var cycleReset: Date?      // end of the current billing cycle (next anniversary)
     public private(set) var serverUsage: StatuslineUsage?   // real 5h/7d from the statusline cache (local file read; no token/network)
-    /// Codex's own quota windows, from the statusline's Codex cache. Empty on a machine with no
-    /// Codex — the UI hides the row rather than drawing it at 0%, which would be a claim about a
-    /// tool that isn't installed.
+    /// Codex's own quota windows — from Codex's rollouts, else the statusline's Codex cache — with
+    /// any window that has already ended shown as reset (`CodexLimit.asReset`). Empty on a machine with no Codex — the UI hides
+    /// the row rather than drawing it at 0%, which would be a claim about a tool that isn't installed.
     public private(set) var codexUsage: [CodexLimit] = []
 
     // Config (user-editable; persisted to UserDefaults)
@@ -125,13 +125,43 @@ public final class MetricsStore {
     /// and silently switching off a Codex row with it would be a surprise; the row already hides
     /// itself whenever the file is missing, which is the case the toggle would be standing in for.
     public var codexUsageCachePath = CodexUsageReader.defaultPath
+    /// Codex's own session folder, read directly so the Codex row survives a restart (which empties
+    /// `/tmp`, and with it the cache above, until a terminal statusline happens to run). Preferred
+    /// over the cache whenever it yields a reading; nil switches it off. Defaults to the REAL
+    /// `~/.codex/sessions` — same test hazard as the paths around it, see `TestSupport.store`.
+    public var codexSessionsRoot: String? = CodexRolloutReader.defaultRoot {
+        didSet { codexRollouts = codexSessionsRoot.map { CodexRolloutReader(root: $0) } }
+    }
+    /// Holds the per-rollout token cache between recomputes; rebuilt only when the root changes.
+    @ObservationIgnored private lazy var codexRollouts: CodexRolloutReader? =
+        codexSessionsRoot.map { CodexRolloutReader(root: $0) }
     /// Claude Code's own `/stats` cache. Injectable, and — exactly like `statuslineCachePath` — it
     /// defaults to the REAL file, so any test touching these figures must go through
     /// `TestSupport.store(defaults:)` or it reads the developer's own usage and passes by machine.
     public var statsCachePath = StatsCacheReader.defaultPath
     public private(set) var statsCache: StatsCache?
-    /// Our own per-model usage over the days the cache hasn't folded in (see `statsModels`).
-    public private(set) var statsGapModels: [StatsModelTotal] = []
+    /// Where `/stats` reads transcripts from, for `StatsReplica`. Defaults to the REAL
+    /// `~/.claude/projects` — nil switches the live fold-in off, and `TestSupport.store` does, or a
+    /// test that writes a cache would scan the developer's own history.
+    public var statsTranscriptRoot: String? = StatsReplica.defaultRoot {
+        didSet {
+            statsScanner = statsTranscriptRoot.map { StatsReplicaScanner(root: $0) }
+            statsDelta = nil
+        }
+    }
+    /// `/stats`' figures as Claude Code would print them now: the cache plus everything since.
+    public private(set) var stats: StatsSnapshot?
+    /// Owns the per-file cache, so a refresh reads only what was appended.
+    @ObservationIgnored private lazy var statsScanner: StatsReplicaScanner? =
+        statsTranscriptRoot.map { StatsReplicaScanner(root: $0) }
+    @ObservationIgnored private var statsDelta: StatsDelta?
+    @ObservationIgnored private var statsDeltaInFlight = false
+    @ObservationIgnored private var statsDeltaFollowUp = false
+    @ObservationIgnored private var statsDeltaTrailing = false
+    @ObservationIgnored private var statsDeltaStartedAt = Date.distantPast
+    /// A live session's transcript is often past `StatsReplica.tailLimit`, and those are re-read in
+    /// full (their last 100 MiB) on every change — so this is the CPU dial, not a freshness one.
+    public static let statsRefreshInterval: TimeInterval = 60
     public var extraUsageEnabled: Bool { account.extraUsageEnabled }
 
     /// Anchor for the fixed weekly-limit grid: the configured reset weekday + time of day,
@@ -341,11 +371,13 @@ public final class MetricsStore {
             || sideFileStamps() != sideFileStamp
     }
 
-    /// Modification dates of the files `recompute()` re-reads every pass.
+    /// Modification dates of the files `recompute()` re-reads every pass. The newest Codex rollout
+    /// is one of them now that Codex is read directly: without it a Codex-only session (no Claude
+    /// transcript moving) would leave the row up to an hour behind.
     private func sideFileStamps() -> [Date?] {
         [statuslineCachePath, codexUsageCachePath, statsCachePath].map {
             (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date
-        }
+        } + [codexRollouts?.latestModification()]
     }
 
     /// The earliest instant at which a figure could change with no new data: a day/hour rolling
@@ -362,6 +394,8 @@ public final class MetricsStore {
             serverUsage.map { $0.asOf.addingTimeInterval(Self.serverDataMaxAge) },
         ]
         candidates += codexUsage.map { Optional($0.resetsAt) }
+        // `/stats`' day — and with it the current streak — turns over at UTC midnight.
+        candidates.append(Date(timeIntervalSince1970: Double(StatsDay.index(of: now) + 1) * 86_400))
         return candidates.compactMap { $0 }.filter { $0 > now }.min()
             ?? now.addingTimeInterval(3600)
     }
@@ -394,7 +428,14 @@ public final class MetricsStore {
         lastEntries = UsageScanner.scanOnce(deduplicated: !countRepeatedLogLines)
         entriesFromScanner = false              // not the actor's result; never delta onto it
         entriesGeneration += 1
+        statsDeltaInFlight = true               // folded in synchronously below, not on the actor
         recompute()
+        if let root = statsTranscriptRoot, let cache = statsCache {
+            statsDelta = StatsReplica(root: root).delta(fromDay: cache.nextDay)
+            rebuildStats(now: Date())
+        }
+        statsDeltaInFlight = false
+        statsDeltaStartedAt = Date()
     }
 
     /// Re-aggregate the last-scanned entries with the current config (pricing,
@@ -438,14 +479,25 @@ public final class MetricsStore {
         // Real server-side 5h/7d numbers, read from the statusline's local cache (no token,
         // no network — ClaudePet only reads the file the user's statusline already wrote).
         serverUsage = useStatuslineData ? StatuslineUsageReader.read(path: statuslineCachePath) : nil
-        // A few dozen bytes on the same 30s tick — no new timer, and nothing here that the
-        // allocation budget notices.
-        codexUsage = CodexUsageReader.read(path: codexUsageCachePath)
+        // Rollouts first: they're the source the cache is computed from, they're current to the
+        // write rather than to the statusline's 60s cache, and they survive a restart. The cache
+        // stays as the fallback (and is what `CLAUDEPET_CODEX` fakes). Incremental — an unchanged
+        // rollout isn't re-read, a growing one only from where it left off.
+        //
+        // A window that has already reset is shown as reset, at 0%: its percentage describes a
+        // window that is over — a 5h row read 4% for one that had ended 68 hours earlier. Not
+        // dropped either: that hid the session row entirely, which read as a missing feature.
+        // Marked here rather than tested at render time so the array itself changes at the reset —
+        // a view comparing `Date()` would not re-render until something else moved. Each `resetsAt`
+        // is in `computeNextDeadline`, so the flip lands on time.
+        let codex = codexRollouts?.read() ?? []
+        codexUsage = (codex.isEmpty ? CodexUsageReader.read(path: codexUsageCachePath) : codex)
+            .map { $0.isUsable(now: now) ? $0 : $0.asReset() }
         // Cheap (22 KB) and it only changes when Claude Code recomputes, so a plain re-read per
         // recompute is fine — no need for the mtime/size cache `UsageScanner` needs for 100 MB files.
         statsCache = StatsCacheReader.read(path: statsCachePath)
-        statsGapModels = Self.perModel(entries, after: statsGapCutoff(calendar: .current), upTo: now,
-                                       calendar: .current)
+        rebuildStats(now: now)
+        requestStatsDelta(now: now)
         // Must run before the mood/weather edges below, which read the gauge fractions this moves.
         applyServerCalibration(now: now, entries: entries)
         lastUpdated = now
@@ -639,8 +691,8 @@ public final class MetricsStore {
         defaults.set(weatherEffectsEnabled, forKey: Key.weatherEffectsEnabled)
         defaults.set(tokenBasis.rawValue, forKey: Key.tokenBasis)
         recompute()
-        // Dedup happens during the scan's merge, not in `recompute`, so this one setting needs a
-        // re-scan to take effect. It re-merges the per-file parse cache — no file is re-read.
+        // Dedup happens during the scan, not in `recompute`, so this one setting needs a re-scan to
+        // take effect — and a full re-read, since the dedup-mode cache keeps no in-file repeats.
         if hasScannedFromDisk, lastScanCountedRepeats != countRepeatedLogLines {
             requestRefresh(.everything)
         }
@@ -1362,189 +1414,63 @@ public final class MetricsStore {
 
     // MARK: - Claude Code's /stats figures
 
-    /// Our own daily history for the days the cache hasn't folded in yet — nil when it can't be
-    /// trusted to cover them.
+    /// Fold in what `/stats` would add on top of its cache, off the main actor, at most once per
+    /// `statsRefreshInterval`. Called from every `recompute()`, which is to say whenever a transcript
+    /// moves — a request inside the interval leaves one trailing refresh behind it, so the last
+    /// burst of a session is never left out.
     ///
-    /// Built from `allTimeDaily`, deliberately **not** from the `weekDaily`/`cycleDaily` pair
-    /// `statsLocalDaysAfterCache` uses. Those answer "which dates were active", which is all the
-    /// streak needs, but they cannot be summed: `weekDaily`'s reset-day bucket folds the window's
-    /// trailing hours back onto its opening slot (`% 7`), so one bucket can hold two calendar dates'
-    /// tokens — measured live at 1,612,803 + 432,336 reading as a single day. `allTimeDaily` is one
-    /// bucket per real date, which is exactly what makes it addable.
-    ///
-    /// The guard is the part that matters. Our history has to reach back to the cache's own last day;
-    /// if it starts *after* that day, the days in between are absent from both sides and adding only
-    /// what we hold would produce a total that is neither the cache's nor ours. That is a real state,
-    /// not a defensive one: Claude Code deletes transcripts past `cleanupPeriodDays`, so a cache left
-    /// un-recomputed for months outlives the local history it would need to be extended with.
-    /// Start of the first day the cache hasn't folded in, or nil when the gap can't be filled —
-    /// the same refusal rule as `statsGapDays`, from the same inputs.
-    private func statsGapCutoff(calendar: Calendar) -> Date? {
-        guard let c = statsCache, let lastCached = c.lastComputedDate(calendar: calendar),
-              let earliest = allTimeDaily.first?.date else { return nil }
-        let cutoff = calendar.startOfDay(for: lastCached)
-        guard earliest <= cutoff else { return nil }
-        return calendar.date(byAdding: .day, value: 1, to: cutoff)
-    }
-
-    /// Per-model totals over `[start, end of today)` — the same span and the same entries
-    /// `statsGapDays` sums, so the rows it extends add up to the extended headline exactly.
-    /// `entries` is sorted, so the span is found by binary search rather than a full-history pass.
-    static func perModel(_ entries: [UsageEntry], after start: Date?, upTo now: Date,
-                         calendar: Calendar) -> [StatsModelTotal] {
-        guard let start, let end = calendar.date(byAdding: .day, value: 1,
-                                                  to: calendar.startOfDay(for: now)) else { return [] }
-        var lo = 0, hi = entries.count
-        while lo < hi {
-            let mid = (lo + hi) / 2
-            if entries[mid].timestamp < start { lo = mid + 1 } else { hi = mid }
+    /// A new cache watermark skips the wait: the old delta covers days the cache now holds, so
+    /// `StatsSnapshot.merge` drops it rather than double-count, and until a new one lands the panel
+    /// is the bare cache — short by today.
+    private func requestStatsDelta(now: Date) {
+        guard let scanner = statsScanner, let cache = statsCache else { return }
+        if statsDeltaInFlight { statsDeltaFollowUp = true; return }
+        let fromDay = cache.nextDay
+        let wait = statsDelta?.fromDay == fromDay
+            ? Self.statsRefreshInterval - now.timeIntervalSince(statsDeltaStartedAt) : 0
+        if wait > 0 {
+            guard !statsDeltaTrailing else { return }
+            statsDeltaTrailing = true
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                guard let self else { return }
+                self.statsDeltaTrailing = false
+                self.requestStatsDelta(now: Date())
+            }
+            return
         }
-        var sums: [String: (i: Int, o: Int, r: Int, w: Int)] = [:]
-        for e in entries[lo...] where e.timestamp < end {
-            var t = sums[e.model] ?? (0, 0, 0, 0)
-            t.i += e.inputTokens; t.o += e.outputTokens
-            t.r += e.cacheReadTokens; t.w += e.cacheWrite5mTokens + e.cacheWrite1hTokens
-            sums[e.model] = t
+        statsDeltaInFlight = true
+        statsDeltaStartedAt = now
+        let zone = TimeZone.current
+        Task { [weak self] in
+            let delta = await scanner.delta(fromDay: fromDay, now: now, timeZone: zone)
+            guard let self else { return }
+            self.statsDelta = delta
+            self.rebuildStats(now: Date())
+            self.statsDeltaInFlight = false
+            // A fold-in reads up to 100 MiB per changed transcript; its buffers are freed, but malloc
+            // keeps the arenas unless asked — the same reason a scan ends with this call.
+            Self.returnFreedMemoryToTheOS()
+            if self.statsDeltaFollowUp {
+                self.statsDeltaFollowUp = false
+                self.requestStatsDelta(now: Date())
+            }
         }
-        return sums.map { StatsModelTotal(model: $0.key, inputTokens: $0.value.i, outputTokens: $0.value.o,
-                                          cacheReadTokens: $0.value.r, cacheWriteTokens: $0.value.w) }
     }
 
-    /// `/stats`' per-model rows, extended across the gap the same way `statsTotalTokens` is — so the
-    /// rows keep summing to the headline above them instead of freezing at the cache's date while
-    /// the headline moves. Heaviest first. The cache's rows unchanged when the gap can't be filled.
-    public func statsModels(now: Date = Date(), calendar: Calendar = .current) -> [StatsModelTotal] {
-        guard let c = statsCache else { return [] }
-        guard statsGapDays(now: now, calendar: calendar) != nil, !statsGapModels.isEmpty else { return c.models }
-        var byID = Dictionary(uniqueKeysWithValues: c.models.map { ($0.model, $0) })
-        for g in statsGapModels where g.workTokens > 0 {
-            let base = byID[g.model]
-            byID[g.model] = StatsModelTotal(
-                model: g.model,
-                inputTokens: (base?.inputTokens ?? 0) + g.inputTokens,
-                outputTokens: (base?.outputTokens ?? 0) + g.outputTokens,
-                cacheReadTokens: (base?.cacheReadTokens ?? 0) + g.cacheReadTokens,
-                cacheWriteTokens: (base?.cacheWriteTokens ?? 0) + g.cacheWriteTokens)
-        }
-        return byID.values.sorted { ($0.workTokens, $0.model) > ($1.workTokens, $1.model) }
+    private func rebuildStats(now: Date) {
+        stats = statsCache.map { StatsSnapshot.merge(cache: $0, delta: statsDelta, now: now) }
     }
 
-    private func statsGapDays(now: Date, calendar: Calendar) -> [DayTotal]? {
-        guard let c = statsCache, let lastCached = c.lastComputedDate(calendar: calendar),
-              let earliest = allTimeDaily.first?.date else { return nil }
-        let cutoff = calendar.startOfDay(for: lastCached)
-        guard earliest <= cutoff else { return nil }
-        let today = calendar.startOfDay(for: now)
-        return allTimeDaily.filter { $0.date > cutoff && $0.date <= today }
-    }
-
-    /// `/stats`' "Total tokens", extended across every day the cache hasn't folded in yet.
+    /// Whole days since Claude Code last saved its cache, counted on its own UTC days.
     ///
-    /// This used to add today alone, and only when the cache stopped exactly at yesterday — anything
-    /// staler showed the cache's own figure unchanged. That is honest but it goes quietly wrong the
-    /// moment Claude Code stops recomputing, and it does: the file sat at 4 August for seven days of
-    /// daily use, so the panel read **151.4M against Claude Code's own 160.9M** with nothing on screen
-    /// to say the number was a week old. Six days of usage were missing, not one.
-    ///
-    /// The added days are ClaudePet's accounting, not `/stats`' — measured on one complete day the two
-    /// ran within about ±7% of each other. Over a six-day gap that is ±0.4M on a 157M headline
-    /// (±0.26%), against 3.7% low for refusing to fill it. Better, and `statsFilledDays` lets the UI
-    /// say which part is ours.
-    public func statsTotalTokens(now: Date = Date(), calendar: Calendar = .current) -> Int? {
-        guard let c = statsCache else { return nil }
-        guard let gap = statsGapDays(now: now, calendar: calendar) else { return c.totalWorkTokens }
-        // `workTokens`, never `dayTokens`: `/stats`' figure excludes cache, while `dayTokens` routes
-        // through the user's display basis — which defaults to `.total`, and would splice a
-        // cache-inclusive slice onto a cache-excluded total. Roughly a 200× error per added day.
-        return c.totalWorkTokens + gap.reduce(0) { $0 + $1.workTokens }
-    }
-
-    /// How many days of our own the figure above carries on top of the cache. Zero when the cache is
-    /// already current, and zero when the gap couldn't be filled — `statsIsDated` separates those.
-    public func statsFilledDays(now: Date = Date(), calendar: Calendar = .current) -> Int {
-        statsGapDays(now: now, calendar: calendar)?.count ?? 0
-    }
-
-    /// True when the cache itself stops before today — whether or not the headline could be filled.
-    /// The figures that are never extended (sessions, messages, …) are behind in either case.
-    public func statsCacheLags(now: Date = Date(), calendar: Calendar = .current) -> Bool {
-        guard let c = statsCache else { return false }
-        return !c.covers(now, calendar: calendar) && (statsGapDays(now: now, calendar: calendar)?.isEmpty != true)
-    }
-
-    /// True when the headline stops at the cache's date instead of reaching today.
-    ///
-    /// The one state the panel has to say **on screen**: a seven-day-old total renders pixel-identical
-    /// to a current one, which is the whole reason the 151.4M above went unnoticed. Note that a cache
-    /// which simply predates a stretch of idle days is *not* dated — its figure is still current, and
-    /// `statsGapDays` returns an empty gap rather than nil for that.
-    public func statsIsDated(now: Date = Date(), calendar: Calendar = .current) -> Bool {
-        guard let c = statsCache, !c.covers(now, calendar: calendar) else { return false }
-        return statsGapDays(now: now, calendar: calendar) == nil
-    }
-
-    /// The current run of consecutive active days, **extended past the cache** with days it hasn't
-    /// folded in yet.
-    ///
-    /// Read straight out of the cache this is the one KPI that goes stale in a way that misleads: the
-    /// file is recomputed at most daily, so a streak ending on its last day understates by however far
-    /// behind it is — it said 24 while the true answer was 26. Same shape as `statsTotalTokens`'
-    /// today-delta: trust the cache for the span it covers, and use our own days only for the span it
-    /// doesn't.
-    ///
-    /// Extension stops at the first day with no usage, which ends the streak rather than skipping the
-    /// gap. It also stops at the edge of `cycleDaily`, which is all the local history in hand — so a
-    /// cache older than the billing cycle returns its own figure unchanged rather than a guess.
-    /// Days our own history shows as active **after** the cache's last day.
-    ///
-    /// Every figure that the cache can undercount has to be extended by the same span, or the tiles
-    /// contradict each other: the first render showed a 27-day streak beside 26 active days, which
-    /// cannot happen. One helper, three callers.
-    private func statsLocalDaysAfterCache(now: Date, calendar: Calendar) -> [Date] {
-        guard let c = statsCache, let lastCached = c.lastComputedDate(calendar: calendar) else { return [] }
-        let cutoff = calendar.startOfDay(for: lastCached)
-        let today = calendar.startOfDay(for: now)
-        // BOTH series: there is no all-time daily history, `cycleDaily` is empty until a billing
-        // anchor exists, and `weekDaily` only reaches back to the weekly reset.
-        return Set((weekDaily + cycleDaily)
-                    .filter { dayTokens($0) > 0 || $0.costUSD > 0 }
-                    .map { calendar.startOfDay(for: $0.date) })
-            .filter { $0 > cutoff && $0 <= today }
-            .sorted()
-    }
-
-    /// Active days, extended past the cache the same way the streak is.
-    public func statsActiveDays(now: Date = Date(), calendar: Calendar = .current) -> Int? {
-        guard let c = statsCache else { return nil }
-        guard !c.activeDays.isEmpty else { return nil }
-        return c.activeDays.count + statsLocalDaysAfterCache(now: now, calendar: calendar).count
-    }
-
-    /// The longest run on record — **including** the current one once it has been extended past the
-    /// cache. Without this the panel could show a current streak longer than its own longest, which is
-    /// impossible by definition: the cache's `longestStreak` stops at the last day it folded in, so an
-    /// extended current streak can overtake it (26 vs 24 the first time this rendered).
-    public func statsLongestStreak(now: Date = Date(), calendar: Calendar = .current) -> Int? {
-        guard let c = statsCache else { return nil }
-        return max(c.longestStreak, statsCurrentStreak(now: now, calendar: calendar) ?? 0)
-    }
-
-    public func statsCurrentStreak(now: Date = Date(), calendar: Calendar = .current) -> Int? {
-        guard let c = statsCache, !c.activeDays.isEmpty else { return nil }
-        var streak = c.streakEndingAtLastDay
-        guard let lastCached = c.lastComputedDate(calendar: calendar) else { return streak }
-
-        // Walk forward one day at a time from the cache's edge, stopping at the first day with no
-        // usage — that ends the streak rather than skipping the gap.
-        var cursor = calendar.startOfDay(for: lastCached)
-        let ours = Set(statsLocalDaysAfterCache(now: now, calendar: calendar))
-        while let next = calendar.date(byAdding: .day, value: 1, to: cursor),
-              next <= calendar.startOfDay(for: now),
-              ours.contains(next) {
-            streak += 1
-            cursor = next
-        }
-        return streak
+    /// This is the one thing ClaudePet cannot fix. Claude Code deletes transcripts after
+    /// `cleanupPeriodDays` (30 by default) and folds them into its all-time totals only when `/stats`
+    /// is opened — so a day that ages out before the next visit is gone from `/stats` for good, and
+    /// from this panel with it, since it mirrors `/stats` exactly. Measured here: the cache sat at
+    /// 17 Sep until 21 Oct, and the transcripts for 18–20 Sep were already partly deleted.
+    public func statsCacheAgeDays(now: Date = Date()) -> Int? {
+        statsCache?.nextDay.map { StatsDay.index(of: now) - ($0 - 1) }
     }
 
     /// "29 Jul" — the last day Claude Code folded into its cache.
@@ -1858,8 +1784,10 @@ public final class MetricsStore {
             },
             hourCounts: [9: 14, 11: 24, 14: 31, 22: 13],
             firstSessionDate: g.date(byAdding: .day, value: -84, to: now),
-            longestSessionMessages: 1_720,
+            longestSession: StatsSession(duration: 5 * 86_400 + 4 * 3600, messageCount: 1_720,
+                                         start: g.date(byAdding: .day, value: -40, to: now) ?? now),
             asOf: now)
+        rebuildStats(now: now)
         lastUpdated = now
     }
 }

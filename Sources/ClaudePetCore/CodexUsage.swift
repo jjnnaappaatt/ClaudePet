@@ -9,8 +9,8 @@ public enum CodexFreshness: Sendable, Equatable {
     case ancient    // over a day — old enough that the reset it names has probably already happened
 }
 
-/// One Codex rate-limit window (today a 7-day one; a 5-hour one existed before 2026-07-14 and the
-/// format still carries it), as written into the terminal statusline's local cache.
+/// One Codex rate-limit window (a 7-day one, and a 5-hour one again since at least 2026-10), read
+/// from Codex's rollouts by `CodexRolloutReader` or from the terminal statusline's local cache.
 public struct CodexLimit: Sendable, Equatable {
     public let windowMinutes: Int
     public let utilization: Double     // 0–100 %, Codex's own accounting
@@ -29,14 +29,27 @@ public struct CodexLimit: Sendable, Equatable {
     /// `nil`, never 0, when unknown: the cache writes 0 for "could not tell", and a Codex row
     /// claiming zero tokens in a week it was plainly used is worse than one that stays quiet.
     public let tokensUsed: Int?
+    /// The window this reading described has ended and Codex hasn't reported since. Set by
+    /// `MetricsStore` via `asReset()`, never by a reader.
+    public let hasReset: Bool
 
     public init(windowMinutes: Int, utilization: Double, resetsAt: Date, recordedAt: Date,
-                tokensUsed: Int? = nil) {
+                tokensUsed: Int? = nil, hasReset: Bool = false) {
         self.windowMinutes = windowMinutes
         self.utilization = utilization
         self.resetsAt = resetsAt
         self.recordedAt = recordedAt
         self.tokensUsed = tokensUsed
+        self.hasReset = hasReset
+    }
+
+    /// This window once it has rolled over with no newer reading: 0%, and no token count — the
+    /// count belonged to the window that ended. 0% rather than hidden because the window really is
+    /// empty as far as this Mac knows (any Codex run here would have written a newer snapshot), and a
+    /// row that vanishes reads as "Codex isn't installed". `recordedAt` is kept for "last used".
+    public func asReset() -> CodexLimit {
+        CodexLimit(windowMinutes: windowMinutes, utilization: 0, resetsAt: resetsAt,
+                   recordedAt: recordedAt, tokensUsed: nil, hasReset: true)
     }
 
     public var fraction: Double { min(1, max(0, utilization / 100)) }

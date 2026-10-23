@@ -1,26 +1,29 @@
 import SwiftUI
 import ClaudePetCore
 
-/// Claude Code's own lifetime totals, as `/stats` reports them: the headline "Total tokens" plus each
-/// model's share and its input/output split.
+/// Claude Code's lifetime totals, as `/stats` reports them right now: the headline "Total tokens" and
+/// each model's share of it.
 ///
-/// These are **read from `~/.claude/stats-cache.json`, not computed here** — `/stats`' figure cannot be
-/// reproduced from the transcripts (see `StatsCache`). That also means they follow Claude Code's
-/// accounting, not ClaudePet's: cache tokens are excluded and the work/total setting does not apply, so
-/// this panel deliberately ignores `TokenBasis`. Every other token figure on the dashboard is ClaudePet's
-/// own count and will not match — hence the explicit "/stats" labelling.
+/// **Live, not a snapshot.** `MetricsStore.stats` is the cache Claude Code last wrote plus every day
+/// since, folded in by the same rules `/stats` itself uses (`StatsReplica`), so this matches `/stats`
+/// to the token whenever it is opened. It also follows Claude Code's accounting rather than ClaudePet's
+/// — cache excluded, repeated log lines counted, the work/total setting ignored — so it will not match
+/// the other token figures on the dashboard, and is labelled `/stats` for that reason.
 struct StatsModelBreakdownView: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(\.widgetScale) private var scale
 
-    /// Eight, in two columns of four — enough that every model a real account has used fits, so the
-    /// "+N more" line normally doesn't appear at all. Each model needs two lines and nothing on the
-    /// dashboard scrolls (verified: `ScrollView` renders blank through `ImageRenderer`, like `Form`), so
-    /// a single column could only afford three; pairing them is what makes eight affordable. The fourth
-    /// row is paid for by the summary card now matching the taller limits card beside it.
-    private static let maxModels = 8
+    /// Eight cells, two columns of four. One line per model rather than the two this used to take
+    /// (name, then "In … · Out …"): the split moved to the tooltip, and the grid now costs half the
+    /// height for the same models. A ninth model and beyond fold into the last cell as "Other".
+    private static let maxCells = 8
 
-    private let dotColor: [ModelFamily: Color] = [
+    /// Past this, a cache this old has transcripts close to Claude Code's 30-day cleanup — see
+    /// `MetricsStore.statsCacheAgeDays`.
+    private static let staleAfterDays = 21
+
+    /// Shared with `StatsKPIGrid`'s favourite tile, so its dot reads as a pointer into this grid.
+    static let dotColor: [ModelFamily: Color] = [
         .fable: Color(red: 0.72, green: 0.55, blue: 0.95),
         .opus: Theme.claudeCoral,
         .sonnet: Theme.highlight,
@@ -28,134 +31,147 @@ struct StatsModelBreakdownView: View {
         .other: Color.gray,
     ]
 
-    var body: some View {
-        if metrics.statsCache != nil, let total = metrics.statsTotalTokens() {
-            // Extended across the gap like the headline, so the rows keep adding up to it.
-            let models = metrics.statsModels()
-            let shown = Array(models.prefix(Self.maxModels))
-            let rest = models.dropFirst(Self.maxModels)
-            // Chunk into pairs so the grid stays a plain VStack of HStacks — `LazyVGrid` would give the
-            // same picture, but lazy containers are the family that renders blank through
-            // `ImageRenderer`, and this view has to stay snapshot-verifiable.
-            let pairs = stride(from: 0, to: shown.count, by: 2).map {
-                Array(shown[$0 ..< min($0 + 2, shown.count)])
-            }
-            // Derived once and threaded down. Both of these re-filter `allTimeDaily` through
-            // `statsGapDays`, and between the chip and the tooltip the body asked for them five
-            // times per render. The array is one entry per active day, so this is tidiness, not a
-            // measurable saving.
-            let dated = metrics.statsIsDated()
-            let filled = metrics.statsFilledDays()
+    private struct Cell: Identifiable {
+        let id: String
+        let name: String
+        let color: Color
+        let tokens: Int
+        let help: String
+    }
 
-            VStack(alignment: .leading, spacing: 5 * scale) {
-                // A hero figure, sized like the cost and token counts above it — this is the headline
-                // number of the panel, not a caption for the list beneath.
+    var body: some View {
+        if let stats = metrics.stats {
+            let total = stats.totalWorkTokens
+            let cells = cells(stats.models)
+            // Plain VStack of HStacks — lazy grids render blank through `ImageRenderer`, and this view
+            // has to stay snapshot-verifiable.
+            let pairs = stride(from: 0, to: cells.count, by: 2).map {
+                Array(cells[$0 ..< min($0 + 2, cells.count)])
+            }
+
+            VStack(alignment: .leading, spacing: 8 * scale) {
                 HStack(alignment: .firstTextBaseline, spacing: 6 * scale) {
                     Text("Total tokens").scaledFont(13.5, weight: .semibold)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).fixedSize()
-                    ageChip(dated: dated, filled: filled)
+                    sourceTag
                     Spacer(minLength: 4 * scale)
                     Text(Format.tokensPrecise(total))
                         .scaledFont(21, weight: .bold, design: .rounded)
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).fixedSize()
                 }
-                .help(headlineHelp(dated: dated, filled: filled))
+                .help(headlineHelp(stats))
 
+                // No stretch here, deliberately. Letting the rows breathe was tried and read as a list
+                // drifting apart — and a capped Spacer between rows is not capped at all, because it
+                // also brings a second stack gap with it (rows went from 53 to 80px at 1990 wide).
                 ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
-                    HStack(alignment: .top, spacing: 14 * scale) {
-                        ForEach(pair) { m in
-                            modelRow(m, share: total > 0 ? Double(m.workTokens) / Double(total) : 0)
+                    HStack(spacing: 16 * scale) {
+                        ForEach(pair) { c in
+                            row(c, share: total > 0 ? Double(c.tokens) / Double(total) : 0)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        // Keeps a lone final model in the left column instead of letting it stretch
-                        // across the full width and break the grid.
+                        // Keeps a lone final cell in the left column instead of stretching across.
                         if pair.count == 1 { Color.clear.frame(maxWidth: .infinity) }
                     }
-                }
-                if !rest.isEmpty {
-                    HStack {
-                        Text("+\(rest.count) more")
-                            .scaledFont(9.5).foregroundStyle(Theme.textSecondary)
-                        Spacer()
-                        Text(Format.tokens(rest.reduce(0) { $0 + $1.workTokens }))
-                            .scaledFont(9.5, design: .rounded)
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    .help("The remaining models, combined: "
-                          + rest.map(\.displayName).joined(separator: ", "))
                 }
             }
         }
     }
 
-    /// What the headline covers that the cache doesn't — the fix for a total that could sit a week
-    /// stale while rendering pixel-identical to a current one.
-    ///
-    /// Two states, because they need opposite reactions. `to 4 Aug` means the figure genuinely stops
-    /// there and only running `/stats` will move it; `+2d` means ClaudePet closed the gap itself, and
-    /// covers the model rows below it too, which are extended across the same days.
-    @ViewBuilder private func ageChip(dated: Bool, filled: Int) -> some View {
-        if dated, let asOf = metrics.statsAsOfDescription {
-            Text("to \(asOf)")
-                .scaledFont(9.5, weight: .medium)
+    private func cells(_ models: [StatsModelTotal]) -> [Cell] {
+        let fits = models.count <= Self.maxCells
+        let shown = fits ? models : Array(models.prefix(Self.maxCells - 1))
+        var out = shown.map { m in
+            Cell(id: m.model, name: m.displayName, color: Self.dotColor[m.family] ?? .gray,
+                 tokens: m.workTokens,
+                 help: "\(m.displayName): in \(Format.tokens(m.inputTokens)) · out "
+                     + "\(Format.tokens(m.outputTokens)), all time. "
+                     + "\(Format.tokens(m.cacheReadTokens)) cache reads, not counted in the total.")
+        }
+        if !fits {
+            let rest = models.dropFirst(Self.maxCells - 1)
+            out.append(Cell(id: "other", name: "Other (\(rest.count))", color: Theme.textFaint,
+                            tokens: rest.reduce(0) { $0 + $1.workTokens },
+                            help: rest.map(\.displayName).joined(separator: ", ")))
+        }
+        return out
+    }
+
+    /// Names the source, and turns into the one call to action ClaudePet can't take for the user
+    /// once the cache is old enough for its days to be at risk.
+    @ViewBuilder private var sourceTag: some View {
+        if let age = metrics.statsCacheAgeDays(), age >= Self.staleAfterDays {
+            Text("open /stats · \(age)d")
+                .scaledFont(9.5, weight: .medium, design: .monospaced)
                 .foregroundStyle(Theme.highlight)
                 .lineLimit(1).fixedSize()
-        } else if filled > 0 {
-            Text("+\(filled)d")
-                .scaledFont(9.5, weight: .medium)
+        } else {
+            Text("/stats")
+                .scaledFont(9.5, design: .monospaced)
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1).fixedSize()
         }
     }
 
-    private func modelRow(_ m: StatsModelTotal, share: Double) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 6 * scale) {
-                Circle().fill(dotColor[m.family] ?? .gray)
-                    .frame(width: 6 * scale, height: 6 * scale)
-                // Shrink rather than clip — this grid is the documented site of the "In 22…"
-                // truncation, and the card's type just grew.
-                Text(m.displayName)
-                    .scaledFont(10.5, weight: .medium).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                Spacer(minLength: 4 * scale)
-                Text("\(share * 100, specifier: "%.1f")%")
-                    .scaledFont(10, weight: .semibold, design: .rounded)
-                    .foregroundStyle(Theme.claudeCoral.opacity(0.9))
+    /// A hairline share bar under each row: the mix reads at a glance without parsing percentages,
+    /// and the card's spare height goes to something rather than a void. Family colour, never the
+    /// gauge ramp — a big share is not a warning.
+    private func row(_ c: Cell, share: Double) -> some View {
+        VStack(alignment: .leading, spacing: 4 * scale) {
+            // The token figure is what gives when the column is narrow (900×800): shrinking the name
+            // instead left "Opus 4.8" smaller than the numbers beside it. The bar and the share still
+            // carry the comparison, and the tooltip has the figure.
+            ViewThatFits(in: .horizontal) {
+                label(c, share: share, showsTokens: true)
+                label(c, share: share, showsTokens: false)
             }
-            HStack(spacing: 5 * scale) {
-                Text("In \(Format.tokens(m.inputTokens))")
-                Text("·").foregroundStyle(Theme.textFaint)
-                Text("Out \(Format.tokens(m.outputTokens))")
-                Spacer()
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.cardStroke)
+                    Capsule().fill(c.color)
+                        .frame(width: max(2 * scale, g.size.width * min(max(share, 0), 1)))
+                }
             }
-            .scaledFont(9.5).foregroundStyle(Theme.textSecondary)
-            .lineLimit(1).minimumScaleFactor(0.8)
+            .frame(height: 2.5 * scale)
             .padding(.leading, 12 * scale)
         }
-        .help("\(m.displayName): \(Format.tokens(m.workTokens)) input+output all time, "
-              + "\(Format.tokens(m.cacheReadTokens)) cache reads (not counted in the total).")
+        .help(c.help)
     }
 
-    private func headlineHelp(dated: Bool, filled: Int) -> String {
-        let asOf = metrics.statsAsOfDescription.map { " Claude Code last recomputed its cache on \($0)." } ?? ""
-        let gap: String
-        if dated {
-            gap = " Days since then are NOT included: ClaudePet's own history doesn't reach back that "
-                + "far, so filling the gap would undercount. Run /stats in Claude Code to refresh it."
-        } else if filled > 0 {
-            gap = " The \(filled == 1 ? "day" : "\(filled) days") since then \(filled == 1 ? "is" : "are") "
-                + "added from ClaudePet's own count, which uses different accounting — measured on one "
-                + "full day the two ran within about ±7% of each other, so treat that slice as "
-                + "approximate. The per-model rows below are extended across the same days."
-        } else {
-            gap = " Nothing has been logged since, so the figure is current."
+    private func label(_ c: Cell, share: Double, showsTokens: Bool) -> some View {
+        HStack(spacing: 6 * scale) {
+            Circle().fill(c.color).frame(width: 6 * scale, height: 6 * scale)
+            Text(c.name)
+                .scaledFont(10.5, weight: .medium).foregroundStyle(Theme.textPrimary)
+                .lineLimit(1).fixedSize()
+            Spacer(minLength: 4 * scale)
+            if showsTokens {
+                Text(Format.tokens(c.tokens))
+                    .scaledFont(10, design: .rounded).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1).fixedSize()
+            }
+            Text("\(share * 100, specifier: share >= 0.1 ? "%.0f" : "%.1f")%")
+                .scaledFont(10, weight: .semibold, design: .rounded)
+                .foregroundStyle(Theme.claudeCoral)
+                .lineLimit(1).fixedSize()
+                .frame(minWidth: 28 * scale, alignment: .trailing)
         }
-        return "Input + output across every model, all time, as Claude Code's /stats reports it — read "
-            + "from its own local cache, because the figure can't be reproduced from the transcripts. "
-            + "Cache tokens are excluded, so this won't match the other token figures here."
-            + asOf + gap
+    }
+
+    private func headlineHelp(_ stats: StatsSnapshot) -> String {
+        var s = "Input + output across every model, all time — the figure Claude Code's /stats shows. "
+            + "Claude Code saves its stats only when /stats is opened, so ClaudePet adds every day "
+            + "since by the same rules, live. Cache tokens are excluded and repeated log lines are "
+            + "counted, as /stats does, so this won't match the other token figures here."
+        if let asOf = metrics.statsAsOfDescription { s += " Last saved by /stats: \(asOf)." }
+        if let age = metrics.statsCacheAgeDays(), age >= Self.staleAfterDays {
+            s += " That is \(age) days ago. Claude Code deletes transcripts after 30 days by default "
+                + "and only folds them into its all-time totals when /stats is opened — open it in "
+                + "Claude Code before they age out, or those days drop out of /stats (and this panel) "
+                + "for good."
+        }
+        return s
     }
 }

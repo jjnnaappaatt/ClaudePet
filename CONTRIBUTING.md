@@ -10,7 +10,8 @@ them won't be merged regardless of how good the feature is.
 
 1. **Local files only.** ClaudePet reads `~/.claude/projects/**/*.jsonl`, `~/.claude.json`, and
    (optionally) the [claude-statusline](https://github.com/andrewii23/claude-statusline) local
-   cache at `/tmp/claude/statusline-usage-cache.json`. It never reads your OAuth token, never
+   cache at `/tmp/claude/statusline-usage-cache.json`, plus Codex's own session files in
+   `~/.codex/sessions` for the Codex row. It never reads your OAuth token, never
    calls an Anthropic API, and makes **no network requests** of any kind. If a feature needs data
    ClaudePet doesn't already have locally, it's out of scope — don't add a network call or read
    the token to get it. The one non-file read is the Mac's own temperature sensors (IOKit, for the

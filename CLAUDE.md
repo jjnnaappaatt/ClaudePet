@@ -33,11 +33,9 @@ CLAUDEPET_UTIL=96,40 ...            # fake statusline utilization → force gaug
 CLAUDEPET_CODEX=47 ...              # fake the Codex row: "<pct>[,<age_seconds>]", or "none" for a
                                     # machine without Codex. Writes its own temp file — never point
                                     # anything at the live /tmp/claude/codex-usage-cache.tsv.
-CLAUDEPET_STATSAGE=6 ...            # re-date a COPY of ~/.claude/stats-cache.json N days back, to
-                                    # render the "Total tokens" age chip: "+4d" when the gap was
-                                    # filled from local history, "to 4 Aug" when it couldn't be
-                                    # (try 200). Pair with CLAUDEPET_REAL=1 — it recomputes, which
-                                    # wipes sample data. Never writes the real file.
+CLAUDEPET_STATSDELTA=2026-09-18 ... # print what StatsReplica adds on top of a /stats cache whose
+                                    # last day is the day before, as JSON, and exit — the check that
+                                    # the port still agrees with Claude Code (see "/stats figures")
 CLAUDEPET_HANDLES=1 ...             # force resize grips visible
 CLAUDEPET_DEVICE=88,serious,3 ...   # fake the header's device readout: "<°C|none>,<state>,<cpu%>"
 CLAUDEPET_NOLIVE=1 ...              # ignore the statusline + drop the calibration anchor, so the
@@ -78,7 +76,8 @@ the snapshot vars it runs in the normal app flow rather than rendering and exiti
 From `CONTRIBUTING.md` — these are why the app is trustworthy, not style preferences:
 
 1. **Local files only.** Reads `~/.claude/projects/**/*.jsonl`, `~/.claude.json`, and optionally
-   `/tmp/claude/statusline-usage-cache.json`, `/tmp/claude/codex-usage-cache.tsv`, and `~/.claude/stats-cache.json`. Never reads the OAuth token, never makes a network
+   `/tmp/claude/statusline-usage-cache.json`, `/tmp/claude/codex-usage-cache.tsv`, `~/.claude/stats-cache.json`,
+   and Codex's own rollouts in `~/.codex/sessions` (`CodexRolloutReader`). Never reads the OAuth token, never makes a network
    request. A feature needing data that isn't already local is out of scope. The one non-file read
    is the Mac's temperature sensors (`DeviceMonitor`, private IOKit API via `dlsym`) — on-device,
    and it degrades to `ProcessInfo.thermalState` if the symbols go away.
@@ -141,6 +140,34 @@ first entry per key, so a collision silently drops a real turn; verified 0 colli
 real ids. Measured settled: live set 73.3 → 40.6 MB, malloc nodes 215,283 → 86,206. Pinned by
 `AllocationTests` — both changes leave every figure identical, so nothing else can see them regress.
 
+**The cold scan's peak was the largest transcript, held whole — fixed by moving one line.**
+`JSONLParser.parse` read each 1 MB chunk in its `while` condition, outside the per-chunk
+`autoreleasepool`. `readData` autoreleases, so every chunk of a file stayed live until the whole file
+finished: 36 live 1 MB nodes mid-file in `heap`, and afterwards **~250 MB of "Malloc Small/Large
+(empty)"** that malloc kept. Peak was **483–495 MB → 271–280 MB** with nothing else changed. The same bug
+was in `CodexRolloutReader` and (briefly) `StatsReplica`, where it reached 3.8 GB. **Any loop that reads
+a file in chunks must call `readData` inside the pool.** `heap` showing a live set far below the
+footprint, with `(empty)` regions making up the difference, is this bug's signature.
+
+**The dedup-mode per-file cache keeps only the earliest copy of each message per file**
+(`UsageScanner.appendKeepingEarliest`). Claude Code re-logs one response several times, always within
+one file, so a cache of every line was 2.5× the merged result: 56 MB of per-file arrays for a 22 MB merge,
+and `fullMerge` concatenated all of it. Cross-file copies are kept per file, so deleting the file with
+the kept copy still resurrects the other. The cost: the cache no longer serves both counting modes, so
+toggling "Count repeated log lines" **re-reads** every file. With the fix above, end to end: peak
+**450–488 → 206 MB**, settled **170–202 → 116–152 MB**, CPU over the first ~5 min 29–40 → 19–22 s.
+`InFileDedupTests` pins the cache size —
+the merge is identical either way, so nothing else can see this regress.
+
+**Dedup order is `UsageEntry.keptBefore`, a total order — never sort by timestamp alone.** 1,555 messages
+have their earliest copy logged at the same instant in more than one place, 35 of them with different
+usage, and the unstable sort picked a different survivor per launch: two simultaneous runs of one build
+read 761,647 vs 764,068 for the 30-day daily average. That made every A/B between builds noise. The
+tie-break prefers the more complete record (more output, input, cache reads), then the project folder.
+Use it wherever a copy is chosen — `merge`, the delta batch, `appendKeepingEarliest` — and note the
+delta path re-merges on a repeat **at or before** `baseLast`, not just before it, because a tie can now
+beat the kept copy.
+
 **Two more that looked obvious and measured WORSE — do not re-propose:**
 
 - **Exact-sizing the per-file arrays** (`reserveCapacity` + copy at the end of `JSONLParser.entries`).
@@ -172,8 +199,9 @@ ages — an idle process sheds hundreds of MB, so a 17-minute "before" against a
 a measurement, it is a clock.
 
 **Dedup is load-bearing:** on a real corpus **8,349 of 12,259 `message.id`s appear more than once**,
-every repeat inside the same file with byte-identical usage — they are re-logs of one API response,
-not streaming deltas. Keep the first per `messageID`, never sum, or tokens and cost roughly triple.
+almost every repeat inside the same file — re-logs of one API response, not streaming deltas (3.7% of
+repeats do carry different usage; the earliest copy is kept). Keep one per `messageID` — the first by
+`UsageEntry.keptBefore` — never sum, or tokens and cost roughly triple.
 
 **…but it is switched off by a setting, so never read a figure as deduped without checking.**
 `countRepeatedLogLines` (Settings → "Count repeated log lines (match /stats)") passes
@@ -403,6 +431,18 @@ cache-excluded), and `CodexLimitBar` spells "work" out literally rather than usi
 inviting a comparison it can't support. The statusline and the app are coupled through that field's
 meaning — change one and the other mislabels silently.
 
+**The app now computes that figure itself too.** `CodexRolloutReader` ports both `codex_usage` and
+`codex-week-tokens.py` and reads `~/.codex/sessions` directly, because the cache lives in `/tmp` —
+emptied on every restart — and only a terminal statusline rewrites it (the desktop app's Code tab
+never renders one), so after a reboot the Codex row stayed blank for as long as no terminal was open.
+Rollouts win when they yield a reading; the TSV is the fallback and what `CLAUDEPET_CODEX` fakes. The
+two implementations must keep agreeing: they matched to the token at six window starts over the whole
+331 MB corpus, and a change to either algorithm needs that comparison re-run
+(`python3 ~/.claude/codex-week-tokens.py <start>` against `CodexRolloutReader.tokensUsed(since:)`).
+`MetricsStore` maps a window whose `resetsAt` has passed through `CodexLimit.asReset()` (0%, no token
+count, `hasReset`) — it read 4% for a window that had ended 68 hours earlier. Don't drop it instead:
+that was tried, and the session row vanishing read as a missing feature.
+
 Also: `week` is the **fixed weekly-reset window** total (mirrors the Claude app, resets to zero at
 each boundary), and `weekDaily` is the **seven weekday slots of that window** — so the chart bars sum to `week`
 while staying real weekdays. A mid-day reset makes the window touch 8 calendar dates, so the
@@ -456,7 +496,7 @@ figure — reported live an hour after a Monday 15:00 reset, and recurring weekl
 all-time so the baseline follows current habits: all-time read 3.11M against the window's 3.53M, and
 that gap only widens as history accumulates. **Three series, three reasons; none is a substitute for
 another, and what keeps them consistent is that all are whole calendar days, not that they share an
-array.** `weekDaily` now has exactly one reader left, the `/stats` day extension.
+array.** `weekDaily` now has no reader outside `Aggregator`.
 
 Two traps here, both silent, both pinned by `DailyBaselineTests`:
 
@@ -571,82 +611,69 @@ subdirectory); they're one project, so `Aggregator` merges them after resolving.
 
 ### Claude Code's /stats figures
 
-`/stats`' "Total tokens" is **read from `~/.claude/stats-cache.json`, never derived** — see `StatsCache`.
-It is `Σ(inputTokens + outputTokens)` over `modelUsage`, with **cache tokens excluded**.
+**`MetricsStore.stats` is what `/stats` would print right now: the cache plus a live fold-in.**
+`~/.claude/stats-cache.json` is written **only when the `/stats` dialog is opened** — nothing else
+refreshes it (confirmed in Claude Code's bundle: `Stats cache saved successfully` is logged from the
+dialog's load path). It sat at 17 Sep through 34 days of daily use. Claude Code never shows that stale
+file itself: on open it folds every day after `lastComputedDate` in from the transcripts, then adds
+today. `StatsReplica` does the same, and `StatsSnapshot.merge` joins the two the way Claude Code's own
+merge (`Yd`) does.
 
-**Claude Code prints two different figures under that one label, ~200× apart, and only one of them is
-the one we mirror.** Its terminal `/stats` shows `in + out + cache read + cache write` — verified
-against its own detail line, `24.3m + 135.5m + 31.3b + 771.2m = 32.2b`, of which cache *read* alone is
-**97.2%**. Its desktop app shows `in + out` (160.9M for the same account, same day). ClaudePet follows
-the app, which is also what the file's own `modelUsage` sums to. So "ClaudePet says 160M, /stats says
-32.2b" is not a discrepancy to chase — it is two definitions, and the ratio between them is just prompt
-caching re-reading the conversation prefix every turn (measured 195× on this corpus).
+**It is an exact port, not an estimate — and an earlier version of this file said it couldn't be done.**
+"Don't try to recompute it; every rule lands 3–7% off" was true of every rule tried then. The two that
+were missing: **a transcript over 100 MiB is read from its last 100 MiB only** (dropping the first
+partial line), and **days are UTC** (`toISOString()`), not local. With those, validated by opening
+`/stats` against a backed-up 17 Sep cache: **30 of 30 days matched exactly** on messages, sessions and
+per-model tokens, and the whole span to the unit — 479 sessions, 110,720 messages, 54,093,080 tokens.
+Leaving out the tail rule alone made the delta **12.7% high**. The full rule list is on `StatsReplica`;
+each one is pinned by `StatsReplicaTests`, and the tail and sidechain rules were mutation-checked.
 
-The terminal's figures are also the cache **plus the live day**: against the file at the same moment,
-sessions +1 (the open one), output +2.5m, cache read +0.72b — each matching that day's own usage. The
-file itself stops at `lastComputedDate`.
+**Re-validate after a Claude Code update that touches `/stats`.** The port follows v2.1.303. Copy the
+cache, open `/stats` in a terminal, and compare the difference between the two copies against
+`CLAUDEPET_STATSDELTA=<first day after the old copy's lastComputedDate>` — it must match except for
+today, which the new cache doesn't hold yet. Find the rules in the bundle with
+`strings $(which claude)` around `stats-cache.json` (`Fo` is the aggregation, `tSt` the tail reader).
 
-Don't try to recompute it. Measured against one complete day where `/stats` read 3,063,775: every logged
-line gives **+7.2%**, lines excluding subagents **−3.3%**, dedup by `message.id` **×0.36** globally and
-**×0.46** per file. Nothing lands on it. (ClaudePet's own all-time work was 181.9M against `/stats`'
-143.1M — a 27% gap — which is why the panel is labelled as `/stats`' figure and sits apart from every
-other token count on the dashboard.)
+Note what this means for ClaudePet's own accounting: `/stats` does **no dedup** (every repeated log line
+counts) and never counts `subagents/workflows/` agents. The panel follows `/stats`; every other figure on
+the dashboard is ClaudePet's own. Don't "fix" either toward the other.
 
-Two traps in that file:
+**Claude Code prints two different figures under "Total tokens", ~200× apart.** Its terminal `/stats`
+shows `in + out + cache read + cache write` (87.6b on 21 Oct, of which cache reads were 85.0b); its
+desktop app shows `in + out` (287.4M). ClaudePet follows the app. "ClaudePet says 287M, /stats says 87.6b"
+is two definitions, not a discrepancy.
+
+Cost, measured: the cold fold-in over a 34-day-stale cache read 5.2 s / **136 MB peak**; today alone is
+0.8 s / 50 MB. Refreshes are incremental (an append parses only the new lines) and at most one per
+`MetricsStore.statsRefreshInterval` (60 s), except that a file **over** 100 MiB is re-read whole — its
+window slides as it grows. That interval is the CPU dial. Don't read the per-file chunks in a `while`
+condition: `readData` autoreleases, and outside the pool all 2,223 chunks stayed live — a 3.8 GB peak.
+
+**The desktop app's Code tab `/stats` is a different figure — don't chase it.** It runs Claude Code's
+"storageV5" mode (its own bundled CLI, e.g. 2.1.304 under `~/Library/Application Support/Claude/claude-code/`),
+which keeps its stats cache in the app's state store, **not** `~/.claude/stats-cache.json`, and lists
+transcripts through that store. Measured 21 Oct: 507 sessions, 93/136 days, 2.4M in / 51.9M out, against
+the terminal's 1,249 / 146/167 / 288M. Its session count and span match `/stats`' rules applied to
+**only the transcripts still on disk** (510 sessions, first day 8 Jun, peak hour 16:00), so it has lost
+everything Claude Code already cleaned up; its token totals matched no file-based rule tried (closest
+2.4M / 45.2M, no tail cap + dedup), so it also reads different content. The aggregation code itself is
+identical in both builds. ClaudePet mirrors the terminal `/stats` — the one with full history.
+
+**The one thing ClaudePet can't fix is a cache older than `cleanupPeriodDays` (30 by default).** Claude
+Code deletes old transcripts, so days it hasn't folded in by then drop out of `/stats` for good — and out
+of this panel, which mirrors it. When the 17 Sep cache was refreshed on 21 Oct, 18–20 Sep were already
+partly gone. Past 21 days the panel's `/stats` tag turns into an amber "open /stats · Nd".
+
+Traps:
 
 - **`costUSD` is present and always 0.** `PricingTable` remains the source for every `$`.
-- **`lastComputedDate` is a bare `"2026-07-29"` — Gregorian, no zone.** Store it as y/m/d
-  **components**, and compare on a **Gregorian** calendar carrying the caller's time zone. Turning it
-  into a `Date` at parse time forces a zone choice; comparing against `Calendar.current` breaks outright
-  on a non-Gregorian locale — under the Thai Buddhist calendar today's `year` is **2569**, so `2026`
-  never matched and the live delta could not fire at all on that machine. It reads as a stale cache, not
-  as an error, and only showed up when the raw components were printed from a real run.
-
-**Anything read from that cache that can grow is undercounted while it lags**, and the fix has to be
-applied consistently or the figures contradict each other. `statsCurrentStreak`, `statsLongestStreak`
-and `statsActiveDays` all extend across the same span — the days after `lastComputedDay` that our own
-`weekDaily`/`cycleDaily` show as active — via one private helper. Extending only the streak produced a
-26-day streak beside a cached "longest" of 24, and then a 27-day streak beside 26 active days: both
-impossible, both shipped to a render before being caught. The extension reaches only as far back as
-those two windows; past that the cached figure stands unchanged.
-
-That day/streak extension stays on `weekDaily`/`cycleDaily` deliberately. `allTimeDaily` **is** a
-lifetime daily series and would let it reach the whole history, but widening it moves three shipped KPI
-figures at once and needs its own reconciliation against `/stats` — separate work.
-
-**The headline total is extended on a different series, and the split is not an inconsistency.**
-`statsGapDays` sums `allTimeDaily`, because those two are asking different questions: the streak asks
-*which dates were active*, which `weekDaily` answers fine, while the total has to be **summed** — and
-`weekDaily`'s reset-day bucket folds the window's trailing hours back onto its opening slot (`% 7`), so
-one bucket can hold two calendar dates' tokens (measured live at 1,612,803 + 432,336 reading as one
-day). `allTimeDaily` is one bucket per real date, which is exactly what makes it addable.
-
-**Sum `workTokens`, never `dayTokens`.** `/stats`' figure excludes cache; `dayTokens` routes through the
-user's `TokenBasis`, which defaults to `.total`. Splicing a cache-inclusive slice onto a cache-excluded
-total inflates every added day by the cache ratio — ~200× — and nothing else in the app can see it: the
-panel renders, the figure stays internally consistent, it is simply wrong. Pinned by
-`StatsGapFillTests.fillUsesWorkTokensRegardlessOfTheDisplayBasis`, which was watched failing at 62.3M
-against 5.3M before it was trusted.
-
-**Don't narrow the fill back to "today only".** That was the rule until it was measured: it added today
-and only when the cache ended exactly yesterday, so anything staler showed the cache's figure unchanged
-*and unmarked*. Claude Code recomputes that file when it feels like it, not daily — it sat at 4 August
-through seven days of continuous use, and the panel read 151.4M beside Claude Code's own 160.9M. Six
-days missing, not one. The added days are our accounting (~±7% of `/stats`'), so a six-day gap costs
-±0.26% on the headline against 3.7% low for refusing it.
-
-**But the fill has a real refusal case, and it is not defensive.** `statsGapDays` returns nil unless
-`allTimeDaily` reaches back to the cache's own last day. Claude Code deletes transcripts past
-`cleanupPeriodDays`, so a cache left un-recomputed for long enough outlives the history it would be
-extended with, and adding only the surviving days gives a total that is neither the cache's nor ours.
-`statsIsDated` then puts `to 4 Aug` on the card — and note that an old cache followed by *idle* days is
-**not** dated: the gap is empty rather than nil, and the figure is still current.
-
-`covers` still guards the double-count at the cache's own day. Its `endsYesterday` companion is gone;
-it encoded the one-day rule and a caller-less predicate is an invitation to wire that rule back in.
-
-Neither chip state occurs on demand, so `CLAUDEPET_STATSAGE=<days>` re-dates a **copy** of the cache
-(the real file is Claude Code's — never write to it) to render them.
+- **`lastComputedDate` is a bare `"2026-10-20"` — a UTC date.** Convert with `StatsDay` (pure
+  arithmetic), never `Calendar.current`: under the Thai Buddhist calendar today's `year` is **2569**,
+  and a comparison against it once silently stopped the live figures from ever updating.
+- **A delta is only valid against the watermark it was computed for** (`StatsDelta.fromDay`). When
+  `/stats` is opened, the cache absorbs the delta's days; `merge` drops the old delta rather than count
+  them twice, and the panel is briefly the bare cache until the next fold-in lands.
+- **"Longest session" is by wall-clock duration** (28d 22h here), as `/stats` picks it, not by messages.
 
 ### Cycle breakdowns
 
@@ -737,6 +764,20 @@ Two traps in the lower-left 2×2 of cards, both of which render happily and are 
   oversized header centre and draw the title clean off the left edge of the **window**. Any header
   built from `fixedSize` text in a pinned card needs `ViewThatFits` (see `SubagentShareChart.header`,
   and `CycleCalendarView.legend` before it), dropping a whole element rather than clipping one.
+
+Two more from the `/stats` card's tile ledger, both of which rendered without error:
+
+- **A `fixedSize` child raises its container's minimum width, and the dashboard honours minimums by
+  running off the window.** Pinning tiles to their natural width fixed a shrunken label and pushed the
+  whole right card past the window edge at 900×800; `ViewThatFits` never fell back, because the width
+  it measured against was not yet fixed. `StatsKPIGrid`'s `LedgerLayout` is the pattern that works:
+  report the proposed width as your own, then size columns to content *inside* it.
+- **`ViewThatFits` uses its LAST child when none fit — so the last child must always fit.** The
+  billing card's date fell back to a fixed-size two-liner in a squeezed column and pushed the card into
+  its neighbours (their dollar figures clipped at 1990×820). End with an empty option when dropping the
+  content is acceptable. The two `fixedSize` traps here are one trap: a fixed size is a minimum width.
+- **A "capped" `Spacer` between stack rows is not capped.** It brings a second stack gap with it, so
+  `Spacer().frame(maxHeight: 6)` between rows grew them from 53px to 80px apart at 1990 wide.
 
 **Nothing looks tight before it clips**, so "does it still fit?" cannot be answered by looking. Every
 gauge and chart in the top row stretches, and the lower row absorbs whatever the top row takes until it

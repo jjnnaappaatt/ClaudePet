@@ -228,6 +228,23 @@ public struct UsageEntry: Sendable, Equatable, Identifiable {
 
     public var id: MessageKey { messageID }
 
+    /// The order dedup keeps copies in: earliest first, and **a total order on ties**.
+    ///
+    /// Sorting by timestamp alone left equal-timestamp copies of one message in whatever order
+    /// Swift's unstable sort produced, and dedup keeps the first — so which copy survived changed
+    /// from launch to launch. On a real corpus 1,555 messages have their earliest copy logged at the
+    /// same instant in more than one place, and for 35 of them the copies carry different usage: two
+    /// simultaneous runs of the same build read 761,647 and 764,068 for the 30-day daily average, and
+    /// 68,825 and 71,301 for subagents. The tie-break prefers the more complete record (more output,
+    /// then input, then cache reads), then the project folder, so the choice is the same every time.
+    public static func keptBefore(_ a: UsageEntry, _ b: UsageEntry) -> Bool {
+        if a.timestamp != b.timestamp { return a.timestamp < b.timestamp }
+        if a._outputTokens != b._outputTokens { return a._outputTokens > b._outputTokens }
+        if a._inputTokens != b._inputTokens { return a._inputTokens > b._inputTokens }
+        if a._cacheReadTokens != b._cacheReadTokens { return a._cacheReadTokens > b._cacheReadTokens }
+        return a.projectDir < b.projectDir
+    }
+
     /// Human-scale "work" tokens.
     public var workTokens: Int { inputTokens + outputTokens }
 

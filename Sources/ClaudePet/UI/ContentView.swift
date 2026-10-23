@@ -22,6 +22,7 @@ struct ContentView: View {
 
         content(scale: scale)
             .widgetCard()                            // compact opaque card (small padding)
+            .windowDraggable()                       // on the card only — the grips sit outside it
             .overlay {                               // transient celebrations, clipped to the card
                 ZStack {
                     ForEach(bursts) { b in
@@ -166,5 +167,25 @@ struct ContentView: View {
 
     private var vDivider: some View {
         Rectangle().fill(Theme.cardStroke).frame(width: 1)
+    }
+}
+
+private extension View {
+    /// Drag the card to move the panel.
+    ///
+    /// `FloatingPanel.isMovableByWindowBackground` used to do this alone, and on macOS 27 it no
+    /// longer does when the content is an `NSHostingView`: measured with a bare borderless panel,
+    /// a plain `NSView` still drags and a SwiftUI one doesn't move at all — v0.14.0 included, so
+    /// nothing in this app regressed. Overriding `mouseDownCanMoveWindow` on the hosting view and a
+    /// `performDrag(with:)` background view both measured as no-ops too; `WindowDragGesture` is the
+    /// one that moves the window and still lets a `Button` inside the card take its click.
+    ///
+    /// macOS 14 has no `WindowDragGesture`, and there the window-background drag still works.
+    @ViewBuilder func windowDraggable() -> some View {
+        if #available(macOS 15, *) {
+            gesture(WindowDragGesture())
+        } else {
+            self
+        }
     }
 }

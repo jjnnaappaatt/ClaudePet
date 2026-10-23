@@ -54,6 +54,9 @@ public actor UsageScanner {
     /// Keyed by standardized **path**, not `URL`: a path from an FSEvents callback and a URL from
     /// the directory enumerator must land on the same key, and `URL` equality compares spellings.
     private var cache: [String: CachedFile] = [:]
+    /// The counting mode `cache` was built in. In dedup mode each file keeps only the earliest copy
+    /// of every message — see `appendKeepingEarliest` — so the cache can't serve the other mode.
+    private var cacheDeduplicated: Bool?
 
     // State of the last result handed out, so the next one can be a delta against it.
     //
@@ -84,6 +87,11 @@ public actor UsageScanner {
     /// and a full re-parse produce identical entries, so every functional test in the suite passes
     /// either way and the only symptom of losing it is the app going back to burning a core. Same
     /// reasoning as `AllocationTests`: when correctness can't see a regression, something else has to.
+    /// Entries held in the per-file cache. Exists for the same reason as the two counters below: the
+    /// dedup-mode cache produces exactly the same merge as one holding every line, so only its size
+    /// can show whether in-file repeats are being kept again.
+    var cachedEntryCount: Int { cache.values.reduce(0) { $0 + $1.entries.count } }
+
     public private(set) var lastScanFullParses = 0
     public private(set) var lastScanTailParses = 0
 
@@ -94,14 +102,24 @@ public actor UsageScanner {
     /// Incremental scan: parse only new/changed files, drop deleted ones, return
     /// all entries deduplicated globally (earliest occurrence wins).
     ///
-    /// `deduplicated: false` keeps every logged line instead, which reproduces Claude Code's
-    /// `/stats` counting. Only the merge step changes — the per-file parse cache is shared — so
-    /// flipping the mode costs a re-merge, never a re-read.
+    /// `deduplicated: false` keeps every logged line instead. Flipping the mode re-reads every file
+    /// (`resetCacheIfModeChanged`) — a settings toggle, so a one-off cold scan is the right price for
+    /// a per-file cache 2.5× smaller in the default mode.
     ///
     /// Always walks the whole tree and returns the full merge; `scanChanges` is the live path.
     public func scan(deduplicated: Bool = true) -> [UsageEntry] {
-        _ = update(Self.jsonlFiles(under: root).map(Self.key), walkedAll: true)
+        resetCacheIfModeChanged(deduplicated)
+        _ = update(Self.jsonlFiles(under: root).map(Self.key), walkedAll: true, deduplicated: deduplicated)
         return fullMerge(deduplicated: deduplicated)
+    }
+
+    /// True when the cache was dropped, so the caller must walk everything.
+    @discardableResult
+    private func resetCacheIfModeChanged(_ deduplicated: Bool) -> Bool {
+        defer { cacheDeduplicated = deduplicated }
+        guard let built = cacheDeduplicated, built != deduplicated else { return false }
+        cache.removeAll()
+        return true
     }
 
     /// The live path: look only at `changes`, and answer with a delta against the previous result
@@ -114,26 +132,30 @@ public actor UsageScanner {
     /// transcripts, is answered without touching the other ~130k entries.
     public func scanChanges(deduplicated: Bool, changes: FileChanges) -> ScanDelta {
         let (fresh, invalidated): ([UsageEntry], Bool)
-        switch changes {
+        let reset = resetCacheIfModeChanged(deduplicated)
+        switch reset ? .everything : changes {
         case .everything:
-            (fresh, invalidated) = update(Self.jsonlFiles(under: root).map(Self.key), walkedAll: true)
+            (fresh, invalidated) = update(Self.jsonlFiles(under: root).map(Self.key), walkedAll: true,
+                                          deduplicated: deduplicated)
         case .paths(let paths):
-            (fresh, invalidated) = update(paths.compactMap(inRoot), walkedAll: false)
+            (fresh, invalidated) = update(paths.compactMap(inRoot), walkedAll: false,
+                                          deduplicated: deduplicated)
         }
         if invalidated || baseMode != deduplicated {
             return .full(fullMerge(deduplicated: deduplicated))
         }
         guard !fresh.isEmpty else { return .unchanged }
         var batch = fresh
-        batch.sort { $0.timestamp < $1.timestamp }
+        batch.sort(by: UsageEntry.keptBefore)
         if deduplicated {
             var kept: [UsageEntry] = []
             kept.reserveCapacity(batch.count)
             for e in batch {
                 if baseKeys.insert(e.messageID).inserted { kept.append(e); continue }
-                // A repeat. Dropping it is right iff the copy already kept is no later — true when
-                // this one is at or past everything delivered. Otherwise re-merge rather than guess.
-                if e.timestamp < baseLast { return .full(fullMerge(deduplicated: deduplicated)) }
+                // A repeat. Dropping it is right iff the copy already kept comes first — certain when
+                // this one is strictly past everything delivered. At or before that, it may tie with
+                // or beat the kept copy (`keptBefore`), so re-merge rather than guess.
+                if e.timestamp <= baseLast { return .full(fullMerge(deduplicated: deduplicated)) }
             }
             batch = kept
         }
@@ -154,7 +176,8 @@ public actor UsageScanner {
     /// Bring the parse cache up to date for `paths`. Returns the entries that are new since the
     /// last call, and whether anything already handed out was removed or replaced (which a delta
     /// can't express).
-    private func update(_ paths: [String], walkedAll: Bool) -> (fresh: [UsageEntry], invalidated: Bool) {
+    private func update(_ paths: [String], walkedAll: Bool,
+                        deduplicated: Bool) -> (fresh: [UsageEntry], invalidated: Bool) {
         var present = Set<String>()
         var fresh: [UsageEntry] = []
         var invalidated = false
@@ -204,8 +227,15 @@ public actor UsageScanner {
                         entries.removeLast(min(hit.tailCount, entries.count))
                         invalidated = true      // those entries were already handed out
                     }
-                    entries.append(contentsOf: tail.entries)
-                    fresh.append(contentsOf: tail.entries)
+                    if deduplicated {
+                        let r = Self.appendKeepingEarliest(tail.entries, provisional: tail.tailCount,
+                                                           to: &entries)
+                        if r.replacedDelivered { invalidated = true }
+                        fresh.append(contentsOf: r.added)
+                    } else {
+                        entries.append(contentsOf: tail.entries)
+                        fresh.append(contentsOf: tail.entries)
+                    }
                     cache[path] = CachedFile(
                         mtime: mtime, size: size, parsedUpTo: tail.parsedUpTo,
                         boundaryHash: Self.boundaryHash(of: url, endingAt: tail.parsedUpTo) ?? 0,
@@ -229,12 +259,18 @@ public actor UsageScanner {
             guard let parsed = autoreleasepool(invoking: {
                 try? JSONLParser.parse(fileAt: url, from: 0, projectDir: dir, interner: interner)
             }) else { continue }
+            var entries: [UsageEntry] = []
+            if deduplicated {
+                Self.appendKeepingEarliest(parsed.entries, provisional: parsed.tailCount, to: &entries)
+            } else {
+                entries = parsed.entries
+            }
             // A re-parse from zero replaces entries already handed out; a new file only adds.
-            if cache[path] != nil { invalidated = true } else { fresh.append(contentsOf: parsed.entries) }
+            if cache[path] != nil { invalidated = true } else { fresh.append(contentsOf: entries) }
             cache[path] = CachedFile(
                 mtime: mtime, size: size, parsedUpTo: parsed.parsedUpTo,
                 boundaryHash: Self.boundaryHash(of: url, endingAt: parsed.parsedUpTo) ?? 0,
-                tailCount: parsed.tailCount, entries: parsed.entries)
+                tailCount: parsed.tailCount, entries: entries)
             lastScanFullParses += 1
         }
         // Forget files that disappeared.
@@ -245,6 +281,52 @@ public actor UsageScanner {
             }
         }
         return (fresh, invalidated)
+    }
+
+    /// Append `new` to one file's cached entries, keeping only the **earliest** copy of each message —
+    /// the dedup-mode per-file cache.
+    ///
+    /// **This is the largest single block of the app's resident memory.** Claude Code re-logs one API
+    /// response several times, every repeat inside the same file, so a cache of every line held ~2.5×
+    /// what dedup keeps: 56 MB of per-file arrays against a 22 MB merged result, measured on a
+    /// 5.8 GB corpus — and the full merge concatenates the whole cache, so the cold scan's peak paid
+    /// for it twice. Dropping in-file repeats here gives the same merge: it keeps the earliest copy
+    /// per key across all files (`UsageEntry.keptBefore`), and the copy dropped here never comes
+    /// before the one kept.
+    /// Cross-file repeats are left alone (each file keeps its own earliest), so deleting the file
+    /// that held the kept copy still resurrects the other one.
+    ///
+    /// The last `provisional` entries — an unterminated final line — are appended untouched and stay
+    /// at the end, because `tailCount` removes them by position when their newline arrives.
+    ///
+    /// `replacedDelivered` is set when a new copy is earlier than one already cached from a previous
+    /// call, i.e. already handed out: a delta can't express that, so the caller must re-merge.
+    @discardableResult
+    static func appendKeepingEarliest(_ new: [UsageEntry], provisional: Int,
+                                      to entries: inout [UsageEntry]) -> (added: [UsageEntry], replacedDelivered: Bool) {
+        let settled = new.count - min(max(provisional, 0), new.count)
+        let before = entries.count
+        var index: [MessageKey: Int] = [:]
+        index.reserveCapacity(before + settled)
+        for (i, e) in entries.enumerated() { index[e.messageID] = i }
+        var added: [UsageEntry] = []
+        added.reserveCapacity(settled)
+        var replaced = false
+        for e in new[..<settled] {
+            if let i = index[e.messageID] {
+                if UsageEntry.keptBefore(e, entries[i]) {
+                    entries[i] = e
+                    if i >= before { added[i - before] = e } else { replaced = true }
+                }
+                continue
+            }
+            index[e.messageID] = entries.count
+            entries.append(e)
+            added.append(e)
+        }
+        entries.append(contentsOf: new[settled...])
+        added.append(contentsOf: new[settled...])
+        return (added, replaced)
     }
 
     /// Merge an `.appended` batch into the caller's sorted array, **in place**.
@@ -343,7 +425,7 @@ public actor UsageScanner {
     static func merge(_ entries: consuming [UsageEntry], deduplicated: Bool,
                       keys seen: inout Set<MessageKey>) -> [UsageEntry] {
         var sorted = consume entries
-        sorted.sort { $0.timestamp < $1.timestamp }
+        sorted.sort(by: UsageEntry.keptBefore)
         seen.removeAll()
         guard deduplicated else { return sorted }
         // In place, not `filter`. `Deduplicator.deduplicated` returns a NEW array, so at the moment
