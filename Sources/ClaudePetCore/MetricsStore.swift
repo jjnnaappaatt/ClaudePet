@@ -1623,6 +1623,13 @@ public final class MetricsStore {
 
     // MARK: - Previews / snapshots
 
+    /// Re-read only the statusline cache, leaving every aggregate as it is. The sample figures are
+    /// hand-set over an empty `lastEntries`, so `recompute()` would rebuild them all as 0 — and its
+    /// server calibration would back-solve budgets from that zero usage.
+    public func reloadServerUsageForPreview() {
+        serverUsage = useStatuslineData ? StatuslineUsageReader.read(path: statuslineCachePath) : nil
+    }
+
     public func loadSampleForPreview() {
         let now = Date()
         today = Totals(workTokens: 142_000, totalTokens: 41_200_000, costUSD: 4.21)
