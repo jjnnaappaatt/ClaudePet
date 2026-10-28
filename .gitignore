@@ -12,3 +12,5 @@ Design Feedback
 *.xcuserstate
 xcuserdata/
 DerivedData/
+.verify-artifacts/
+__pycache__/
