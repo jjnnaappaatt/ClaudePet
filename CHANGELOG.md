@@ -6,6 +6,8 @@ All notable changes to ClaudePet are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Fixed
+- **The weekly gauge's caption no longer truncates.** Beside a long reset countdown it read
+  "8.8M work used this…"; it now drops words instead ("8.8M work this week", then "8.8M work").
 - **The dashboard's /stats panel is live and matches `/stats` exactly.** Claude Code writes
   `~/.claude/stats-cache.json` only when `/stats` is opened, so the panel froze at that date: it sat
   at 17 Sep for 34 days and read 264.28M against `/stats`' real 287.4M, with sessions, messages and

@@ -67,22 +67,25 @@ struct WeeklyLimitBar: View {
             }
             .frame(height: barThickness * scale)
 
-            HStack(spacing: 4) {
+            Group {
                 if metrics.serverDriven7d {
-                    Text("\(amount(metrics.weeklyTokensUsed(unit: unit)))\(basisSuffix) used this week")
-                } else {
-                    Text("\(amount(metrics.weeklyValue(unit: unit))) / \(amount(metrics.weeklyBudget(unit: unit)))")
-                    Text("·").foregroundStyle(Theme.textFaint)
-                    Text("\(amount(metrics.weeklyRemaining(unit: unit))) left")
-                        .foregroundStyle(Theme.highlight.opacity(0.9))
-                }
-                Spacer()
-                if let reset = metrics.weeklyResetDate {
-                    TimelineView(.periodic(from: .now, by: 60)) { context in
-                        Text("resets in \(Format.durationLong(reset.timeIntervalSince(context.date)))")
+                    // Drops words rather than truncating: beside a long "resets in 5d 22h" the full
+                    // line read "8.8M work used this…" in the landscape widget. Whole rows are the
+                    // candidates, not just the text, so each is measured against the reset it sits
+                    // beside. The last keeps only the figure and must always fit.
+                    let used = "\(amount(metrics.weeklyTokensUsed(unit: unit)))\(basisSuffix)"
+                    ViewThatFits(in: .horizontal) {
+                        usedRow { Text("\(used) used this week") }
+                        usedRow { Text("\(used) this week") }
+                        usedRow { Text(used) }
                     }
                 } else {
-                    Text("7-day · est.")
+                    usedRow {
+                        Text("\(amount(metrics.weeklyValue(unit: unit))) / \(amount(metrics.weeklyBudget(unit: unit)))")
+                        Text("·").foregroundStyle(Theme.textFaint)
+                        Text("\(amount(metrics.weeklyRemaining(unit: unit))) left")
+                            .foregroundStyle(Theme.highlight.opacity(0.9))
+                    }
                 }
             }
             .scaledFont(9.5)
@@ -90,6 +93,21 @@ struct WeeklyLimitBar: View {
             .lineLimit(1)
         }
         .help(limitHelp + metrics.sidechainNote(metrics.week))
+    }
+
+    /// The "used" figure on the left, the reset countdown on the right.
+    private func usedRow<Used: View>(@ViewBuilder _ used: () -> Used) -> some View {
+        HStack(spacing: 4) {
+            used()
+            Spacer()
+            if let reset = metrics.weeklyResetDate {
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Text("resets in \(Format.durationLong(reset.timeIntervalSince(context.date)))")
+                }
+            } else {
+                Text("7-day · est.")
+            }
+        }
     }
 
     @Environment(\.widgetScale) private var scale: CGFloat
