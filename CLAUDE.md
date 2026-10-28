@@ -51,6 +51,7 @@ anything that changes how the panel is sized or when the content's height change
 ```bash
 CLAUDEPET_DASHBOARD=/tmp/d.png ...                  # the dashboard window's view
 CLAUDEPET_DASHBOARD=/tmp/d.png CLAUDEPET_DASHSIZE=900x800 CLAUDEPET_REAL=1 ...   # at its minimum
+CLAUDEPET_DASHBOARD=/tmp/d.png CLAUDEPET_DASHSCALE=2 ...  # retina capture for docs only; default 1 keeps px == pt for measuring
 ```
 
 `DashboardView` is layout-driven, so unlike the widget it has no intrinsic size — the snapshot path
@@ -80,7 +81,8 @@ From `CONTRIBUTING.md` — these are why the app is trustworthy, not style prefe
    and Codex's own rollouts in `~/.codex/sessions` (`CodexRolloutReader`). Never reads the OAuth token, never makes a network
    request. A feature needing data that isn't already local is out of scope. The one non-file read
    is the Mac's temperature sensors (`DeviceMonitor`, private IOKit API via `dlsym`) — on-device,
-   and it degrades to `ProcessInfo.thermalState` if the symbols go away.
+   and it degrades to `ProcessInfo.thermalState` if the symbols go away. `.claude/hooks/no-network.sh`
+   flags any networking API written into `Sources/` (PostToolUse); extend its pattern, don't silence it.
 2. **Original art only.** The mascot is code-drawn in `MascotArt.swift` / `PixelMatrixRenderer.swift`
    as an homage to Clawd. Don't bundle third-party art.
 
@@ -189,6 +191,8 @@ beat the kept copy.
   the scan cycle you sample. Single samples cannot support a delta; the snapshot path's peak is set
   during *parsing*, so it cannot see a 15 MB transient at merge time at all.
 
+`.claude/skills/measure-claudepet` scripts everything in this paragraph (and records config, binary
+hash, uptime, corpus size and load with each figure) — use it rather than hand-running the tools.
 Measure with `vmmap -summary <pid>`, not `ps` — RSS counts clean resident pages and still reads
 ~709 MB against a 181 MB footprint. `heap <pid>` is the one that ends arguments: it put the live set
 at 82.5 MB (41.9 MB of per-file entry arrays, 8.1 MB of interned strings), which is what proved the
@@ -829,7 +833,8 @@ future reader could break. `MetricsStore.swift` is representative. Group with `/
 The version lives in three hand-maintained places and `release.sh` refuses to build if they disagree:
 `Sources/ClaudePetCore/ClaudePetCore.swift`, `Sources/ClaudePet/Supporting/Info.plist`
 (`CFBundleShortVersionString`), and the top dated heading in `CHANGELOG.md`. Ordinary changes just
-go under `## [Unreleased]`.
+go under `## [Unreleased]`. Shipping one is the user-only `/release` skill (`.claude/skills/release`):
+it bumps all three plus `CFBundleVersion`, and publishes that version's CHANGELOG section as the notes.
 
 ## frontend/
 
@@ -854,3 +859,39 @@ The five canonical roles, unrenamed: `needs-triage`, `needs-info`, `ready-for-ag
 
 Single-context — `CONTEXT.md` and `docs/adr/` at the repo root, created lazily rather than
 scaffolded. See `docs/agents/domain.md`.
+
+## Subagents in the feature loop
+poteto-agent writes the code. Repo agents join at fixed points:
+- review: after verify and before `gh pr create`, and in /jjstack:doublej. Sort what it finds by Ticket scope in Feature loop.
+- spec: during /jjstack:jjflow, ask it the domain-fact questions the grill needs.
+- verify: run it during verify, next to the verify skill.
+
+| Agent | Role | Covers |
+|---|---|---|
+| claudepet-figures-reviewer | review, spec | `Sources/ClaudePetCore`: parse/scan/dedup/aggregate, gauge budgets and calibration, pricing, /stats replica, Codex reader, memory and CPU invariants |
+| claudepet-ui-reviewer | review, spec | `Sources/ClaudePet`: SwiftUI widget and dashboard layout, Theme contrast, mascot art, AppKit panel and window behaviour |
+| claudepet-verifier | verify | the `verify-claudepet` skill: isolated bundle, real-data renders, panel-fit and dashboard flows, `swift test` |
+
+## Learning loop
+After /jjstack:doublej, and whenever I correct an agent (a ticket session does not reflect: doublej sees what its review caught):
+1. Read and follow pstack's `reflect` skill on this session's transcript.
+2. Route a lesson about a repo agent's domain to that agent's memory in `.claude/agent-memory/<agent>/`.
+   Edit the agent file itself only when its role or scope changes.
+3. Prune as you add: read the whole file a lesson lands in and cut, in the same edit, lines it replaces
+   or contradicts, repeats, and lines stale against the code. Show the Accepted additions and cuts together
+   and wait for my approval before changing any file.
+4. Ship approved edits through review as one small `chore(agents): <lesson>` PR cut from origin/main, never on a ticket branch:
+   lessons on parallel ticket branches collide in the same `.claude/**` files. A lesson whose file an open PR also edits waits for that PR to merge.
+A mistake made twice goes to /pstack:correct instead, which enforces it in the code.
+
+## Feature loop
+1. /jjstack:jjflow <idea>: grill, spec issue, tickets
+2. Per ticket, new session: /pstack:poteto-mode implement #<ticket>
+3. After the round's PRs are open: /jjstack:doublej #<spec>
+4. Merge only what you pick in /jjstack:doublej
+Ticket scope: one ticket, one PR. Fix in that PR only what fails today against the ticket's acceptance criteria or a repo invariant. Hardening, a risk from some later edit, and any other finding, from any reviewer, go into one `needs-triage` issue that links the ticket, listed in the PR body; they wait for the next /jjstack:jjflow. A new session or PR starts only when I ask for one. A bug outside the ticket that cannot wait comes to me as a question, with its issue already filed. Judge "cannot wait" by naming every live path the bug or finding breaks, and whether it bites before the next /jjstack:jjflow round or a fixed field date. A broken sign-in, claim or token link always cannot wait.
+Lessons: see Learning loop. Repeated mistakes: /pstack:correct
+
+Verification: `.claude/skills/verify-claudepet/` drives the app headlessly (see its SKILL.md). Never verify with
+`./bundle.sh` — it deletes the `ClaudePet.app` the user is usually running. `.claude/hooks/guard.sh` asks before
+`bundle.sh`/`release.sh` run while that app is up, and denies writes to the live `/tmp/claude` caches. No setup step is postponed.
