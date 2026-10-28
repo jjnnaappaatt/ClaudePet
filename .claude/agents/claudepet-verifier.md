@@ -20,7 +20,6 @@ ClaudePet is a dockless Swift macOS widget plus a dashboard window. It has no br
   - Any change to widget height needs `CLAUDEPET_PANELFIT=1` to print `OK` (about 10 s). A snapshot PNG cannot see the panel's size.
   - `swift test` (or `--filter <Suite>`) is the proof for ClaudePetCore logic; the skill does not replace it.
 - Gotchas:
-  - `CLAUDEPET_UTIL` calls `recompute()` on an empty entry list and zeroes sample data, so pair it with `CLAUDEPET_REAL=1`.
   - `CLAUDEPET_OPENSETTINGS` and `CLAUDEPET_HEARTBEAT` never exit. Use `VERIFY_TIMEOUT=8`; the log ends `# TIMEOUT` with exit 124, which is expected. Run `$S cleanup` afterwards.
   - `OPENDASHBOARD` goes full screen on the user's display for a couple of seconds, with a 15 s timeout.
   - Renders are not pixel-reproducible (clock, thermals, Codex). Compare layout and figures, not bytes.
