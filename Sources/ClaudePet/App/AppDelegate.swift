@@ -349,7 +349,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? json.write(toFile: path, atomically: true, encoding: .utf8)
         metrics.useStatuslineData = true
         metrics.statuslineCachePath = path
-        metrics.recompute()
+        if ProcessInfo.processInfo.environment["CLAUDEPET_REAL"] != nil {
+            metrics.recompute()
+        } else {
+            metrics.reloadServerUsageForPreview()   // a recompute would zero the sample figures
+        }
     }
 
     /// Debug-only: force the Codex row by faking its cache. `CLAUDEPET_CODEX=<pct>[,<age_seconds>]`
