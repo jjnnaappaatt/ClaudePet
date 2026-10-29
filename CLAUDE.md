@@ -857,7 +857,7 @@ The five canonical roles, unrenamed: `needs-triage`, `needs-info`, `ready-for-ag
 
 ### Domain docs
 
-Single-context — `CONTEXT.md` and `docs/adr/` at the repo root, created lazily rather than
+Single-context — `GLOSSARY.md` and `docs/adr/` at the repo root, created lazily rather than
 scaffolded. See `docs/agents/domain.md`.
 
 ## Subagents in the feature loop
