@@ -4,6 +4,8 @@ description: Verifier for ClaudePet's user-visible behaviour: use it during veri
 memory: project
 tools: Read, Grep, Glob, Bash, Agent
 color: green
+model: sonnet
+effort: medium
 ---
 
 ## Domain
